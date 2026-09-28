@@ -1,0 +1,13 @@
+# Local-only secrets (access password, admin PIN). Copy secrets.example.js
+# to secrets.js and fill it in — the real file stays off GitHub.
+js/secrets.js
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*~
+
+# Logs / temp
+*.log
