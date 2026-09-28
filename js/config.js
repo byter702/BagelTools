@@ -25,7 +25,7 @@
 var SECRETS = window.CONFIG_SECRETS || {};
 
 window.CONFIG = {
-  defaultTbaKey: "",
+  defaultTbaKey: "2lCewAZsm3RbWBge07WoKnsq9jyhqfFT8tuH7Qdna9Wt4b8Ja9B7A2TOMxUIJZjX",
 
   /* --- Team access password ---------------------------------------------------
      Members must enter this on the login screen to open the site. Set it in
@@ -49,7 +49,7 @@ window.CONFIG = {
      Get / check your key at https://frc.nexus/api (requires a Nexus login).
      Note: pit map data is usually only published while an event is LIVE.
   */
-  nexusApiKey: "",
+  nexusApiKey: "fsbexOmWUmrBJmMOvO-oHuXWK4U",
 
   /* --- Access control --------------------------------------------------------
      Only accepted members may enter. `owner` can ALWAYS log in (and counts as
