@@ -135,7 +135,6 @@ const Store = (() => {
     let me = accounts[key];
     let dirty = migrated;
     if (!me || typeof me !== "object") { me = {}; dirty = true; }
-    if (!me.id) { me.id = "sc_" + uid(); dirty = true; }
     const defaults = { bb: 0, matchCount: 0, pitCount: 0, profilePic: "",
       lastMatchTeams: [], lastPitTeams: [], pitScoutedTeams: [] };
     me = { ...defaults, ...me };
@@ -143,8 +142,28 @@ const Store = (() => {
     if (sess && (me.first !== sess.first || me.last !== sess.last)) {
       me.first = sess.first; me.last = sess.last; dirty = true;
     }
+    // Deterministic id derived from the NAME, so the same person has ONE identity
+    // (one cloud scouter doc) across every device — entering an already-registered
+    // name no longer spawns a second account. Older accounts that still carry a
+    // random id are migrated to the deterministic one here.
+    if (me.first || me.last) {
+      const wantId = scouterIdFor(me.first, me.last);
+      if (me.id !== wantId) { me.id = wantId; dirty = true; }
+    } else if (!me.id) {
+      me.id = "sc_" + uid(); dirty = true;
+    }
     if (dirty) { accounts[key] = me; write("meAccounts", accounts); }
     return me;
+  }
+  // Remove one local scouter account by its id (used by the admin scouter cleanup).
+  function removeAccountById(id) {
+    const accounts = getMeAccounts();
+    let changed = false;
+    Object.keys(accounts).forEach((k2) => {
+      if (accounts[k2] && accounts[k2].id === id) { delete accounts[k2]; changed = true; }
+    });
+    if (changed) write("meAccounts", accounts);
+    return changed;
   }
   function setMe(patch) {
     const accounts = getMeAccounts();
@@ -179,6 +198,13 @@ const Store = (() => {
   function nameKey(first, last) {
     return (String(first || "").trim() + "|" + String(last || "").trim()).toLowerCase();
   }
+  // Stable string hash → short base36 token. Same name always yields the same id.
+  function hashKey(s) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+    return h.toString(36);
+  }
+  function scouterIdFor(first, last) { return "sc_" + hashKey(nameKey(first, last)); }
   function getSession() { return read("session", null); }        // {first,last,ts} or null
   function setSession(user) { write("session", user); }
   function clearSession() { try { localStorage.removeItem(k("session")); } catch {} }
@@ -340,7 +366,7 @@ const Store = (() => {
     getPicklist, setPicklist,
     getTierlist, setTierlist,
     getBBApproved, isBBApproved, approveBBEvent,
-    getMe, setMe, getMeAccounts, recordMatchScouted, recordPitScouted,
+    getMe, setMe, getMeAccounts, removeAccountById, scouterIdFor, recordMatchScouted, recordPitScouted,
     getStrategy, setStrategy,
     getSession, setSession, clearSession,
     getMembers, getRequests, recordLogin, approveMember, denyRequest, removeMember, addMember, nameKey, mergeRoster,

@@ -418,7 +418,9 @@
   }
 
   // Everyone we know about: cloud roster if available, otherwise just me.
-  function allScouters() {
+  // Raw list — one entry per scouter *id* (may include legacy duplicates of the
+  // same person from before deterministic ids). Used by the admin cleanup tool.
+  function allScoutersRaw() {
     const me = Store.getMe();
     const byId = new Map();
     // every account that has logged in on THIS device (or arrived via an imported
@@ -429,6 +431,27 @@
     // my own record is authoritative + online
     byId.set(me.id, { ...(byId.get(me.id) || {}), ...me, online: true });
     return [...byId.values()];
+  }
+  // Display list — collapse any duplicate accounts that share a name into ONE
+  // entry so the leaderboard / scouters list never shows the same person twice.
+  function allScouters() {
+    const byName = new Map();
+    allScoutersRaw().forEach((s) => {
+      const key = Store.nameKey(s.first, s.last);
+      const cur = byName.get(key);
+      if (!cur) { byName.set(key, { ...s, id: Store.scouterIdFor(s.first, s.last) }); return; }
+      cur.bb = Math.max(cur.bb || 0, s.bb || 0);
+      cur.matchCount = Math.max(cur.matchCount || 0, s.matchCount || 0);
+      cur.pitCount = Math.max(cur.pitCount || 0, s.pitCount || 0);
+      if (!cur.profilePic && s.profilePic) cur.profilePic = s.profilePic;
+      if (!(cur.lastMatchTeams || []).length) cur.lastMatchTeams = s.lastMatchTeams || [];
+      if (!(cur.lastPitTeams || []).length) cur.lastPitTeams = s.lastPitTeams || [];
+      const teams = new Set([...(cur.pitScoutedTeams || []), ...(s.pitScoutedTeams || [])]);
+      cur.pitScoutedTeams = [...teams];
+      cur.lastSeen = Math.max(cur.lastSeen || 0, s.lastSeen || 0);
+      cur.online = cur.online || s.online;
+    });
+    return [...byName.values()];
   }
   function scouterName(sc) { return `${sc.first || ""} ${sc.last || ""}`.trim() || "Unnamed scout"; }
   function isOnline(sc) {
@@ -2620,6 +2643,7 @@
     const dt = (ts) => ts ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "–";
     const tabs = [
       ["requests", "Requests & members"],
+      ["scouters", "Scouters"],
       ["bagelbucks", "Bagel Bucks"],
       ["matchform", "Match form"],
       ["pitform", "Pit form"],
@@ -2691,6 +2715,39 @@
           <button class="btn ${approved ? "danger" : "primary"} sm" id="bbApproveBtn">${approved ? "Turn off earning" : "Approve for BB earning"}</button>
         </div>${!live ? `<p class="hint" style="margin:8px 0 0">Even when approved, BB only accrue during the event's live dates.</p>` : ""}`
           : `<p class="hint">Pick an event on the Dashboard first, then approve it here.</p>`}
+      </div>`;
+    })();
+
+    // ---- Section: Scouters (remove accounts / clean up duplicates) ----
+    const scoutersHTML = (() => {
+      const meId = Store.getMe().id;
+      const scs = allScoutersRaw().slice().sort((a, b) =>
+        scouterName(a).localeCompare(scouterName(b)) || (b.lastSeen || 0) - (a.lastSeen || 0));
+      const nameCount = {};
+      scs.forEach((s) => { const kk = Store.nameKey(s.first, s.last); nameCount[kk] = (nameCount[kk] || 0) + 1; });
+      return `<div class="card">
+        <div class="section-head">
+          <div class="row" style="gap:10px">${icon("user")}<h2 style="margin:0">Scouter accounts (${scs.length})</h2></div>
+        </div>
+        <p class="hint">Every scouter profile that shows up on the Members leaderboard. Use this to
+          delete unwanted or leftover <b>duplicate</b> accounts — removing one deletes its cloud
+          profile plus any pick list / tier list it submitted. Match &amp; pit records are kept.
+          ${Cloud.enabled() ? "" : `<br><span class="badge red dot">Cloud off</span> Deletes apply to this device only until cloud sync is on.`}</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Name</th><th>${BB}</th><th>Matches</th><th>Pits</th><th>Last seen</th><th></th></tr></thead>
+          <tbody>${scs.map((s) => {
+            const dup = nameCount[Store.nameKey(s.first, s.last)] > 1;
+            const isMe = s.id === meId;
+            return `<tr>
+              <td><div class="row" style="gap:8px;align-items:center">${scouterAvatar(s, "sc-avatar sm")}
+                <b>${esc(scouterName(s))}</b>${isMe ? ` <span class="badge cyan">You</span>` : ""}${dup ? ` <span class="badge">dup</span>` : ""}</div></td>
+              <td class="num">${s.bb || 0}</td>
+              <td class="num">${s.matchCount || 0}</td>
+              <td class="num">${pitCountOf(s)}</td>
+              <td class="muted">${s.lastSeen ? esc(timeAgo(s.lastSeen)) : "–"}</td>
+              <td><button class="icon-btn" data-del-scouter="${esc(s.id)}" data-scouter-name="${esc(scouterName(s))}" aria-label="Remove scouter">${icon("trash")}</button></td>
+            </tr>`;
+          }).join("")}</tbody></table></div>
       </div>`;
     })();
 
@@ -2805,7 +2862,7 @@
     })();
 
     const sectionHTML = {
-      requests: requestsHTML, bagelbucks: bagelBucksHTML,
+      requests: requestsHTML, scouters: scoutersHTML, bagelbucks: bagelBucksHTML,
       matchform: matchFormHTML, pitform: pitFormHTML,
       testevent: testEventHTML, data: dataHTML,
     };
@@ -2871,6 +2928,15 @@
     $$("[data-deny]", root).forEach((b) => b.onclick = () => { Store.denyRequest(b.dataset.deny); Cloud.pushRoster(); toast("Request denied"); renderAdmin(root); refreshChrome(); });
     $$("[data-remove]", root).forEach((b) => b.onclick = () =>
       confirmDialog("Remove this member from the roster?", () => { Store.removeMember(b.dataset.remove); Cloud.pushRoster(); toast("Member removed"); renderAdmin(root); }));
+    $$("[data-del-scouter]", root).forEach((b) => b.onclick = () => {
+      const id = b.dataset.delScouter, nm = b.dataset.scouterName || "this scouter";
+      confirmDialog(`Delete the scouter account "${nm}"? This removes their profile from the leaderboard for everyone (their match & pit records are kept).`, () => {
+        Store.removeAccountById(id);
+        const done = () => { toast("Scouter removed"); renderAdmin(root); };
+        if (Cloud.enabled()) Cloud.deleteScouter(id).then(done).catch(() => { toast("Removed locally; cloud delete failed", "err"); renderAdmin(root); });
+        else done();
+      });
+    });
     const addBtn = $("#addMemberBtn", root);
     if (addBtn) addBtn.onclick = () => {
       modal("Add member", `

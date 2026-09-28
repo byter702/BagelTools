@@ -786,6 +786,7 @@ table.lb th.sortable:hover { color: var(--primary); }
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 16px; transition: border-color .15s ease; }
 .sc-row:hover { border-color: var(--primary); }
 .sc-avatar { width: 40px; height: 40px; font-size: 1.05rem; flex: none; }
+.sc-avatar.sm { width: 28px; height: 28px; font-size: .8rem; }
 .sc-name { flex: 1; font-weight: 600; font-size: 1rem; }
 .sc-status { display: flex; align-items: center; gap: 7px; color: var(--text-dim); font-size: .85rem; }
 

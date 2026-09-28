@@ -239,6 +239,24 @@
       });
     },
 
+    // Admin-only: remove a single scouter from the cloud — their profile doc plus
+    // any submitted pick list / tier list keyed by that id. (Match/pit records are
+    // shared team data and are kept.)
+    deleteScouter: function (id) {
+      if (!this.enabled()) return Promise.reject(new Error("cloud off"));
+      if (!id) return Promise.reject(new Error("no id"));
+      var batch = db.batch();
+      batch.delete(db.collection("scouters").doc(id));
+      batch.delete(db.collection("boards").doc(id));
+      batch.delete(db.collection("tierlists").doc(id));
+      return batch.commit().then(function () {
+        cache.scouters = (cache.scouters || []).filter(function (s) { return s && s.id !== id; });
+        cache.boards = (cache.boards || []).filter(function (b) { return b && b.scouterId !== id; });
+        cache.tierlists = (cache.tierlists || []).filter(function (t) { return t && t.scouterId !== id; });
+        fire();
+      });
+    },
+
     getMatchForm: function () { return cache.config.matchForm ? cache.config.matchForm.schema : null; },
     getPitForm: function () { return cache.config.pitForm ? cache.config.pitForm.schema : null; },
     getRoster: function () { return cache.config.roster || null; },
