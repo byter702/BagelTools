@@ -1,6 +1,6 @@
-# Local-only secrets (access password, admin PIN). Copy secrets.example.js
-# to secrets.js and fill it in — the real file stays off GitHub.
-js/secrets.js
+# NOTE: js/secrets.js (access password, admin PIN) IS committed on purpose so the
+# Vercel deploy has the login password. This repo must stay PRIVATE. On a static
+# site the password ships to the browser anyway, so it's a deterrent, not a secret.
 
 # OS / editor cruft
 .DS_Store
