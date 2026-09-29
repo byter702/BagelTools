@@ -288,7 +288,9 @@
   function synthSchedule(teamNums) {
     const T = teamNums.length;
     if (T < 6) return [];
-    const Q = Math.min(80, Math.max(12, T));
+    // A real qual schedule gives each team ~12 matches, so total quals ≈ teams×12/6
+    // = teams×2 (e.g. 37 teams → 74 quals). Cap kept generous for big events.
+    const Q = Math.min(160, Math.max(12, T * 2));
     const quals = [];
     let idx = 0;
     for (let i = 0; i < Q; i++) {
