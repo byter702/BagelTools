@@ -220,6 +220,16 @@
         .set(clean({ members: members, requests: requests, updatedAt: Date.now() }))
         .catch(function (e) { log("pushRoster failed", e); });
     },
+    // Add ONE access request to the shared roster without touching the rest of it.
+    // Used at login by not-yet-approved people (who may have an empty local roster),
+    // so a merge — never a full overwrite — keeps existing members/requests intact.
+    pushAccessRequest: function (key, entry) {
+      if (!this.enabled() || !key) return;
+      var patch = { requests: {}, updatedAt: Date.now() };
+      patch.requests[key] = clean(entry || {});
+      db.collection("config").doc("roster").set(patch, { merge: true })
+        .catch(function (e) { log("pushAccessRequest failed", e); });
+    },
     // Admin-only: wipe ALL shared scouting data from the cloud (matches, pits,
     // submitted picklists/boards and tier lists). Used to reset a test event.
     // Config docs (roster + form schemas) are intentionally left untouched.

@@ -81,7 +81,20 @@ const Auth = (() => {
 
       const status = Store.recordLogin(f, l); // always log the attempt for admins
       // Gate: only accepted members may enter.
-      if (!isAccepted(f, l)) { showPending(wrap, f); return; }
+      if (!isAccepted(f, l)) {
+        // Push the access request up to the cloud so admins see it on THEIR device.
+        // (This person isn't approved, so startApp/Cloud.init never runs otherwise.)
+        try {
+          if (window.Cloud) {
+            Cloud.init();
+            const key = Store.nameKey(f, l);
+            const entry = Store.getRequests()[key] || { first: f, last: l, ts: Date.now() };
+            Cloud.pushAccessRequest(key, entry);
+          }
+        } catch (e) {}
+        showPending(wrap, f);
+        return;
+      }
 
       Store.setSession({ first: f, last: l, ts: Date.now() });
       if (!Store.getSettings().scoutName) Store.setSettings({ scoutName: full });
