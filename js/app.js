@@ -597,6 +597,19 @@
 
     root.innerHTML = `
       <div class="section">
+        <div class="card">
+          <h2>Quick actions</h2>
+          <div class="btn-row">
+            <button class="btn primary" data-go="match">${icon("plus")} New match</button>
+            <button class="btn secondary" data-go="pit">${icon("wrench")} Pit scout</button>
+            <button class="btn ghost" data-go="bagelstats">${icon("chart")} BagelStats</button>
+            <button class="btn ghost" data-go="picklist">${icon("list")} Pick list</button>
+            <button class="btn ghost" data-go="data">${icon("download")} Export data</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="section">
         <div class="card event-hero">
           <div class="eh-left">
             <span class="eh-label">${icon("calendar")} Current event</span>
@@ -616,19 +629,6 @@
       <div class="section grid cols-2">
         ${kpi("Teams at event", teams.length || "–")}
         ${kpi("Teams w/ data", stats.length)}
-      </div>
-
-      <div class="section">
-        <div class="card">
-          <h2>Quick actions</h2>
-          <div class="btn-row">
-            <button class="btn primary" data-go="match">${icon("plus")} New match</button>
-            <button class="btn secondary" data-go="pit">${icon("wrench")} Pit scout</button>
-            <button class="btn ghost" data-go="bagelstats">${icon("chart")} BagelStats</button>
-            <button class="btn ghost" data-go="picklist">${icon("list")} Pick list</button>
-            <button class="btn ghost" data-go="data">${icon("download")} Export data</button>
-          </div>
-        </div>
       </div>
 
       <div class="section">
