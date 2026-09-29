@@ -322,8 +322,13 @@
     const quals = synthSchedule(teams.map((t) => t.team_number));
     Store.setCache("teams." + TEST_EVENT_KEY, { data: teams, ts: Date.now() });
     Store.setCache("testTemplate", { data: quals, ts: Date.now() });
-    Store.setSettings({ testEvent: { currentQual: 1, total: quals.length, teams: teams.length, srcName: "CA Glendale" } });
+    Store.setSettings({ testEvent: { currentQual: 1, total: quals.length, teams: teams.length, srcName: "CA Glendale", cloud: Cloud.enabled() } });
     applyTestTime(1);
+    // Share it with the whole team so everyone rehearses on the same event.
+    if (window.Cloud && Cloud.enabled()) {
+      lastTestEventTs = Date.now();
+      Cloud.pushTestEvent({ teams, template: quals, currentQual: 1, total: quals.length, srcName: "CA Glendale" });
+    }
   }
 
   // Re-derive the test event's cached matches so qual N is "about to start":
@@ -359,6 +364,39 @@
     Store.setCache("matches." + TEST_EVENT_KEY, { data, ts: Date.now() });
     const te = Store.getSettings().testEvent || {};
     Store.setSettings({ testEvent: { ...te, currentQual: n, total } });
+  }
+
+  // Mirror the cloud-shared test event onto THIS device (teams + schedule + current
+  // qual), so the whole team rehearses on the same synthetic event. Returns true
+  // when something changed (so the caller can re-render). No-op when cloud is off.
+  let lastTestEventTs = 0;      // updatedAt of the cloud test event we last applied
+  let cloudTestSeen = false;    // have we ever applied a cloud test event this session?
+  function applyCloudTestEvent() {
+    if (!(window.Cloud && Cloud.enabled && Cloud.enabled())) return false;
+    const cte = Cloud.getTestEvent && Cloud.getTestEvent();
+    if (cte && Array.isArray(cte.template) && cte.template.length && Array.isArray(cte.teams) && cte.teams.length) {
+      cloudTestSeen = true;
+      if (cte.updatedAt && cte.updatedAt === lastTestEventTs) return false; // already applied
+      lastTestEventTs = cte.updatedAt || Date.now();
+      Store.setCache("teams." + TEST_EVENT_KEY, { data: cte.teams, ts: Date.now() });
+      Store.setCache("testTemplate", { data: cte.template, ts: Date.now() });
+      Store.setSettings({ testEvent: { currentQual: cte.currentQual || 1, total: cte.total || cte.template.length,
+        teams: cte.teams.length, srcName: cte.srcName || "CA Glendale", cloud: true } });
+      applyTestTime(cte.currentQual || 1);
+      return true;
+    }
+    // Cloud test event was deleted → remove it locally too (only if we'd synced one).
+    if (cloudTestSeen) {
+      cloudTestSeen = false; lastTestEventTs = 0;
+      const wasActive = Store.getSettings().eventKey === TEST_EVENT_KEY;
+      Store.setSettings({ testEvent: null });
+      Store.setCache("matches." + TEST_EVENT_KEY, null);
+      Store.setCache("teams." + TEST_EVENT_KEY, null);
+      Store.setCache("testTemplate", null);
+      if (wasActive) Store.setSettings({ eventKey: "", eventName: "" });
+      return true;
+    }
+    return false;
   }
 
   /* ---- Bagel Bucks gating -------------------------------------------------- */
@@ -2888,7 +2926,12 @@
     const teActivate = $("#teActivate", root);
     if (teActivate) teActivate.onclick = () => { selectEvent(TEST_EVENT_KEY, TEST_EVENT_NAME); };
     const teQual = $("#teQual", root);
-    const setTestQual = (v) => { applyTestTime(v); const c = (Store.getSettings().testEvent || {}).currentQual; toast("Q" + c + " is now up next"); renderAdmin(root); };
+    const setTestQual = (v) => {
+      applyTestTime(v);
+      const te2 = Store.getSettings().testEvent || {};
+      if (window.Cloud && Cloud.enabled()) { lastTestEventTs = Date.now(); Cloud.pushTestQual(te2.currentQual, te2.total); }
+      toast("Q" + te2.currentQual + " is now up next"); renderAdmin(root);
+    };
     const teSet = $("#teSetQual", root);
     if (teSet && teQual) teSet.onclick = () => setTestQual(teQual.value);
     const teMinus = $("#teMinus", root);
@@ -2903,6 +2946,8 @@
       Store.setCache("teams." + TEST_EVENT_KEY, null);
       Store.setCache("testTemplate", null);
       if (wasActive) Store.setSettings({ eventKey: "", eventName: "" });
+      cloudTestSeen = false; lastTestEventTs = 0;
+      if (window.Cloud && Cloud.enabled()) Cloud.clearTestEvent();
       toast("Test event deleted"); refreshChrome(); renderAdmin(root);
     });
 
@@ -3229,7 +3274,13 @@
     Cloud.syncMe();
     Cloud.heartbeat();
     setInterval(() => Cloud.heartbeat(), 45 * 1000);
-    Cloud.onChange(() => { if (["members", "picklist", "data", "admin", "match", "pit"].includes(current())) router(); });
+    Cloud.onChange(() => {
+      const teChanged = applyCloudTestEvent();
+      if (teChanged) refreshChrome();
+      if (teChanged || ["members", "picklist", "data", "admin", "match", "pit"].includes(current())) router();
+    });
+    // Adopt any already-shared test event on startup.
+    setTimeout(() => { if (applyCloudTestEvent()) { refreshChrome(); router(); } }, 1500);
     // After the first cloud snapshot has merged the shared roster in, push our
     // roster back up so a brand-new access request from this device reaches the
     // admins even when a shared roster already exists.

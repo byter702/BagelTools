@@ -66,7 +66,11 @@
 
     // Admin config: form schemas + member roster, shared across all devices.
     db.collection("config").onSnapshot(function (snap) {
-      snap.docs.forEach(function (d) { cache.config[d.id] = d.data(); });
+      // Rebuild from scratch each snapshot so DELETED config docs (e.g. a removed
+      // test event or a reset form) actually disappear on every device.
+      var next = {};
+      snap.docs.forEach(function (d) { next[d.id] = d.data(); });
+      cache.config = next;
       // Fold the shared roster into the local store so every device recognizes
       // the same approved members and pending access requests.
       try {
@@ -212,6 +216,39 @@
       db.collection("config").doc("pitForm").delete()
         .catch(function (e) { log("clearPitForm failed", e); });
     },
+
+    // ---- Shared TEST EVENT (config/testEvent) ----
+    // The whole team rehearses on the same synthetic event: the admin's teams +
+    // schedule template + "current qual" are stored here, and every device rebuilds
+    // the same matches deterministically from applyTestTime(currentQual).
+    pushTestEvent: function (payload) {
+      if (!this.enabled()) return;
+      db.collection("config").doc("testEvent")
+        .set(clean({
+          teams: (payload && payload.teams) || [],
+          template: (payload && payload.template) || [],
+          currentQual: (payload && payload.currentQual) || 1,
+          total: (payload && payload.total) || 0,
+          srcName: (payload && payload.srcName) || "",
+          updatedAt: Date.now(),
+        }))
+        .catch(function (e) { log("pushTestEvent failed", e); });
+    },
+    // Lightweight update when the admin only steps the "current qual".
+    pushTestQual: function (n, total) {
+      if (!this.enabled()) return;
+      var patch = { currentQual: n, updatedAt: Date.now() };
+      if (total != null) patch.total = total;
+      db.collection("config").doc("testEvent").set(patch, { merge: true })
+        .catch(function (e) { log("pushTestQual failed", e); });
+    },
+    clearTestEvent: function () {
+      if (!this.enabled()) return;
+      cache.config.testEvent = null;
+      db.collection("config").doc("testEvent").delete()
+        .catch(function (e) { log("clearTestEvent failed", e); });
+    },
+    getTestEvent: function () { return cache.config.testEvent || null; },
     pushRoster: function () {
       if (!this.enabled() || !window.Store) return;
       var members = (Store.getMembers && Store.getMembers()) || {};
