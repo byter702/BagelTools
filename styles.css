@@ -100,6 +100,9 @@ button { font-family: var(--font-ui); }
 
 /* ---- Alliance selection board -------------------------------------------- */
 .alliance-layout { display: grid; grid-template-columns: 1.4fr 1fr; gap: 16px; align-items: start; }
+/* Let the wide alliance table scroll inside its own wrapper instead of forcing the
+   grid column past the viewport (which caused horizontal page scroll on mobile). */
+.alliance-layout > * { min-width: 0; }
 @media (max-width: 900px) { .alliance-layout { grid-template-columns: 1fr; } }
 .ab-wrap { padding: 8px; }
 .ab-table { width: 100%; border-collapse: separate; border-spacing: 6px; }
@@ -110,6 +113,8 @@ button { font-family: var(--font-ui); }
 .ab-slot { height: 52px; border-radius: var(--radius-sm); text-align: center; vertical-align: middle; }
 .ab-slot.empty { border: 1.5px dashed var(--border-strong); color: var(--text-mut); font-size: 1.2rem; cursor: pointer; }
 .ab-slot.empty:hover { border-color: var(--primary); }
+.ab-slot.empty.target { border-color: var(--secondary); border-style: solid;
+  color: var(--secondary); background: color-mix(in srgb, var(--secondary) 12%, transparent); font-weight: 800; }
 .ab-slot.over { border-color: var(--secondary); background: color-mix(in srgb, var(--secondary) 14%, transparent); }
 .ab-slot.filled { position: relative; border: 1.5px solid var(--primary); background: color-mix(in srgb, var(--primary) 14%, var(--surface));
   cursor: grab; padding: 4px 6px; text-align: center; white-space: nowrap; }
@@ -135,6 +140,25 @@ button { font-family: var(--font-ui); }
 .pool-team .pt-dnp { width: 26px; height: 26px; border: none; border-radius: 6px; background: transparent; color: var(--text-mut); cursor: pointer; flex: none; }
 .pool-team .pt-dnp:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
 .pool-team .pt-dnp .ico { width: 15px; height: 15px; }
+/* "+" add-to-slot button — the primary way to place a team on touch devices. */
+.pt-add, .tt-add { flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border: none; cursor: pointer; border-radius: 8px; color: #10233a;
+  background: var(--secondary); box-shadow: 0 1px 0 rgba(0,0,0,.15); }
+.pt-add { width: 30px; height: 30px; }
+.tt-add { width: 26px; height: 26px; border-radius: 6px; }
+.pt-add .ico, .tt-add .ico { width: 17px; height: 17px; }
+.tt-add .ico { width: 15px; height: 15px; }
+.pt-add:hover, .tt-add:hover { filter: brightness(1.08); }
+.pt-add:active, .tt-add:active { transform: translateY(1px); }
+.tier-team.sel { outline: 2px solid var(--secondary); outline-offset: 1px; }
+/* "Placing team X" instruction banner (shown after tapping +). */
+.place-banner { margin: 0 0 12px; padding: 10px 14px; border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--secondary) 16%, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--secondary) 45%, var(--border));
+  color: var(--text); font-size: .9rem; }
+.place-banner b { color: var(--secondary); font-family: var(--font-display); }
+.link-btn { background: none; border: none; padding: 0; color: var(--primary);
+  font: inherit; cursor: pointer; text-decoration: underline; }
 
 .dnp-zone { display: flex; flex-direction: column; gap: 6px; min-height: 48px; border-radius: var(--radius-sm); }
 .dnp-zone.over { outline: 2px dashed var(--danger); outline-offset: 2px; }

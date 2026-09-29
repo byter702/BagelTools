@@ -1667,6 +1667,7 @@
         </div>
       </div>
       <p class="hint">Tap a team to view its BagelStats. Use ${icon("plus")} (or drag) to place a team, then tap a slot. Max pick is the 3rd pick.${b.submitted ? ` <span class="badge green dot">Submitted ${new Date(b.submittedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>` : ""}</p>
+      <div class="place-banner" id="pickBanner" hidden></div>
 
       <div class="alliance-layout">
         <div class="card flush ab-wrap">
@@ -1711,7 +1712,7 @@
           ? `<td class="ab-slot filled" data-a="${a}" data-c="${c}" data-team="${t}" draggable="true">
               <img class="team-avatar" data-avatar="${t}" alt="" /><span class="ab-team">${t}</span>
               <button class="slot-x" data-clear="${a}-${c}" aria-label="Clear">${icon("x")}</button></td>`
-          : `<td class="ab-slot empty" data-a="${a}" data-c="${c}">·</td>`).join("")}
+          : `<td class="ab-slot empty ${pickSelected ? "target" : ""}" data-a="${a}" data-c="${c}">${pickSelected ? "+" : "·"}</td>`).join("")}
       </tr>`).join("");
       paintAvatars(abBody, bb.grid.flat().filter(Boolean));
       wireBoard();
@@ -1772,6 +1773,7 @@
       $("#poolCount", root).textContent = pool.length + " teams";
       poolList.innerHTML = pool.length ? pool.map((t) => `
         <div class="pool-team ${pickSelected === t ? "sel" : ""}" draggable="true" data-team="${t}">
+          <button class="pt-add" data-add="${t}" title="Add to an alliance slot" aria-label="Add ${t} to an alliance slot">${icon("plus")}</button>
           <button class="pt-main" data-stats="${t}">
             <img class="team-avatar" data-avatar="${t}" alt="" />
             <span class="pt-info"><span class="pt-num">${t}</span><span class="pt-name">${esc(teamName(t))}</span></span>
@@ -1786,6 +1788,17 @@
       });
       $$("[data-stats]", poolList).forEach((el) => el.onclick = (e) => { e.stopPropagation(); openTeam(el.dataset.stats); });
       $$("[data-dnp]", poolList).forEach((x) => x.onclick = (e) => { e.stopPropagation(); markDNP(x.dataset.dnp); drawPool(); drawDnp(); });
+      $$("[data-add]", poolList).forEach((x) => x.onclick = (e) => { e.stopPropagation();
+        pickSelected = pickSelected === x.dataset.add ? null : x.dataset.add; drawBoard(); drawPool(); updateBanner(); });
+      updateBanner();
+    }
+    function updateBanner() {
+      const bn = $("#pickBanner", root); if (!bn) return;
+      if (pickSelected) {
+        bn.hidden = false;
+        bn.innerHTML = `Placing <b>${esc(pickSelected)}</b> — tap an alliance slot below to drop it in, or <button class="link-btn" id="cancelPlace">cancel</button>.`;
+        const cx = $("#cancelPlace", root); if (cx) cx.onclick = () => { pickSelected = null; drawBoard(); drawPool(); updateBanner(); };
+      } else { bn.hidden = true; bn.innerHTML = ""; }
     }
     function drawDnp() {
       const bb = getBoard();
@@ -1848,6 +1861,7 @@
         </div>
       </div>
       <p class="hint">Tap a team to view its BagelStats. Use ${icon("plus")} (or drag) to pick a team up, then tap a tier row to place it. <b>Auto-rate</b> sorts every team into S–F by EPA.</p>
+      <div class="place-banner" id="tierBanner" hidden></div>
       <div class="tier-board" id="tierBoard"></div>
       <div class="card" style="margin-top:14px">
         <div class="section-head" style="margin-bottom:10px"><h3 style="margin:0">Unranked</h3><span class="hint" id="tierPoolCount"></span></div>
@@ -1859,7 +1873,8 @@
     let dragTeam = null;
 
     const teamCard = (t, ph) => `
-      <div class="tier-team" draggable="true" data-team="${t}">
+      <div class="tier-team ${tierSelected === t ? "sel" : ""}" draggable="true" data-team="${t}">
+        ${ph ? `<button class="tt-add" data-add="${t}" title="Add to a tier" aria-label="Add ${t} to a tier">${icon("plus")}</button>` : ""}
         <button class="tt-main" data-stats="${t}"><img class="team-avatar" data-avatar="${t}" alt="" /><span class="tt-num">${t}</span></button>
         ${ph ? `` : `<button class="tt-x" data-remove="${t}" aria-label="Remove">${icon("x")}</button>`}
       </div>`;
@@ -1893,6 +1908,8 @@
       });
       $$("[data-stats]", root).forEach((el) => el.onclick = (e) => { e.stopPropagation(); openTeam(el.dataset.stats); });
       $$("[data-remove]", root).forEach((el) => el.onclick = (e) => { e.stopPropagation(); placeInTier(el.dataset.remove, null); });
+      $$("[data-add]", poolEl).forEach((x) => x.onclick = (e) => { e.stopPropagation();
+        tierSelected = tierSelected === x.dataset.add ? null : x.dataset.add; draw(); });
       $$(".tier-row", board).forEach((row) => {
         const tier = row.dataset.tier;
         row.addEventListener("dragover", (e) => { e.preventDefault(); row.classList.add("over"); });
@@ -1902,6 +1919,15 @@
       });
       poolEl.addEventListener("dragover", (e) => e.preventDefault());
       poolEl.addEventListener("drop", (e) => { e.preventDefault(); if (dragTeam) placeInTier(dragTeam, null); });
+      // Placement banner (mobile-friendly: no drag needed)
+      const bn = $("#tierBanner", root);
+      if (bn) {
+        if (tierSelected) {
+          bn.hidden = false;
+          bn.innerHTML = `Placing <b>${esc(tierSelected)}</b> — tap a tier row (S–F) to drop it in, or <button class="link-btn" id="cancelTier">cancel</button>.`;
+          const cx = $("#cancelTier", root); if (cx) cx.onclick = () => { tierSelected = null; draw(); };
+        } else { bn.hidden = true; bn.innerHTML = ""; }
+      }
     }
 
     draw();
