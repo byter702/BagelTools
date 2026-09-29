@@ -214,7 +214,7 @@ button { font-family: var(--font-ui); }
 
 .sidebar-foot { margin-top: auto; padding-top: 12px; border-top: 1px solid var(--border);
   display: flex; flex-direction: column; gap: 8px; }
-.event-chip { font-size: .8rem; color: var(--text-dim); padding: 8px 10px;
+.event-chip { font-size: .8rem; color: var(--text-dim); padding: 8px 10px; margin-bottom: 10px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .event-chip b { color: var(--secondary); font-family: var(--font-display); }
 
@@ -319,6 +319,9 @@ button { font-family: var(--font-ui); }
 .field label { font-weight: 700; font-size: .9rem; color: var(--text); letter-spacing: .02em; }
 .field .help { display: block; font-size: .8rem; color: var(--text-mut); }
 .field.inline { flex-direction: row; align-items: center; justify-content: space-between; gap: 14px; }
+/* Toggle fields stack the switch UNDER the label/help text (not off to the side). */
+.field.bool-field { align-items: flex-start; gap: 8px; }
+.field.bool-field .switch { margin-top: 2px; }
 input[type="text"], input[type="number"], input[type="password"], input[type="search"],
 select, textarea {
   width: 100%; padding: 11px 13px; border-radius: var(--radius-sm);
@@ -555,6 +558,8 @@ td .team-num { font-family: var(--font-display); font-weight: 700; }
   border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: .86rem; font-weight: 600; }
 .user-chip .ico { width: 18px; height: 18px; color: var(--primary); flex: none; }
 .user-chip span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-chip #userChipName { cursor: pointer; }
+.user-chip #userChipName:hover { text-decoration: underline; color: var(--primary); }
 
 /* ---- BagelStats leaderboard ---------------------------------------------- */
 table.lb tbody tr { cursor: pointer; }

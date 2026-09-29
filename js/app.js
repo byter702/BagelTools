@@ -153,8 +153,8 @@
         const on = !!val;
         control = `<label class="switch"><input type="checkbox" ${on ? "checked" : ""}
           aria-label="${esc(f.label)}"><span class="slider"></span></label>`;
-        return `<div class="field inline" data-key="${f.key}" data-type="bool">
-          <div><label>${esc(f.label)}</label>${help}</div>${control}</div>`;
+        return `<div class="field bool-field" data-key="${f.key}" data-type="bool">
+          <label>${esc(f.label)}</label>${help}${control}</div>`;
       }
       case "counter": {
         const v = Number(val || 0);
@@ -3259,6 +3259,8 @@
     };
     const logoutBtn = $("#logoutBtn");
     if (logoutBtn) logoutBtn.onclick = () => confirmDialog("Log out of the scouting app?", () => Auth.logout());
+    const userName = $("#userChipName");
+    if (userName) { userName.title = "View your profile"; userName.onclick = () => { location.hash = "#/members/profile/" + Store.getMe().id; }; }
     const chip = $("#eventChip");
     if (chip) { chip.classList.add("clickable"); chip.title = "Click to change event";
       chip.onclick = openEventPicker; }
