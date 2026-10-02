@@ -3305,7 +3305,11 @@
     Cloud.onChange(() => {
       const teChanged = applyCloudTestEvent();
       if (teChanged) refreshChrome();
-      if (teChanged || ["members", "picklist", "data", "admin", "match", "pit"].includes(current())) router();
+      // NEVER auto-re-render while the user is filling the match/pit ENTRY forms —
+      // a background cloud snapshot (another scout's heartbeat/data) would rebuild
+      // the form and wipe everything they typed. Those pages refresh on next visit.
+      if (["match", "pit"].includes(current())) return;
+      if (teChanged || ["members", "picklist", "data", "admin"].includes(current())) router();
     });
     // Adopt any already-shared test event on startup.
     setTimeout(() => { if (applyCloudTestEvent()) { refreshChrome(); router(); } }, 1500);
