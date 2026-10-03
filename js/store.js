@@ -106,6 +106,8 @@ const Store = (() => {
     if (on) list.push(eventKey);
     write("bbApproved", list);
   }
+  // Replace the approved-events list (used to fold in the cloud-shared list).
+  function setBBApprovedList(list) { write("bbApproved", Array.isArray(list) ? [...new Set(list)] : []); }
 
   // ---- Scouter profiles ("me") + Bagel Bucks ------------------------------
   // Each login NAME is its own account. Profiles are stored keyed by nameKey
@@ -365,7 +367,7 @@ const Store = (() => {
     getPits, savePit, deletePit,
     getPicklist, setPicklist,
     getTierlist, setTierlist,
-    getBBApproved, isBBApproved, approveBBEvent,
+    getBBApproved, isBBApproved, approveBBEvent, setBBApprovedList,
     getMe, setMe, getMeAccounts, removeAccountById, scouterIdFor, recordMatchScouted, recordPitScouted,
     getStrategy, setStrategy,
     getSession, setSession, clearSession,

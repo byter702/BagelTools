@@ -95,6 +95,10 @@
       try {
         var r = cache.config.roster;
         if (r && window.Store && Store.mergeRoster) Store.mergeRoster(r.members, r.requests);
+        // Fold the shared Bagel Bucks approved-event list into local so every
+        // device knows which events earn BB (admin approval is team-wide).
+        var bb = cache.config.bbApproved;
+        if (bb && window.Store && Store.setBBApprovedList) Store.setBBApprovedList(bb.events || []);
       } catch (e) {}
       // First time: if the cloud has no shared form/roster yet but this device
       // has local customizations, push them up so nothing is lost on migration.
@@ -107,6 +111,8 @@
             Cloud.pushPitForm(Store.getPitSchema());
           if (!cache.config.roster && window.Store && Store.getMembers)
             Cloud.pushRoster();
+          if (!cache.config.bbApproved && window.Store && Store.getBBApproved && Store.getBBApproved().length)
+            Cloud.pushBBApproved(Store.getBBApproved());
         } catch (e) {}
       }
       fire();
@@ -278,6 +284,13 @@
       db.collection("config").doc("roster")
         .set(clean({ members: members, requests: requests, updatedAt: Date.now() }))
         .catch(function (e) { log("pushRoster failed", e); });
+    },
+    // Team-wide Bagel Bucks approval: which events earn BB (shared by the admin).
+    pushBBApproved: function (events) {
+      if (!this.enabled()) return;
+      db.collection("config").doc("bbApproved")
+        .set({ events: clean(events || []), updatedAt: Date.now() })
+        .catch(function (e) { log("pushBBApproved failed", e); });
     },
     // Add ONE access request to the shared roster without touching the rest of it.
     // Used at login by not-yet-approved people (who may have an empty local roster),

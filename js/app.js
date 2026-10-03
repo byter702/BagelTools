@@ -454,6 +454,11 @@
     enabled: () => false, init() {}, syncMe() {}, heartbeat() {},
     pushMatches() {}, pushPits() {}, pushPicklist() {}, pushTierlist() {},
     pushMatchForm() {}, pushPitForm() {}, clearMatchForm() {}, clearPitForm() {}, pushRoster() {},
+    pushBBApproved() {}, pushAccessRequest() {},
+    pushClaim() {}, releaseClaim() {}, releaseMyClaims() {}, getClaims: () => [],
+    pushActivity() {}, onActivity() {},
+    pushTestEvent() {}, pushTestQual() {}, clearTestEvent() {}, getTestEvent: () => null,
+    deleteScouter: () => Promise.reject(new Error("cloud off")),
     getMatchForm: () => null, getPitForm: () => null, getRoster: () => null,
     clearAllScoutingData: () => Promise.reject(new Error("cloud off")),
     getScouters: () => [], getSharedBoards: () => [], getSharedTierlists: () => [],
@@ -3247,7 +3252,8 @@
       const evk = Store.getSettings().eventKey || "";
       const on = !Store.isBBApproved(evk);
       Store.approveBBEvent(evk, on);
-      toast(on ? "BB earning approved for this event" : "BB earning turned off");
+      Cloud.pushBBApproved(Store.getBBApproved()); // team-wide: every device earns BB for it
+      toast(on ? "BB earning approved for this event (team-wide)" : "BB earning turned off");
       renderAdmin(root);
     };
 
