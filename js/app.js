@@ -10,6 +10,11 @@
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const icon = (name, cls = "ico") => `<svg class="${cls}" aria-hidden="true"><use href="#ic-${name}"/></svg>`;
   const fmt = (n, d = 1) => (n == null || isNaN(n)) ? "–" : Number(n).toFixed(d).replace(/\.0$/, "");
+  // The scout's name is always the logged-in user (no manual field anymore).
+  function scoutDisplayName() {
+    const u = (window.Auth && Auth.currentUser && Auth.currentUser()) || null;
+    return u ? `${u.first || ""} ${u.last || ""}`.trim() : (Store.getSettings().scoutName || "");
+  }
 
   const view = $("#view");
   const app = $("#app");
@@ -553,6 +558,7 @@
     $("#pageTitle").textContent = route.title;
     $$("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === r));
     app.classList.remove("nav-open");
+    document.body.classList.remove("nav-lock");
     view.innerHTML = "";
     route.render(view);
     view.focus();
@@ -1359,7 +1365,6 @@
           <div class="field"><label>Upcoming match</label>
             <select id="mMatchSel"><option value="">Select match…</option>${upcomingQuals.map((m) =>
               `<option value="${m.match_number}">Q${m.match_number}${esc(fmtTime(m.predicted_time || m.time))}</option>`).join("")}</select></div>
-          <div class="field"><label>Scout name</label><input type="text" id="mScout" value="${esc(s.scoutName || "")}" placeholder="You" /></div>
         </div>
         <div id="robotPicker" class="robot-picker"><p class="hint">Pick a match above, then tap the robot you're scouting.</p></div>
         <input type="hidden" id="mNum" /><input type="hidden" id="mTeam" />
@@ -1372,7 +1377,6 @@
             <div class="pill-toggle" id="mAlliance">
               <button type="button" data-v="red" class="on">Red</button>
               <button type="button" data-v="blue">Blue</button></div></div>
-          <div class="field"><label>Scout name</label><input type="text" id="mScout" value="${esc(s.scoutName || "")}" placeholder="You" /></div>
         </div>
       </div>`;
 
@@ -1450,13 +1454,12 @@
       const fields = readForm($(".grid.cols-2", root));
       const entry = {
         id: matchEditId || undefined,
-        event: s.eventKey, scout: $("#mScout", root).value.trim(),
+        event: s.eventKey, scout: scoutDisplayName(),
         matchNumber: $("#mNum", root).value.trim(), team, alliance, ...fields,
       };
       const isNew = !matchEditId;
       const ok = Store.saveMatch(entry);
       if (!ok) { toast("Couldn't save — device storage is full. Export & clear old data (Data tab).", "err"); return; }
-      if ($("#mScout", root).value.trim()) Store.setSettings({ scoutName: $("#mScout", root).value.trim() });
       if (isNew) {
         const earn = canEarnBB();
         Store.recordMatchScouted(team, earn);
@@ -1508,7 +1511,6 @@
     renderMatch(root); // re-render in edit (non-live) mode so all inputs exist
     $("#mNum", root).value = m.matchNumber || "";
     if ($("#mTeam", root)) $("#mTeam", root).value = m.team || "";
-    $("#mScout", root).value = m.scout || "";
     $$("#mAlliance button", root).forEach((x) => x.classList.toggle("on", x.dataset.v === m.alliance));
     // re-render field values
     matchFields().forEach((f) => {
@@ -1544,9 +1546,8 @@
         <div class="card" style="margin-bottom:16px">
           <div class="form-grid">
             <div class="field"><label>Team</label>${teamControl}</div>
-            <div class="field"><label>Scout name</label><input type="text" id="pScout" value="${esc(Store.getSettings().scoutName || "")}" /></div>
             <div class="field"><label>Robot photo</label>
-              <input type="file" id="pPhoto" accept="image/*" capture="environment" />
+              <input type="file" id="pPhoto" accept="image/*" />
               <div id="pPhotoPreview" class="photo-preview"></div></div>
           </div>
         </div>
@@ -1586,13 +1587,11 @@
       const team = $("#pTeam", root).value.trim();
       if (!team) { toast("Pick a team first", "err"); return; }
       const fields = readForm($("#pitForm .card:nth-of-type(2)", root));
-      const scout = $("#pScout", root).value.trim();
-      const data = { ...fields, scout, event: Store.getSettings().eventKey, nickname: teamName(team) };
+      const data = { ...fields, scout: scoutDisplayName(), event: Store.getSettings().eventKey, nickname: teamName(team) };
       if (pitPhoto) data.photo = pitPhoto; // keep existing photo if none newly chosen
       const isNewPit = !Store.getPits()[team]; // BB only for a team not already pit-scouted
       const ok = Store.savePit(team, data);
       if (!ok) { toast("Couldn't save — storage full. Remove the photo or export & clear old data (Data tab).", "err"); return; }
-      if (scout) Store.setSettings({ scoutName: scout });
       if (isNewPit) {
         const earn = canEarnBB();
         Store.recordPitScouted(team, earn);
@@ -3408,13 +3407,11 @@
             <button class="btn primary sm" id="saveKey">${icon("check")} Save override</button>
           </details>
         </div>
-        <div class="card"><h2>Scout</h2>
-          <div class="field"><label>Your name</label><input type="text" id="setScout" value="${esc(s.scoutName || "")}" placeholder="Shows on records you save" /></div>
+        <div class="card"><h2>Preferences</h2>
           <div class="field"><label>Theme</label>
             <div class="pill-toggle" id="setTheme">
               <button data-v="dark" class="${s.theme !== "light" ? "on" : ""}">Dark</button>
               <button data-v="light" class="${s.theme === "light" ? "on" : ""}">Light</button></div></div>
-          <button class="btn secondary sm" id="saveScout">${icon("check")} Save</button>
         </div>
       </div>
 
@@ -3452,10 +3449,6 @@
       Store.setSettings({ tbaKey: key });
       toast(key ? "Personal key saved" : "Override cleared — using built-in key");
       renderSettings(root);
-    };
-    $("#saveScout", root).onclick = () => {
-      Store.setSettings({ scoutName: $("#setScout", root).value.trim() });
-      toast("Saved"); refreshChrome();
     };
     $("#savePitMap", root).onclick = () => {
       Store.setSettings({ pitMapUrl: $("#setPitMapUrl", root).value.trim(), pitMapEnabled: $("#setPitMapOn", root).checked });
@@ -3518,8 +3511,9 @@
   function applyTheme(theme) { document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "dark"); }
 
   function startApp(loginStatus) {
-    $("#menuBtn").onclick = () => app.classList.toggle("nav-open");
-    $("#scrim").onclick = () => app.classList.remove("nav-open");
+    const syncNavLock = () => document.body.classList.toggle("nav-lock", app.classList.contains("nav-open"));
+    $("#menuBtn").onclick = () => { app.classList.toggle("nav-open"); syncNavLock(); };
+    $("#scrim").onclick = () => { app.classList.remove("nav-open"); syncNavLock(); };
     $("#themeToggle").onclick = () => {
       const cur = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
       const next = cur === "light" ? "dark" : "light";
@@ -3543,6 +3537,7 @@
     Cloud.init();
     Cloud.syncMe();
     Cloud.heartbeat();
+    Cloud.releaseMyClaims(); // a fresh load = no active selection, so clear my old claims
     setInterval(() => Cloud.heartbeat(), 45 * 1000);
     Cloud.onChange(() => {
       const teChanged = applyCloudTestEvent();

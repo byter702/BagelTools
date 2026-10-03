@@ -341,6 +341,18 @@
       db.collection("claims").doc(this.claimId(ev, matchNumber, team)).delete()
         .catch(function () {});
     },
+    // Drop every claim this scout owns — called on load so a refresh clears a stale
+    // selection (otherwise an abandoned pick would keep locking a robot for others).
+    releaseMyClaims: function () {
+      if (!this.enabled()) return;
+      var m = me(); if (!m || !m.id) return;
+      db.collection("claims").where("scouterId", "==", m.id).get().then(function (snap) {
+        if (snap.empty) return;
+        var batch = db.batch();
+        snap.docs.forEach(function (d) { batch.delete(d.ref); });
+        return batch.commit();
+      }).catch(function (e) { log("releaseMyClaims failed", e); });
+    },
     getClaims: function () { return cache.claims || []; },
 
     // ---- Activity feed (global scout popup) ----
