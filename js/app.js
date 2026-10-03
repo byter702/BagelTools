@@ -1683,11 +1683,9 @@
         <div class="row" style="gap:12px"><span class="badge cyan dot">Scouted</span><span class="badge red dot">Not yet</span></div>
       </div>
       <div class="socal-map-scroll"><div class="socal-map">
-        ${col(SOCAL_PITMAP.colA, true)}
-        ${col(SOCAL_PITMAP.colB, false)}
-        <div class="socal-field">Field</div>
-        ${col(SOCAL_PITMAP.colC, false)}
-        ${col(SOCAL_PITMAP.colD, true)}
+        <div class="socal-side">${col(SOCAL_PITMAP.colA, true)}${col(SOCAL_PITMAP.colB, false)}</div>
+        <div class="socal-field"><span>FIELD</span></div>
+        <div class="socal-side">${col(SOCAL_PITMAP.colC, false)}${col(SOCAL_PITMAP.colD, true)}</div>
       </div></div>
     </div>`;
   }

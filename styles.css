@@ -910,16 +910,31 @@ table.lb th.sortable:hover { color: var(--primary); }
 .robot-pick.claimed .rp-claim { color: var(--text-mut); }
 
 /* ---- SoCal Showdown pit map --------------------------------------------- */
-.socal-map-scroll { overflow-x: auto; padding-bottom: 6px; }
-.socal-map { display: flex; align-items: flex-start; gap: 18px; min-width: min-content;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
-.socal-col { display: flex; flex-direction: column; gap: 6px; }
-.socal-row { display: flex; gap: 0; }
-.pit-cell.socal { width: 54px; height: 44px; border-radius: 0; border: 1px solid var(--border-strong);
-  margin: -0.5px; font-size: .82rem; }
-.socal-col.wide .pit-cell.socal { width: 50px; }
-.socal-field { align-self: center; font-family: var(--font-display); font-weight: 800; letter-spacing: .08em;
-  color: var(--text-dim); writing-mode: horizontal-tb; padding: 0 12px; min-width: 60px; text-align: center; }
+.socal-map-scroll { overflow-x: auto; padding: 4px 2px 8px; }
+.socal-map { display: flex; justify-content: center; align-items: stretch; gap: 26px; min-width: min-content;
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  border: 1px solid var(--border); border-radius: 16px; padding: 22px 24px; }
+.socal-side { display: flex; align-items: flex-start; gap: 16px; }
+.socal-col { display: flex; flex-direction: column; gap: 8px; }
+.socal-row { display: flex; gap: 8px; }
+.pit-cell.socal { width: 56px; height: 48px; border-radius: 11px; margin: 0;
+  border: 1.5px solid transparent; font-size: .84rem; font-weight: 700;
+  transition: transform .12s ease, box-shadow .15s ease, border-color .15s ease; }
+.pit-cell.socal:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,.18); }
+.pit-cell.socal .pc-team { font-size: .82rem; letter-spacing: -.01em; }
+.pit-cell.socal.done { background: color-mix(in srgb, var(--primary) 20%, var(--surface));
+  border-color: color-mix(in srgb, var(--primary) 55%, transparent); color: var(--text); }
+.pit-cell.socal.todo { background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent); color: color-mix(in srgb, var(--danger) 80%, var(--text)); }
+.socal-field { align-self: stretch; display: flex; align-items: center; justify-content: center;
+  min-width: 96px; border-radius: 14px;
+  background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--primary) 7%, var(--surface-2)) 0 22px, color-mix(in srgb, var(--primary) 11%, var(--surface-2)) 22px 44px);
+  border: 1.5px dashed color-mix(in srgb, var(--primary) 38%, var(--border)); }
+.socal-field span { font-family: var(--font-display); font-weight: 800; letter-spacing: .32em;
+  color: color-mix(in srgb, var(--primary) 70%, var(--text-dim)); writing-mode: vertical-rl; transform: rotate(180deg);
+  font-size: 1.05rem; }
+@media (max-width: 560px) { .socal-map { gap: 16px; padding: 16px; } .socal-side { gap: 10px; }
+  .pit-cell.socal { width: 46px; height: 42px; font-size: .76rem; } .socal-field { min-width: 60px; } }
 
 /* ---- Teams list (Events > Teams) ---------------------------------------- */
 .team-list { display: flex; flex-direction: column; gap: 8px; }
