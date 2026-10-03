@@ -268,21 +268,21 @@
   function teamName(num) {
     const t = eventTeams().find((t) => String(t.team_number) === String(num));
     if (t) return t.nickname || t.name || "";
-    const pit = Store.getPits()[num];
+    const pit = allPits()[num];
     return pit && pit.nickname ? pit.nickname : "";
   }
   function allScoutedTeams() {
-    // union of teams appearing in match data + pit data + event roster
+    // union of teams appearing in match data + pit data (cloud + local, whole team)
     const set = new Set();
-    Store.getMatches().forEach((m) => set.add(String(m.team)));
-    Object.keys(Store.getPits()).forEach((t) => set.add(String(t)));
+    allMatches().forEach((m) => set.add(String(m.team)));
+    Object.keys(allPits()).forEach((t) => set.add(String(t)));
     return [...set].filter(Boolean).sort((a, b) => Number(a) - Number(b));
   }
 
   /* ---- Stats aggregation --------------------------------------------------- */
   function avg(arr) { return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0; }
   function computeStats(team) {
-    const ms = Store.getMatches().filter((m) => String(m.team) === String(team));
+    const ms = allMatches().filter((m) => String(m.team) === String(team));
     const n = ms.length;
     const cyclesOf = (m) => Number(m.autoCycles || 0) + Number(m.teleCycles || 0) + Number(m.endCycles || 0);
     return {
@@ -552,8 +552,13 @@
   }
   function current() { return (location.hash.replace(/^#\/?/, "") || "dashboard").split("/")[0]; }
 
+  let prevRoute = null;
   function router() {
     const r = current();
+    // Leaving the match page drops my robot claim so it doesn't keep locking that
+    // robot for everyone else (and so coming back + picking again doesn't double up).
+    if (prevRoute === "match" && r !== "match" && window.Cloud) Cloud.releaseMyClaims();
+    prevRoute = r;
     const route = routes[r] || routes.dashboard;
     $("#pageTitle").textContent = route.title;
     $$("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === r));
@@ -663,8 +668,8 @@
      VIEW: DASHBOARD
      ======================================================================== */
   function renderDashboard(root) {
-    const matches = Store.getMatches();
-    const pits = Store.getPits();
+    const matches = allMatches();
+    const pits = allPits();
     const s = Store.getSettings();
     const teams = eventTeams();
     const stats = allScoutedTeams().map(computeStats).filter((x) => x.matches > 0);
@@ -1012,7 +1017,7 @@
     const listEl = $("#teamList", root);
     function draw(filter = "") {
       const f = filter.toLowerCase();
-      const pits = Store.getPits();
+      const pits = allPits();
       let list = teams.filter((t) => !f ||
         String(t.team_number).includes(f) || (t.nickname || "").toLowerCase().includes(f));
       list = list.slice().sort((a, b) => {
@@ -1177,8 +1182,8 @@
   /* ---- Team detail modal --------------------------------------------------- */
   function openTeam(team) {
     const st = computeStats(team);
-    const pit = Store.getPits()[team];
-    const ms = Store.getMatches().filter((m) => String(m.team) === String(team));
+    const pit = allPits()[team];
+    const ms = allMatches().filter((m) => String(m.team) === String(team));
 
     const statRows = [
       ["Matches scouted", st.matches],
@@ -1589,7 +1594,7 @@
       const fields = readForm($("#pitForm .card:nth-of-type(2)", root));
       const data = { ...fields, scout: scoutDisplayName(), event: Store.getSettings().eventKey, nickname: teamName(team) };
       if (pitPhoto) data.photo = pitPhoto; // keep existing photo if none newly chosen
-      const isNewPit = !Store.getPits()[team]; // BB only for a team not already pit-scouted
+      const isNewPit = !allPits()[team]; // BB only for a team not already pit-scouted (by anyone)
       const ok = Store.savePit(team, data);
       if (!ok) { toast("Couldn't save — storage full. Remove the photo or export & clear old data (Data tab).", "err"); return; }
       if (isNewPit) {
@@ -1609,7 +1614,7 @@
     renderPit._setPhoto = (dataUrl) => { pitPhoto = dataUrl; showPhotoPreview(dataUrl); };
 
     function drawPitList() {
-      const pits = Store.getPits();
+      const pits = allPits();
       const teamsArr = Object.values(pits).sort((a, b) => Number(a.team) - Number(b.team));
       const el = $("#pitList", root);
       if (!teamsArr.length) { el.innerHTML = `<div class="card">${emptyState("wrench", "No pit data yet", "Fill the form and save.")}</div>`; return; }
@@ -1634,7 +1639,7 @@
     }
   }
   function loadPitIntoForm(team, root) {
-    const p = Store.getPits()[team]; if (!p) return;
+    const p = allPits()[team]; if (!p) return;
     $("#pTeam", root).value = team;
     pitFields().forEach((f) => {
       const wrap = $(`#pitForm .card:nth-of-type(2) [data-key="${f.key}"]`, root);
@@ -1695,7 +1700,7 @@
     if (!container) return;
     const s = Store.getSettings();
     if (isSocalShowdown(s)) {
-      container.innerHTML = socalPitMapCard(Store.getPits());
+      container.innerHTML = socalPitMapCard(allPits());
       $$(".pit-cell", container).forEach((b) => b.onclick = () => {
         prefillPitTeam(b.dataset.team);
         const fm = $("#pitForm", root); if (fm) fm.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1705,7 +1710,7 @@
     const url = (s.pitMapUrl || "").trim();
     const teams = eventTeams().slice().sort((a, b) => a.team_number - b.team_number);
     if (!s.pitMapEnabled || (!url && !teams.length)) { container.innerHTML = ""; return; }
-    const pits = Store.getPits();
+    const pits = allPits();
     const doneN = teams.filter((t) => pits[t.team_number]).length;
     container.innerHTML = `
       <div class="card" style="margin-bottom:16px">
@@ -1991,7 +1996,7 @@
     function passes(team) {
       if (poolSearch) { const f = poolSearch.toLowerCase(); if (!String(team).includes(f) && !teamName(team).toLowerCase().includes(f)) return false; }
       if (!poolTraits.length) return true;
-      const p = Store.getPits()[team] || {};
+      const p = allPits()[team] || {};
       const selByKey = {};
       for (const tok of poolTraits) {
         if (tok === "d") { if (computeStats(team).defenseRate <= 0.5) return false; }
