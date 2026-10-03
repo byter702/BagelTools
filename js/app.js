@@ -1906,6 +1906,7 @@
         <h2 style="margin:0">Alliance selection</h2>
         <div class="btn-row">
           ${b.cols.length < MAX_COLS ? `<button class="btn ghost sm" id="addCol">${icon("plus")} Add pick column</button>` : ""}
+          <button class="btn ghost sm" id="clearBoard">${icon("trash")} Clear list</button>
           ${b.cols.length > 3 ? `<button class="btn ghost sm" id="delCol">Remove last column</button>` : ""}
           <button class="btn primary sm" id="submitBoard">${icon("check")} ${b.submitted ? "Update selections" : "Submit selections"}</button>
         </div>
@@ -2075,6 +2076,10 @@
       bb.cols.push(COL_NAMES[bb.cols.length]); bb.grid.forEach((row) => row.push(null)); saveBoard(bb); renderPicklist(view);
     };
     const dc = $("#delCol", root); if (dc) dc.onclick = () => { const bb = getBoard(); if (bb.cols.length <= 3) return; bb.cols.pop(); bb.grid.forEach((row) => row.pop()); saveBoard(bb); renderPicklist(view); };
+    const clr = $("#clearBoard", root); if (clr) clr.onclick = () => confirmDialog("Clear the whole alliance board? This empties every slot and the Do-Not-Pick list.", () => {
+      const bb = getBoard(); bb.grid = bb.grid.map((row) => row.map(() => null)); bb.dnp = []; pickSelected = null;
+      saveBoard(bb); renderPicklist(view); toast("Alliance board cleared");
+    });
     $("#submitBoard", root).onclick = () => {
       const bb = getBoard(); bb.submitted = true; bb.submittedAt = Date.now(); saveBoard(bb);
       Cloud.pushPicklist();
