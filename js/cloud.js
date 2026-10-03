@@ -25,12 +25,15 @@
   var db = null;
   var ready = false;
   var changeCbs = [];
+  var activityCbs = [];
+  var activitySeeded = false;
   var cache = { scouters: [], boards: [], tierlists: [], matches: [], pits: [],
-    config: { matchForm: null, pitForm: null, roster: null } };
+    claims: [], activity: [], config: { matchForm: null, pitForm: null, roster: null } };
   var lastPush = { matches: 0, pits: 0 };
   var cfgBootstrapped = false;
 
   function fire() { changeCbs.forEach(function (cb) { try { cb(); } catch (e) {} }); }
+  function fireActivity(d) { activityCbs.forEach(function (cb) { try { cb(d); } catch (e) {} }); }
   function me() { return (window.Store && Store.getMe && Store.getMe()) || null; }
   function eventKey() {
     return (window.Store && Store.getSettings && Store.getSettings().eventKey) || "";
@@ -63,6 +66,22 @@
       cache.pits = snap.docs.map(function (d) { return d.data(); });
       fire();
     }, function (e) { log("pits listen failed", e); });
+
+    // Match claims: which team in which match is already being scouted (live lock).
+    db.collection("claims").onSnapshot(function (snap) {
+      cache.claims = snap.docs.map(function (d) { return d.data(); });
+      fire();
+    }, function (e) { log("claims listen failed", e); });
+
+    // Activity feed: drives the global "someone just scouted" popup. The first
+    // snapshot is a seed (don't pop up on page load); later additions notify.
+    db.collection("activity").orderBy("ts", "desc").limit(20).onSnapshot(function (snap) {
+      cache.activity = snap.docs.map(function (d) { return d.data(); });
+      if (!activitySeeded) { activitySeeded = true; return; }
+      snap.docChanges().forEach(function (ch) {
+        if (ch.type === "added") fireActivity(ch.doc.data());
+      });
+    }, function (e) { log("activity listen failed", e); });
 
     // Admin config: form schemas + member roster, shared across all devices.
     db.collection("config").onSnapshot(function (snap) {
@@ -303,6 +322,40 @@
         fire();
       });
     },
+
+    // ---- Match claims (live "who's scouting what") ----
+    claimId: function (ev, matchNumber, team) { return ev + "_q" + matchNumber + "_" + team; },
+    pushClaim: function (ev, matchNumber, team, alliance) {
+      if (!this.enabled() || !ev || !matchNumber || !team) return;
+      var m = me();
+      var doc = clean({
+        eventKey: ev, matchNumber: String(matchNumber), team: String(team), alliance: alliance || "",
+        scouterId: m ? m.id : "", scouterName: m ? ((m.first || "") + " " + (m.last || "")).trim() : "Someone",
+        ts: Date.now(),
+      });
+      db.collection("claims").doc(this.claimId(ev, matchNumber, team)).set(doc)
+        .catch(function (e) { log("pushClaim failed", e); });
+    },
+    releaseClaim: function (ev, matchNumber, team) {
+      if (!this.enabled() || !ev || !matchNumber || !team) return;
+      db.collection("claims").doc(this.claimId(ev, matchNumber, team)).delete()
+        .catch(function () {});
+    },
+    getClaims: function () { return cache.claims || []; },
+
+    // ---- Activity feed (global scout popup) ----
+    pushActivity: function (entry) {
+      if (!this.enabled()) return;
+      var m = me();
+      var doc = clean({
+        scouterId: m ? m.id : "", scouterName: m ? ((m.first || "") + " " + (m.last || "")).trim() : "Someone",
+        type: (entry && entry.type) || "match", team: entry ? String(entry.team || "") : "",
+        bb: (entry && entry.bb) || 0, matchNumber: entry ? String(entry.matchNumber || "") : "",
+        ts: Date.now(),
+      });
+      db.collection("activity").add(doc).catch(function (e) { log("pushActivity failed", e); });
+    },
+    onActivity: function (cb) { if (typeof cb === "function") activityCbs.push(cb); },
 
     getMatchForm: function () { return cache.config.matchForm ? cache.config.matchForm.schema : null; },
     getPitForm: function () { return cache.config.pitForm ? cache.config.pitForm.schema : null; },

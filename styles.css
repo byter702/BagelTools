@@ -884,6 +884,105 @@ table.lb th.sortable:hover { color: var(--primary); }
 .cmp-tip .tip-r i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
 .cmp-tip .tip-r b { margin-left: auto; font-family: var(--font-display); color: var(--text); padding-left: 10px; }
 
+/* ---- Global scout popup (cloud activity) --------------------------------- */
+.scout-pops { position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+  z-index: 1200; display: flex; flex-direction: column; gap: 8px; align-items: center;
+  pointer-events: none; width: max-content; max-width: 92vw; }
+.scout-pop { display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  background: var(--elevated); border: 1px solid var(--primary); border-radius: 999px;
+  box-shadow: var(--shadow); color: var(--text); font-size: .9rem;
+  opacity: 0; transform: translateY(-10px); transition: opacity .25s ease, transform .25s ease; }
+.scout-pop.in { opacity: 1; transform: translateY(0); }
+.scout-pop .sp-ico { display: inline-flex; color: var(--primary); }
+.scout-pop .sp-ico .ico { width: 18px; height: 18px; }
+.scout-pop .sp-bb { font-family: var(--font-display); font-weight: 800; color: var(--secondary);
+  background: color-mix(in srgb, var(--secondary) 16%, transparent); padding: 2px 8px; border-radius: 999px; }
+
+/* ---- Match robot-claim lock ---------------------------------------------- */
+.robot-pick.claimed { opacity: .55; filter: grayscale(.3); cursor: not-allowed; border-color: var(--border); }
+.robot-pick .rp-claim { display: block; margin-top: 4px; font-size: .68rem; font-weight: 700;
+  color: var(--danger); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.robot-pick.claimed .rp-claim { color: var(--text-mut); }
+
+/* ---- SoCal Showdown pit map --------------------------------------------- */
+.socal-map-scroll { overflow-x: auto; padding-bottom: 6px; }
+.socal-map { display: flex; align-items: flex-start; gap: 18px; min-width: min-content;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 16px; }
+.socal-col { display: flex; flex-direction: column; gap: 6px; }
+.socal-row { display: flex; gap: 0; }
+.pit-cell.socal { width: 54px; height: 44px; border-radius: 0; border: 1px solid var(--border-strong);
+  margin: -0.5px; font-size: .82rem; }
+.socal-col.wide .pit-cell.socal { width: 50px; }
+.socal-field { align-self: center; font-family: var(--font-display); font-weight: 800; letter-spacing: .08em;
+  color: var(--text-dim); writing-mode: horizontal-tb; padding: 0 12px; min-width: 60px; text-align: center; }
+
+/* ---- Teams list (Events > Teams) ---------------------------------------- */
+.team-list { display: flex; flex-direction: column; gap: 8px; }
+.team-row { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 12px; cursor: pointer; color: inherit; transition: border-color .15s ease, transform .1s ease; }
+.team-row:hover { border-color: var(--primary); }
+.team-row:active { transform: scale(.995); }
+.team-row .tr-icon { width: 34px; height: 34px; border-radius: 50%; flex: none; }
+.tr-robot { width: 52px; height: 40px; flex: none; border-radius: 8px; overflow: hidden; background: var(--surface-2);
+  display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); }
+.tr-robot img { width: 100%; height: 100%; object-fit: cover; }
+.tr-robot .tr-robot-ph { color: var(--text-mut); opacity: .5; }
+.tr-robot .tr-robot-ph .ico { width: 18px; height: 18px; }
+.tr-id { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.tr-id .tr-num { font-family: var(--font-display); font-weight: 800; }
+.tr-id .tr-name { font-size: .8rem; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-stat { display: flex; flex-direction: column; align-items: center; min-width: 46px; flex: none; }
+.tr-stat .trs-val { font-family: var(--font-display); font-weight: 800; font-size: .95rem; color: var(--text); }
+.tr-stat .trs-label { font-size: .62rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-mut); }
+@media (max-width: 520px) { .tr-robot { width: 42px; height: 34px; } .tr-stat { min-width: 38px; } .team-row { gap: 8px; padding: 7px 9px; } }
+
+/* ---- Schedule ------------------------------------------------------------ */
+.sched-list { display: flex; flex-direction: column; gap: 6px; }
+.sched-row { display: grid; grid-template-columns: 46px 1fr auto 1fr; align-items: center; gap: 8px;
+  width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 8px 10px; cursor: pointer; color: inherit; transition: border-color .15s ease; }
+.sched-row:hover { border-color: var(--primary); }
+.sched-row .sr-label { font-family: var(--font-display); font-weight: 800; color: var(--text-dim); font-size: .9rem; }
+.sched-row .sr-alliance { display: flex; gap: 4px; flex-wrap: wrap; }
+.sched-row .sr-alliance.blue { justify-content: flex-end; }
+.sched-row .sr-team { font-family: var(--font-display); font-weight: 700; font-size: .84rem; padding: 2px 6px;
+  border-radius: 6px; background: var(--surface-2); }
+.sched-row .sr-alliance.red .sr-team { color: #ff8a8a; }
+.sched-row .sr-alliance.blue .sr-team { color: #7fb4ff; }
+.sched-row .sr-alliance.won .sr-team { outline: 1.5px solid currentColor; }
+.sched-row .sr-score { font-family: var(--font-display); font-weight: 800; text-align: center; min-width: 58px; }
+.sched-row .sr-score .sr-dash { color: var(--text-mut); margin: 0 3px; font-weight: 400; }
+.sched-row .sr-time { font-size: .76rem; color: var(--text-mut); font-weight: 400; }
+
+/* ---- Match detail modal -------------------------------------------------- */
+.md-prob-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
+.md-prob-red { font-family: var(--font-display); font-weight: 800; font-size: 1.4rem; color: #ff8a8a; }
+.md-prob-blue { font-family: var(--font-display); font-weight: 800; font-size: 1.4rem; color: #7fb4ff; }
+.md-prob-mid { font-size: .78rem; color: var(--text-mut); text-transform: uppercase; letter-spacing: .06em; }
+.md-prob-bar { display: flex; height: 12px; border-radius: 999px; overflow: hidden; background: var(--surface-2); }
+.md-prob-bar .mpb-red { background: linear-gradient(90deg,#e0564f,#ff8a8a); }
+.md-prob-bar .mpb-blue { background: linear-gradient(90deg,#7fb4ff,#3f7fe0); }
+.md-final { display: flex; align-items: center; justify-content: center; gap: 14px; margin: 14px 0;
+  font-family: var(--font-display); font-weight: 800; font-size: 1.6rem; }
+.md-final .mf-red { color: #ff8a8a; } .md-final .mf-blue { color: #7fb4ff; }
+.md-final .mf-vs { font-size: .7rem; color: var(--text-mut); text-transform: uppercase; letter-spacing: .1em; }
+.md-alliances { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 16px; }
+@media (max-width: 560px) { .md-alliances { grid-template-columns: 1fr; } }
+.md-ally-head { font-family: var(--font-display); font-weight: 800; font-size: .9rem; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 7px; }
+.md-team { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; cursor: pointer;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px;
+  margin-bottom: 6px; color: inherit; }
+.md-team:hover { border-color: var(--primary); }
+.md-team .team-avatar { width: 28px; height: 28px; border-radius: 50%; flex: none; }
+.md-tinfo { display: flex; flex-direction: column; min-width: 0; width: 72px; flex: none; }
+.md-tnum { font-family: var(--font-display); font-weight: 800; font-size: .85rem; }
+.md-tname { font-size: .68rem; color: var(--text-mut); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.md-ebar { flex: 1; height: 7px; border-radius: 999px; background: var(--surface); overflow: hidden; }
+.md-ebar-fill { display: block; height: 100%; background: linear-gradient(90deg, var(--primary), var(--secondary)); }
+.md-eval { font-family: var(--font-display); font-weight: 800; font-size: .82rem; min-width: 34px; text-align: right; }
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .001ms !important; transition-duration: .001ms !important; }
