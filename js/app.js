@@ -2197,7 +2197,12 @@
     const me = Store.getMe(), out = [];
     const myB = getBoard();
     if (myB.submitted) out.push({ scouterId: me.id, name: scouterName(me), cols: myB.cols, grid: myB.grid, submittedAt: myB.submittedAt });
-    (Cloud.getSharedBoards() || []).forEach((b) => { if (b.scouterId !== me.id) out.push(b); });
+    (Cloud.getSharedBoards() || []).forEach((b) => {
+      if (b.scouterId === me.id) return;
+      // Cloud stores the grid as row maps ({cells}); rebuild the 2D grid for display.
+      const grid = b.grid || (b.rows || []).map((r) => (r && r.cells) || []);
+      out.push({ ...b, grid });
+    });
     return out.sort((a, z) => (z.submittedAt || 0) - (a.submittedAt || 0));
   }
   function sharedTierlists() {

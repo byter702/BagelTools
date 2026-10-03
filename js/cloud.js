@@ -188,9 +188,12 @@
       if (!this.enabled() || !window.Store) return;
       var m = me(); if (!m || !m.id) return;
       var b = Store.getPicklist() || {};
+      // Firestore rejects nested arrays, so the 8×N grid is stored as an array of
+      // row maps ({cells:[...]}). sharedBoards() rebuilds the 2D grid on read.
       var doc = clean({
         scouterId: m.id, name: ((m.first || "") + " " + (m.last || "")).trim() || "Scout",
-        cols: b.cols || [], grid: b.grid || [], event: eventKey(),
+        cols: b.cols || [], rows: (b.grid || []).map(function (r) { return { cells: r || [] }; }),
+        event: eventKey(),
         submittedAt: b.submittedAt || Date.now(),
       });
       db.collection("boards").doc(m.id).set(doc, { merge: true })
