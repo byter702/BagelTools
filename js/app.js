@@ -1631,7 +1631,7 @@
           <div class="tc-meta">
             ${p.drivetrain ? `<span class="badge cyan">${esc(p.drivetrain)}</span>` : ""}
             ${p.maxClimb && p.maxClimb !== "None" ? `<span class="badge yellow">climb ${esc(p.maxClimb)}</span>` : ""}
-            ${p.canScoreFuel ? `<span class="badge green">scores fuel</span>` : ""}
+            ${p.shotblocker ? `<span class="badge green">shotblocker</span>` : ""}
           </div>
           <div class="row between" style="margin-top:8px">
             <button class="btn sm ghost" data-load="${p.team}">${icon("edit")} Edit</button>

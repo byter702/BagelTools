@@ -79,7 +79,7 @@ const GAME = {
     { key: "fuelCapacity", label: "Fuel capacity (holds)", type: "number", min: 0 },
     { key: "startPosition", label: "Preferred starting position", type: "select",
       options: ["Depot Trench", "Depot Bump", "Outpost Trench", "Outpost Bump"] },
-    { key: "canScoreFuel", label: "Can score Fuel in Hub", type: "bool" },
+    { key: "shotblocker", label: "Has shotblocker", type: "bool" },
     { key: "canUnderTrench", label: "Can go under trench", type: "bool" },
     { key: "canShoot", label: "Can shoot", type: "bool" },
     { key: "canClimb", label: "Can Climb", type: "bool" },
