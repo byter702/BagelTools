@@ -727,12 +727,24 @@ table.lb th.sortable:hover { color: var(--primary); }
   color: var(--text); font-family: var(--font-ui); font-weight: 600; font-size: .9rem; }
 .filter-multi > summary::-webkit-details-marker { display: none; }
 .filter-multi[open] > summary { border-color: var(--primary); }
-.filter-multi .fm-panel { position: absolute; z-index: 40; margin-top: 6px; min-width: 240px; max-height: 320px; overflow-y: auto;
-  background: var(--elevated); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); padding: 6px; }
-.filter-multi .fm-opt { display: flex; align-items: center; gap: 9px; padding: 8px 10px; border-radius: 7px; cursor: pointer;
-  font-size: .9rem; color: var(--text); }
-.filter-multi .fm-opt:hover { background: var(--surface); }
-.filter-multi .fm-opt input { width: 17px; height: 17px; accent-color: var(--primary); flex: none; }
+.filter-multi .fm-panel { position: absolute; z-index: 40; left: 0; margin-top: 8px;
+  min-width: 252px; max-width: min(320px, calc(100vw - 32px)); max-height: 340px; overflow-y: auto;
+  background: var(--elevated); border: 1px solid var(--border-strong); border-radius: 14px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.28); padding: 8px; display: flex; flex-direction: column; gap: 2px;
+  overscroll-behavior: contain; }
+.filter-multi .fm-opt { display: flex; align-items: center; gap: 11px; padding: 10px 12px; border-radius: 10px;
+  cursor: pointer; font-size: .9rem; font-weight: 500; line-height: 1.25; color: var(--text-dim);
+  transition: background .12s ease, color .12s ease; }
+.filter-multi .fm-opt:hover { background: var(--surface); color: var(--text); }
+.filter-multi .fm-opt:has(input:checked) { background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--text); font-weight: 600; }
+.filter-multi .fm-opt input { appearance: none; -webkit-appearance: none; flex: none;
+  width: 20px; height: 20px; min-width: 20px; min-height: 20px; max-width: 20px; padding: 0;
+  border: 1.5px solid var(--border-strong); border-radius: 6px; background: var(--surface-2); cursor: pointer;
+  position: relative; transition: background .12s ease, border-color .12s ease; }
+.filter-multi .fm-opt input:checked { background: var(--primary); border-color: var(--primary); }
+.filter-multi .fm-opt input:checked::after { content: ""; position: absolute; left: 6px; top: 2px;
+  width: 5px; height: 10px; border: solid #0d2436; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 
 .pool-team .pt-main { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; background: none; border: none; padding: 0; cursor: pointer; text-align: left; color: inherit; }
 .pool-team.sel { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 12%, var(--surface-2)); }
