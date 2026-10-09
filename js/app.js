@@ -284,13 +284,13 @@
   function computeStats(team) {
     const ms = allMatches().filter((m) => String(m.team) === String(team));
     const n = ms.length;
-    const cyclesOf = (m) => Number(m.autoCycles || 0) + Number(m.teleCycles || 0) + Number(m.transCycles || 0) + Number(m.endCycles || 0);
+    const cyclesOf = (m) => Number(m.autoCycles || 0) + Number(m.teleCycles || 0) + Number(m.teleCycles2 || 0) + Number(m.transCycles || 0) + Number(m.endCycles || 0);
     return {
       team, matches: n,
       avgCycles: avg(ms.map(cyclesOf)),
       avgBps: avg(ms.map((m) => Number(m.bps || 0))),
       avgFouls: avg(ms.map((m) => Number(m.fouls || 0))),
-      defenseRate: n ? ms.filter((m) => m.playedDefense).length / n : 0,
+      defenseRate: n ? ms.filter((m) => m.playedDefense || m.playedDefense2 || m.endPlayedDefense).length / n : 0,
       diedRate: n ? ms.filter((m) => m.diedOrTipped).length / n : 0,
       avgDriver: avg(ms.map((m) => Number(m.driverSkill || 0)).filter((x) => x > 0)),
     };
@@ -1315,19 +1315,20 @@
   let matchEditAlliance = "red";
   // A robot in a match counts as "taken" when another scout has claimed it (live)
   // or a match record for it already exists. Claims older than this expire so an
-  // Reorder the match shift cards around the Transition Shift based on "Won auto":
-  //   won  → Auto, Active(1st), Transition, Inactive(2nd), Endgame, Post
-  //   lost → Auto, Inactive(1st), Transition, Active(2nd), Endgame, Post
-  // Reorders existing DOM nodes (values preserved) and updates the 1st/2nd tags.
+  // Order the four alternating shift periods (two Active shifts + two Inactive)
+  // between Transition and Endgame, based on "Won auto":
+  //   won  → Auto, Transition, Inactive(1st), 1st Shift, Inactive(2nd), 2nd Shift, Endgame, Post
+  //   lost → Auto, Transition, 1st Shift, Inactive(1st), 2nd Shift, Inactive(2nd), Endgame, Post
+  // Reorders existing DOM nodes so entered values are preserved.
   function applyPhaseOrder(root) {
     const grid = $("#matchPhaseGrid", root); if (!grid) return;
     const wonInput = $('[data-key="wonAuto"] input', root);
     const won = !!(wonInput && wonInput.checked);
-    const order = ["auto", won ? "active" : "inactive", "transition", won ? "inactive" : "active", "endgame", "post"];
+    const mid = won
+      ? ["inactive1", "active1", "inactive2", "active2"]
+      : ["active1", "inactive1", "active2", "inactive2"];
+    const order = ["auto", "transition", ...mid, "endgame", "post"];
     order.forEach((id) => { const c = grid.querySelector(`[data-phase="${id}"]`); if (c) grid.appendChild(c); });
-    const setTag = (id, txt) => { const t = grid.querySelector(`.shift-tag[data-shift="${id}"]`); if (t) t.textContent = txt; };
-    setTag(won ? "active" : "inactive", "1st shift");
-    setTag(won ? "inactive" : "active", "2nd shift");
   }
 
   // abandoned selection never locks a robot forever.
@@ -1380,8 +1381,7 @@
     const phases = GAME.matchPhases.map((p) => {
       const fs = matchFields().filter((f) => (f.phase || "post") === p.id);
       if (!fs.length) return "";
-      const isShift = p.id === "active" || p.id === "inactive";
-      return `<div class="card" data-phase="${p.id}"><h3>${esc(p.label)}${isShift ? ` <span class="shift-tag" data-shift="${p.id}"></span>` : ""}</h3>
+      return `<div class="card" data-phase="${p.id}"><h3>${esc(p.label)}</h3>
         <div class="form-grid">${fs.map((f) => renderField(f, "")).join("")}</div></div>`;
     }).join("");
 
