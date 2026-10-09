@@ -979,11 +979,16 @@
 
   function teamsSub() { const p = (location.hash.replace(/^#\/?/, "") || "").split("/"); return p[1] || "list"; }
   function renderEventsPage(root) {
-    const tabs = [["list", "Teams"], ["schedule", "Schedule"]];
-    const sub = tabs.some((t) => t[0] === teamsSub()) ? teamsSub() : "list";
+    const own = [["list", "Teams"], ["schedule", "Schedule"]];
+    const sub = own.some((t) => t[0] === teamsSub()) ? teamsSub() : "list";
+    // Stats + Compare are shortcuts that jump to the Event tab of those pages.
     root.innerHTML = `<div class="subtabs" id="evTabs">
-      ${tabs.map(([k, l]) => `<a href="#/teams/${k}" class="${sub === k ? "on" : ""}">${esc(l)}</a>`).join("")}
+      ${own.map(([k, l]) => `<a href="#/teams/${k}" class="${sub === k ? "on" : ""}">${esc(l)}</a>`).join("")}
+      <a href="#/bagelstats" id="evStats">Stats</a>
+      <a href="#/compare" id="evCompare">Compare</a>
     </div><div id="evBody"></div>`;
+    const st = $("#evStats", root); if (st) st.onclick = () => { bagelTab = "event"; };
+    const cp = $("#evCompare", root); if (cp) cp.onclick = () => { compareTab = "event"; };
     const body = $("#evBody", root);
     if (sub === "schedule") renderSchedule(body);
     else renderTeamsList(body);
@@ -1933,9 +1938,9 @@
       <div class="section-head">
         <h2 style="margin:0">Alliance selection</h2>
         <div class="btn-row">
-          ${b.cols.length < MAX_COLS ? `<button class="btn ghost sm" id="addCol">${icon("plus")} Add pick column</button>` : ""}
+          <button class="btn ghost sm" id="addCol" ${b.cols.length >= MAX_COLS ? "disabled" : ""}>${icon("plus")} Add pick column</button>
+          <button class="btn ghost sm" id="delCol" ${b.cols.length <= 3 ? "disabled" : ""}>Remove last column</button>
           <button class="btn ghost sm" id="clearBoard">${icon("trash")} Clear list</button>
-          ${b.cols.length > 3 ? `<button class="btn ghost sm" id="delCol">Remove last column</button>` : ""}
           <button class="btn primary sm" id="submitBoard">${icon("check")} ${b.submitted ? "Update selections" : "Submit selections"}</button>
         </div>
       </div>
@@ -2871,6 +2876,7 @@
                     .map((t) => `<option value="${t.team_number}">${t.team_number} · ${esc(t.nickname || "")}</option>`).join("")}</select>`
               : `<input type="number" id="cmpAdd" placeholder="Team #" inputmode="numeric" style="max-width:160px" />`}</div>
           <button class="btn primary" id="cmpAddBtn">${icon("plus")} Add</button>
+          <button class="btn ghost" id="cmpTop5">${icon("trophy")} Top 5 by EPA</button>
           ${compareTab === "event" && !eventTeams().length ? `<span class="hint">Pick an event on the Dashboard to get a team dropdown.</span>` : ""}
         </div>
         <div id="cmpChips" class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap"></div>
@@ -2891,6 +2897,25 @@
     };
     addBtn.onclick = add;
     addInput.onkeydown = (e) => { if (e.key === "Enter") add(); };
+    // Fill the compare list with the 5 highest-EPA teams for the current tab.
+    $("#cmpTop5", root).onclick = () => {
+      let ranked;
+      if (compareTab === "event") {
+        const ev = currentEventEpa();
+        const pool = eventTeams().map((t) => String(t.team_number)).filter((t) => ev && ev.byTeam[t]);
+        ranked = pool.sort((a, b) => ev.byTeam[b].epa - ev.byTeam[a].epa);
+        if (!ranked.length) { toast("No event EPA yet — load the event's matches (needs wifi) first", "err"); return; }
+      } else {
+        const epaMap = buildSeasonEpa();
+        const evTeams = eventTeams().map((t) => String(t.team_number));
+        if (evTeams.length) ranked = evTeams.filter((t) => epaMap[t] != null).sort((a, b) => epaMap[b] - epaMap[a]);
+        else ranked = (API.sbCachedLeaderboard(GAME.season) || []).map((r) => String(r.team)); // world top 5
+        if (!ranked.length) { toast("Load World EPA first (BagelStats → World)", "err"); return; }
+      }
+      compareTeams = ranked.slice(0, 5);
+      draw();
+      toast("Added the top 5 teams by EPA");
+    };
 
     async function draw() {
       // chips
