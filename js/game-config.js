@@ -22,12 +22,15 @@ const GAME = {
      type: number | counter | bool | select | rating | text
      phase groups the fields into sections in the form.
      ------------------------------------------------------------------------ */
+  // The two shift phases (active / inactive) reorder around the Transition Shift
+  // based on the "Won auto" toggle — see app.js applyPhaseOrder().
   matchPhases: [
-    { id: "auto",     label: "Autonomous" },
-    { id: "active",   label: "Active" },
-    { id: "inactive", label: "Inactive" },
-    { id: "endgame",  label: "Endgame" },
-    { id: "post",     label: "Post-Match" },
+    { id: "auto",       label: "Autonomous" },
+    { id: "active",     label: "Active" },
+    { id: "transition", label: "Transition Shift" },
+    { id: "inactive",   label: "Inactive" },
+    { id: "endgame",    label: "Endgame" },
+    { id: "post",       label: "Post-Match" },
   ],
 
   matchFields: [
@@ -45,6 +48,10 @@ const GAME = {
     { key: "wasDefended", label: "Was defended against", type: "bool", phase: "active" },
     { key: "scoringQuality", label: "Scoring quality", type: "rating", max: 5, phase: "active" },
 
+    // --- Transition Shift (always between the two shifts) ---
+    { key: "transCycles", label: "Full cycles (transition)", type: "counter", min: 0, phase: "transition" },
+    { key: "transRating", label: "Transition rating", type: "rating", max: 5, phase: "transition" },
+
     // --- Inactive ---
     { key: "playedDefense", label: "Played defense", type: "bool", phase: "inactive" },
     { key: "defenseRating", label: "Defense quality", type: "rating", max: 5, phase: "inactive",
@@ -57,6 +64,11 @@ const GAME = {
     // --- Endgame ---
     { key: "endCycles", label: "Full cycles (endgame)", type: "counter", min: 0, phase: "endgame" },
     { key: "endgameRating", label: "Endgame rating", type: "rating", max: 5, phase: "endgame" },
+    { key: "endPlayedDefense", label: "Played defense", type: "bool", phase: "endgame" },
+    { key: "endDefenseRating", label: "Defense quality", type: "rating", max: 5, phase: "endgame" },
+    { key: "endTimesPassed", label: "Times passed fuel", type: "counter", min: 0, phase: "endgame" },
+    { key: "endPassRating", label: "Pass rating", type: "rating", max: 5, phase: "endgame" },
+    { key: "endWasDefended", label: "Was defended against?", type: "bool", phase: "endgame" },
 
     // --- Post-match ---
     { key: "diedOrTipped", label: "Died / tipped / disabled", type: "bool", phase: "post",
@@ -78,14 +90,15 @@ const GAME = {
     { key: "weight", label: "Robot weight (lbs)", type: "number", min: 0 },
     { key: "fuelCapacity", label: "Fuel capacity (holds)", type: "number", min: 0 },
     { key: "startPosition", label: "Preferred starting position", type: "select",
-      options: ["Depot Trench", "Depot Bump", "Outpost Trench", "Outpost Bump"] },
+      options: ["Depot Trench", "Depot Bump", "Middle", "Outpost Trench", "Outpost Bump"] },
     { key: "shotblocker", label: "Has shotblocker", type: "bool" },
     { key: "canUnderTrench", label: "Can go under trench", type: "bool" },
     { key: "canShoot", label: "Can shoot", type: "bool" },
+    { key: "canShootMove", label: "Can Shoot on the Move?", type: "bool" },
     { key: "canClimb", label: "Can Climb", type: "bool" },
     { key: "shooterType", label: "Type of shooter", type: "select",
-      options: ["Dye Rotor", "Corner/Side Turret", "Drum Shooter", "Lane Shooter (2 lanes)", "Lane Shooter (3+ lanes)", "Fixed Shooter", "Other"] },
-    { key: "ballsPerSecond", label: "Balls per Second", type: "number", min: 0 },
+      options: ["No shooter", "Dye Rotor", "Turret", "Double Turret", "Drum Shooter", "Laned Shooter", "Fixed Shooter", "Other"] },
+    { key: "ballsPerSecond", label: "Balls per Second", type: "counter", min: 0 },
     { key: "bestAuto", label: "Best Auto", type: "text" },
     { key: "pitNotes", label: "Comments", type: "text",
       placeholder: "Team demeanor, reliability, anything useful…" },

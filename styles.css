@@ -1017,6 +1017,11 @@ table.lb th.sortable:hover { color: var(--primary); }
 .md-ally.blue .md-ebar-fill { background: #3f7fe0; }
 .md-eval { font-family: var(--font-display); font-weight: 800; font-size: .82rem; min-width: 34px; text-align: right; }
 
+/* Match shift-order tag (1st/2nd shift) */
+.shift-tag { font-family: var(--font-ui); font-weight: 700; font-size: .66rem; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--primary); background: color-mix(in srgb, var(--primary) 15%, transparent);
+  padding: 2px 8px; border-radius: 999px; vertical-align: middle; margin-left: 6px; }
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: .001ms !important; transition-duration: .001ms !important; }

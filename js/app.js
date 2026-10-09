@@ -284,7 +284,7 @@
   function computeStats(team) {
     const ms = allMatches().filter((m) => String(m.team) === String(team));
     const n = ms.length;
-    const cyclesOf = (m) => Number(m.autoCycles || 0) + Number(m.teleCycles || 0) + Number(m.endCycles || 0);
+    const cyclesOf = (m) => Number(m.autoCycles || 0) + Number(m.teleCycles || 0) + Number(m.transCycles || 0) + Number(m.endCycles || 0);
     return {
       team, matches: n,
       avgCycles: avg(ms.map(cyclesOf)),
@@ -1315,6 +1315,21 @@
   let matchEditAlliance = "red";
   // A robot in a match counts as "taken" when another scout has claimed it (live)
   // or a match record for it already exists. Claims older than this expire so an
+  // Reorder the match shift cards around the Transition Shift based on "Won auto":
+  //   won  → Auto, Active(1st), Transition, Inactive(2nd), Endgame, Post
+  //   lost → Auto, Inactive(1st), Transition, Active(2nd), Endgame, Post
+  // Reorders existing DOM nodes (values preserved) and updates the 1st/2nd tags.
+  function applyPhaseOrder(root) {
+    const grid = $("#matchPhaseGrid", root); if (!grid) return;
+    const wonInput = $('[data-key="wonAuto"] input', root);
+    const won = !!(wonInput && wonInput.checked);
+    const order = ["auto", won ? "active" : "inactive", "transition", won ? "inactive" : "active", "endgame", "post"];
+    order.forEach((id) => { const c = grid.querySelector(`[data-phase="${id}"]`); if (c) grid.appendChild(c); });
+    const setTag = (id, txt) => { const t = grid.querySelector(`.shift-tag[data-shift="${id}"]`); if (t) t.textContent = txt; };
+    setTag(won ? "active" : "inactive", "1st shift");
+    setTag(won ? "inactive" : "active", "2nd shift");
+  }
+
   // abandoned selection never locks a robot forever.
   const CLAIM_TTL = 15 * 60 * 1000;
   function refreshRobotClaims() {
@@ -1364,8 +1379,10 @@
 
     const phases = GAME.matchPhases.map((p) => {
       const fs = matchFields().filter((f) => (f.phase || "post") === p.id);
-      return fs.length ? `<div class="card"><h3>${esc(p.label)}</h3>
-        <div class="form-grid">${fs.map((f) => renderField(f, "")).join("")}</div></div>` : "";
+      if (!fs.length) return "";
+      const isShift = p.id === "active" || p.id === "inactive";
+      return `<div class="card" data-phase="${p.id}"><h3>${esc(p.label)}${isShift ? ` <span class="shift-tag" data-shift="${p.id}"></span>` : ""}</h3>
+        <div class="form-grid">${fs.map((f) => renderField(f, "")).join("")}</div></div>`;
     }).join("");
 
     const fmtTime = (unix) => unix ? " · " + new Date(unix * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
@@ -1393,7 +1410,7 @@
     root.innerHTML = `
       <form id="matchForm">
         ${topCard}
-        <div class="grid cols-2" style="margin-bottom:16px">${phases}</div>
+        <div class="grid cols-2" id="matchPhaseGrid" style="margin-bottom:16px">${phases}</div>
         <div class="btn-row">
           <button type="submit" class="btn primary">${icon("check")} <span id="mSaveLabel">Save match</span></button>
           <button type="button" class="btn ghost" id="mReset">Clear form</button>
@@ -1445,6 +1462,11 @@
 
     wireFields(root);
     drawMatchList();
+
+    // Order the shift cards by the Won-auto toggle, and re-order live when it flips.
+    applyPhaseOrder(root);
+    const wonToggle = $('[data-key="wonAuto"] input', root);
+    if (wonToggle) wonToggle.addEventListener("change", () => applyPhaseOrder(root));
 
     $("#mReset", root).onclick = () => { matchEditId = null; renderMatch(root); };
 
@@ -1534,6 +1556,7 @@
       else if (f.type === "number") wrap.querySelector("input").value = v ?? "";
       else if (f.type === "text") wrap.querySelector("textarea").value = v || "";
     });
+    applyPhaseOrder(root); // order the shifts to match this record's Won-auto value
     $("#mSaveLabel", root).textContent = "Update match";
     window.scrollTo({ top: 0, behavior: "smooth" });
     toast("Editing — make changes and Update");
