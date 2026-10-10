@@ -1147,34 +1147,41 @@
 
   function openMatchDetail(m) {
     if (!m) return;
-    const epaMap = buildSeasonEpa();
-    const epaOf = (num) => epaMap[String(num)] ?? (computeStats(num).avgCycles || 0);
+    // Win probability is based on this EVENT's EPA (computed on-device from played
+    // qual matches). If any team on the match has no event EPA yet → "Unknown".
+    const ev = currentEventEpa();
+    const epaOf = (t) => (ev && ev.byTeam[t]) ? ev.byTeam[t].epa : null;
     const teamsOf = (c) => (m.alliances[c].team_keys || []).map((k) => k.replace("frc", ""));
     const red = teamsOf("red"), blue = teamsOf("blue");
-    const redEpa = red.reduce((s, t) => s + epaOf(t), 0);
-    const blueEpa = blue.reduce((s, t) => s + epaOf(t), 0);
-    const pRed = winProb(redEpa, blueEpa);
+    const haveAll = [...red, ...blue].every((t) => epaOf(t) != null);
+    const redEpa = red.reduce((s, t) => s + (epaOf(t) || 0), 0);
+    const blueEpa = blue.reduce((s, t) => s + (epaOf(t) || 0), 0);
+    const pct = haveAll ? Math.round(winProb(redEpa, blueEpa) * 100) : null;
     const played = m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0;
     const label = (COMP_LABEL[m.comp_level] || "") + (m.comp_level === "qm" ? m.match_number : (m.set_number || m.match_number));
-    const maxEpa = Math.max(1, ...red.map(epaOf), ...blue.map(epaOf));
+    const maxEpa = Math.max(1, ...[...red, ...blue].map((t) => epaOf(t) || 0));
     const teamLine = (t) => {
-      const e = epaOf(t), rk = computeStats(t);
+      const e = epaOf(t);
       return `<button class="md-team" data-team="${t}">
         <img class="team-avatar" data-avatar="${t}" alt="" />
         <span class="md-tinfo"><span class="md-tnum">${t}</span><span class="md-tname">${esc(teamName(t))}</span></span>
-        <span class="md-ebar"><span class="md-ebar-fill" style="width:${Math.round(epaOf(t) / maxEpa * 100)}%"></span></span>
+        <span class="md-ebar"><span class="md-ebar-fill" style="width:${Math.round((e || 0) / maxEpa * 100)}%"></span></span>
         <span class="md-eval">${e != null ? fmt(e, 1) : "–"}</span>
       </button>`;
     };
-    const pct = Math.round(pRed * 100);
     modal(`${m.comp_level === "qm" ? "Qualification " + m.match_number : label}`, `
       <div class="md-wrap">
         <div class="md-prob">
+          ${pct != null ? `
           <div class="md-prob-head"><span class="md-prob-red">${pct}%</span>
             <span class="md-prob-mid">win probability${played ? "" : " · estimate"}</span>
             <span class="md-prob-blue">${100 - pct}%</span></div>
           <div class="md-prob-bar"><span class="mpb-red" style="width:${pct}%"></span><span class="mpb-blue" style="width:${100 - pct}%"></span></div>
-          <p class="hint" style="margin:6px 0 0;text-align:center">EPA-based estimate from Statbotics season EPA (not an official prediction).</p>
+          <p class="hint" style="margin:6px 0 0;text-align:center">Estimate from this event's on-device EPA (not an official prediction).</p>
+          ` : `
+          <div class="md-prob-head" style="justify-content:center"><span class="md-prob-mid" style="font-size:1rem">Win probability · Unknown</span></div>
+          <p class="hint" style="margin:6px 0 0;text-align:center">No event EPA yet — it appears once these teams have played qualification matches at this event.</p>
+          `}
         </div>
         ${played ? `<div class="md-final"><span class="mf-red">${m.alliances.red.score}</span><span class="mf-vs">final</span><span class="mf-blue">${m.alliances.blue.score}</span></div>` : ""}
         <div class="md-alliances">
