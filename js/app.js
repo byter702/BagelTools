@@ -3633,6 +3633,9 @@
   function boot() {
     applyTheme(Store.getSettings().theme);
     if (!Store.storageAvailable()) toast("Local storage is blocked — data won't persist. Export often.", "err");
+    // Load robot photos from IndexedDB (and migrate any legacy inline photos out of
+    // localStorage), then re-render so photos appear and the quota is freed.
+    Store.hydratePhotos().then(() => { if (Auth.isLoggedIn()) router(); }).catch(() => {});
     if (Auth.isLoggedIn()) startApp();
     else Auth.showLogin((status) => startApp(status));
   }

@@ -38,6 +38,60 @@ const Store = (() => {
     }
   }
 
+  /* ---- Photo storage (IndexedDB) ------------------------------------------
+     Robot/pit photos are large; keeping them in localStorage (≈5MB cap) fills it
+     up after ~30 photos. We stash photos in IndexedDB (hundreds of MB), keep an
+     in-memory copy for synchronous reads, and strip them out of the localStorage
+     pit records. Falls back to inline-in-localStorage if IndexedDB is unavailable. */
+  let photoMem = {};        // { teamNumber: dataURL } — in-memory, session-lived
+  let idb = null, idbAvailable = false;
+  function idbOpen() {
+    return new Promise((resolve) => {
+      if (idb) return resolve(idb);
+      try {
+        if (!window.indexedDB) return resolve(null);
+        const req = indexedDB.open("bb702db", 1);
+        req.onupgradeneeded = (e) => { const db = e.target.result; if (!db.objectStoreNames.contains("photos")) db.createObjectStore("photos"); };
+        req.onsuccess = (e) => { idb = e.target.result; idbAvailable = true; resolve(idb); };
+        req.onerror = () => resolve(null);
+      } catch (e) { resolve(null); }
+    });
+  }
+  function idbPut(team, dataUrl) { idbOpen().then((db) => { if (!db) return; try { db.transaction("photos", "readwrite").objectStore("photos").put(dataUrl, String(team)); } catch (e) {} }); }
+  function idbDel(team) { idbOpen().then((db) => { if (!db) return; try { db.transaction("photos", "readwrite").objectStore("photos").delete(String(team)); } catch (e) {} }); }
+  function idbGetAll() {
+    return new Promise((resolve) => {
+      idbOpen().then((db) => {
+        if (!db) return resolve({});
+        try {
+          const out = {}, req = db.transaction("photos", "readonly").objectStore("photos").openCursor();
+          req.onsuccess = (e) => { const c = e.target.result; if (c) { out[c.key] = c.value; c.continue(); } else resolve(out); };
+          req.onerror = () => resolve(out);
+        } catch (e) { resolve({}); }
+      });
+    });
+  }
+  // Move any photos stored inline in the localStorage pit records into IndexedDB
+  // (+ the in-memory map) and strip them out, shrinking localStorage.
+  function stashInlinePhotos() {
+    if (!idbAvailable) return; // keep inline when IDB is unavailable
+    const pits = read("pits", {});
+    let changed = false;
+    Object.keys(pits).forEach((t) => {
+      if (pits[t] && pits[t].photo) { photoMem[t] = pits[t].photo; idbPut(t, pits[t].photo); delete pits[t].photo; changed = true; }
+    });
+    if (changed) write("pits", pits);
+  }
+  // Load photos from IndexedDB into memory + migrate any legacy inline photos.
+  // Call once at startup (returns a promise; re-render when it resolves).
+  async function hydratePhotos() {
+    await idbOpen();
+    const all = await idbGetAll();
+    Object.keys(all).forEach((t) => { photoMem[t] = all[t]; });
+    stashInlinePhotos();
+    return true;
+  }
+
   // ---- Settings -----------------------------------------------------------
   const defaultSettings = {
     tbaKey: "",
@@ -74,16 +128,36 @@ const Store = (() => {
 
   // ---- Pit scouting -------------------------------------------------------
   // pits: { [teamNumber]: { team, event, scout, ts, ...fields } }
-  function getPits() { return read("pits", {}); }
+  // Photos live in IndexedDB (photoMem) — getPits() injects them back in.
+  function rawPits() { return read("pits", {}); }
+  function getPits() {
+    const pits = rawPits();
+    Object.keys(pits).forEach((t) => { if (photoMem[t] != null && pits[t]) pits[t].photo = photoMem[t]; });
+    return pits;
+  }
   function savePit(team, data) {
-    const pits = getPits();
-    pits[team] = { ...(pits[team] || {}), ...data, team, ts: Date.now() };
-    return write("pits", pits) ? pits[team] : false;
+    team = String(team);
+    const pits = rawPits(); // no photos inline here
+    const merged = { ...(pits[team] || {}), ...data, team, ts: Date.now() };
+    // Resolve the photo: a newly chosen one, else keep the existing stored photo.
+    const photo = (data && data.photo) || photoMem[team] || null;
+    delete merged.photo; // never persist the photo inside the localStorage record
+    pits[team] = merged;
+    if (!write("pits", pits)) return false; // text-only now → won't hit the quota
+    if (photo) {
+      photoMem[team] = photo;
+      if (idbAvailable) idbPut(team, photo);
+      else { const p2 = rawPits(); if (p2[team]) { p2[team].photo = photo; write("pits", p2); } } // fallback
+    }
+    return { ...merged, photo: photo || undefined };
   }
   function deletePit(team) {
-    const pits = getPits();
+    team = String(team);
+    const pits = rawPits();
     delete pits[team];
     write("pits", pits);
+    delete photoMem[team];
+    idbDel(team);
   }
 
   // ---- Pick list ----------------------------------------------------------
@@ -302,7 +376,7 @@ const Store = (() => {
     if (!obj || typeof obj !== "object") throw new Error("Invalid backup file.");
     if (mode === "replace") {
       write("matches", obj.matches || []);
-      write("pits", obj.pits || {});
+      write("pits", obj.pits || {}); stashInlinePhotos();
       write("picklist", obj.picklist || { ranked: [], dnp: [], notes: {} });
       if (obj.tierlist) write("tierlist", obj.tierlist);
       write("strategy", obj.strategy || {});
@@ -316,11 +390,11 @@ const Store = (() => {
       (obj.matches || []).forEach((m) => byId.set(m.id, m));
       write("matches", [...byId.values()]);
       // merge pits by team (incoming wins if newer)
-      const pits = getPits();
+      const pits = getPits(); // includes photoMem photos so nothing is lost on re-stash
       Object.entries(obj.pits || {}).forEach(([team, d]) => {
         if (!pits[team] || (d.ts || 0) >= (pits[team].ts || 0)) pits[team] = d;
       });
-      write("pits", pits);
+      write("pits", pits); stashInlinePhotos();
       // strategy merge
       write("strategy", { ...getStrategy(), ...(obj.strategy || {}) });
       // members / requests merge (roster aggregation across devices)
@@ -364,7 +438,7 @@ const Store = (() => {
   return {
     getSettings, setSettings,
     getMatches, saveMatch, deleteMatch,
-    getPits, savePit, deletePit,
+    getPits, savePit, deletePit, hydratePhotos,
     getPicklist, setPicklist,
     getTierlist, setTierlist,
     getBBApproved, isBBApproved, approveBBEvent, setBBApprovedList,
