@@ -110,7 +110,7 @@ const GAME = {
     { key: "weight", label: "Robot weight (lbs)", type: "number", min: 0 },
     { key: "fuelCapacity", label: "Fuel capacity (holds)", type: "number", min: 0 },
     { key: "startPosition", label: "Preferred starting position", type: "select",
-      options: ["Depot Trench", "Depot Bump", "Middle", "Outpost Trench", "Outpost Bump"] },
+      options: ["Depot Trench", "Depot Bump", "Middle", "Outpost Trench", "Outpost Bump", "Any Bump", "Any Trench", "Anywhere"] },
     { key: "shotblocker", label: "Has shotblocker", type: "bool" },
     { key: "canUnderTrench", label: "Can go under trench", type: "bool" },
     { key: "canShoot", label: "Can shoot", type: "bool" },

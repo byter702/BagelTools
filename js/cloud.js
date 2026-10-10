@@ -138,18 +138,39 @@
     },
 
     // Upsert my scouter/profile doc (also serves as a presence heartbeat).
+    // NOTE: bb is deliberately NOT written here — Bagel Bucks is account-based and
+    // lives authoritatively in the cloud doc, changed only via atomic addBB/setBB
+    // (so two devices on one account can't clobber each other's total).
     syncMe: function () {
       if (!this.enabled()) return;
       var m = me(); if (!m || !m.id) return;
       var doc = clean({
         id: m.id, first: m.first || "", last: m.last || "",
-        bb: m.bb || 0, matchCount: m.matchCount || 0, pitCount: m.pitCount || 0,
+        matchCount: m.matchCount || 0, pitCount: m.pitCount || 0,
         profilePic: m.profilePic || "",
         lastMatchTeams: m.lastMatchTeams || [], lastPitTeams: m.lastPitTeams || [],
         lastSeen: Date.now(), updatedAt: Date.now(),
       });
       db.collection("scouters").doc(m.id).set(doc, { merge: true })
         .catch(function (e) { log("syncMe failed", e); });
+    },
+
+    // ---- Bagel Bucks (account-based, atomic) ----
+    // Add (or subtract) BB to a scouter's cloud total atomically. Defaults to me.
+    addBB: function (delta, scouterId) {
+      if (!this.enabled() || !delta) return;
+      var m = me(); var id = scouterId || (m && m.id); if (!id) return;
+      try {
+        db.collection("scouters").doc(id).set(
+          { id: id, bb: firebase.firestore.FieldValue.increment(delta) }, { merge: true })
+          .catch(function (e) { log("addBB failed", e); });
+      } catch (e) { log("addBB threw", e); }
+    },
+    // Set a scouter's BB to an exact value (admin edit, or one-time migrate-up).
+    setBBValue: function (scouterId, value) {
+      if (!this.enabled() || !scouterId) return;
+      db.collection("scouters").doc(scouterId).set({ id: scouterId, bb: Number(value) || 0 }, { merge: true })
+        .catch(function (e) { log("setBBValue failed", e); });
     },
 
     // Lightweight presence ping.

@@ -184,7 +184,7 @@
         const v = Number(val || 0);
         control = `<div class="counter" data-val="${v}">
           <button type="button" data-step="-1" aria-label="Decrease ${esc(f.label)}">−</button>
-          <span class="count">${v}</span>
+          <input class="count" type="number" inputmode="numeric" min="${f.min != null ? f.min : 0}" value="${v}" aria-label="${esc(f.label)}" />
           <button type="button" data-step="1" aria-label="Increase ${esc(f.label)}">+</button></div>`;
         break;
       }
@@ -217,16 +217,17 @@
   }
 
   function wireFields(container) {
-    // counters
+    // counters (± buttons AND a typeable number field)
     $$(".counter", container).forEach((c) => {
+      const inp = c.querySelector(".count");
+      const set = (v) => { v = Math.max(0, Math.floor(Number(v) || 0)); c.dataset.val = v; if (inp) inp.value = v; };
       c.querySelectorAll("button").forEach((b) => {
-        b.onclick = () => {
-          let v = Number(c.dataset.val || 0) + Number(b.dataset.step);
-          if (v < 0) v = 0;
-          c.dataset.val = v;
-          c.querySelector(".count").textContent = v;
-        };
+        b.onclick = () => set(Number(c.dataset.val || 0) + Number(b.dataset.step));
       });
+      if (inp) {
+        inp.oninput = () => { c.dataset.val = Math.max(0, Math.floor(Number(inp.value) || 0)); };
+        inp.onblur = () => set(inp.value); // normalise (e.g. empty → 0) when they leave the field
+      }
     });
     // ratings (tap same star to clear)
     $$(".rating", container).forEach((r) => {
@@ -248,7 +249,7 @@
     $$("[data-key]", container).forEach((wrap) => {
       const key = wrap.dataset.key, type = wrap.dataset.type;
       if (type === "bool") out[key] = wrap.querySelector("input[type=checkbox]").checked;
-      else if (type === "counter") out[key] = Number(wrap.querySelector(".counter").dataset.val || 0);
+      else if (type === "counter") { const c = wrap.querySelector(".counter"), inp = c.querySelector(".count"); out[key] = Math.max(0, Math.floor(Number((inp ? inp.value : c.dataset.val)) || 0)); }
       else if (type === "rating") out[key] = Number(wrap.querySelector(".rating").dataset.val || 0);
       else if (type === "select") out[key] = wrap.querySelector("select").value;
       else if (type === "number") { const v = wrap.querySelector("input").value; out[key] = v === "" ? null : Number(v); }
@@ -442,11 +443,23 @@
     const played = ms.filter(scored).length, total = ms.length;
     return total > 0 && played > 0 && played < total;
   }
-  // BB can only be earned when the event is live AND the admin approved it.
+  // Admin approval is the single control: once the admin approves an event, EVERY
+  // scout earns BB for it (on any device) until the admin turns it off. (Previously
+  // this also required per-device "is live" detection, which could silently block
+  // some scouts' earnings.)
   function canEarnBB() {
     const ek = Store.getSettings().eventKey;
-    return eventIsLive() && Store.isBBApproved(ek);
+    return !!ek && Store.isBBApproved(ek);
   }
+  // Mirror my local BB to the authoritative cloud total. Returns true if it changed.
+  function reconcileBB() {
+    if (!(window.Cloud && Cloud.enabled && Cloud.enabled())) return false;
+    const me = Store.getMe();
+    const cm = (Cloud.getScouters() || []).find((s) => s.id === me.id);
+    if (cm && typeof cm.bb === "number" && cm.bb !== (me.bb || 0)) { Store.setMe({ bb: cm.bb }); return true; }
+    return false;
+  }
+  let pitPageRefresh = null; // set by renderPit; lets cloud updates refresh the pit list+map live
   const BB = "BB";
 
   // Cloud module is optional; fall back to safe no-ops if cloud.js is absent.
@@ -454,7 +467,7 @@
     enabled: () => false, init() {}, syncMe() {}, heartbeat() {},
     pushMatches() {}, pushPits() {}, pushPicklist() {}, pushTierlist() {},
     pushMatchForm() {}, pushPitForm() {}, clearMatchForm() {}, clearPitForm() {}, pushRoster() {},
-    pushBBApproved() {}, pushAccessRequest() {},
+    pushBBApproved() {}, pushAccessRequest() {}, addBB() {}, setBBValue() {},
     pushClaim() {}, releaseClaim() {}, releaseMyClaims() {}, getClaims: () => [],
     pushActivity() {}, onActivity() {},
     pushTestEvent() {}, pushTestQual() {}, clearTestEvent() {}, getTestEvent: () => null,
@@ -1500,6 +1513,7 @@
       if (isNew) {
         const earn = canEarnBB();
         Store.recordMatchScouted(team, earn);
+        if (earn) Cloud.addBB(10); // account-based BB, atomic on the cloud
         Cloud.syncMe();
         Cloud.pushMatches();
         Cloud.pushActivity({ type: "match", team, bb: earn ? 10 : 0, matchNumber: entry.matchNumber });
@@ -1555,7 +1569,7 @@
       if (!wrap) return;
       const v = m[f.key];
       if (f.type === "bool") wrap.querySelector("input").checked = !!v;
-      else if (f.type === "counter") { wrap.querySelector(".counter").dataset.val = v || 0; wrap.querySelector(".count").textContent = v || 0; }
+      else if (f.type === "counter") { wrap.querySelector(".counter").dataset.val = v || 0; wrap.querySelector(".count").value = v || 0; }
       else if (f.type === "rating") { const r = wrap.querySelector(".rating"); r.dataset.val = v || 0; r.querySelectorAll(".star").forEach((s) => s.classList.toggle("on", Number(s.dataset.idx) <= (v || 0))); }
       else if (f.type === "select") wrap.querySelector("select").value = v || wrap.querySelector("select").value;
       else if (f.type === "number") wrap.querySelector("input").value = v ?? "";
@@ -1605,6 +1619,8 @@
     wireFields(root);
     drawPitList();
     loadPitMap(root);
+    // Let cloud updates refresh the shared pit list + map live without touching the form.
+    pitPageRefresh = () => { try { drawPitList(); loadPitMap(root); } catch (e) {} };
 
     let pitPhoto = null; // dataURL of the current robot photo
     const photoInput = $("#pPhoto", root);
@@ -1633,6 +1649,7 @@
       if (isNewPit) {
         const earn = canEarnBB();
         Store.recordPitScouted(team, earn);
+        if (earn) Cloud.addBB(5); // account-based BB, atomic on the cloud
         Cloud.syncMe();
         Cloud.pushPits();
         Cloud.pushActivity({ type: "pit", team, bb: earn ? 5 : 0 });
@@ -1681,7 +1698,7 @@
       else if (f.type === "select") wrap.querySelector("select").value = v || wrap.querySelector("select").value;
       else if (f.type === "number") wrap.querySelector("input").value = v ?? "";
       else if (f.type === "text") wrap.querySelector("textarea").value = v || "";
-      else if (f.type === "counter") { const cc = wrap.querySelector(".counter"); cc.dataset.val = v || 0; cc.querySelector(".count").textContent = v || 0; }
+      else if (f.type === "counter") { const cc = wrap.querySelector(".counter"); cc.dataset.val = v || 0; cc.querySelector(".count").value = v || 0; }
       else if (f.type === "rating") { const rr = wrap.querySelector(".rating"); rr.dataset.val = v || 0; rr.querySelectorAll(".star").forEach((sx) => sx.classList.toggle("on", Number(sx.dataset.idx) <= (v || 0))); }
     });
     if (renderPit._setPhoto) renderPit._setPhoto(p.photo || null);
@@ -1698,10 +1715,11 @@
 
   // Hand-laid pit layout for SoCal Showdown (matches the venue map). Each entry is
   // a pit row; a 2-number row is a double-wide column. Only teams + the Field label.
+  // A2 pit = rookie team 11722 (EIA Robotics).
   const SOCAL_PITMAP = {
-    colA: [[702, 7042], [8521, 968], [687, 6904], [9408, 1138], [589, 6658], [9696, 1148], [359, 6220], [11024, 1160], [294, 6072]],
-    colB: [[2429], [5199], [2102], [5285], [1452], [5805], [1197]],
-    colC: [[5124], [2637], [5089], [2710], [4999], [3473], [4501]],
+    colA: [[702, 8521], [9408, 968], [687, 7042], [9696, 1138], [589, 6904], [11024, 1148], [359, 6658], [11722, 1160], [294, 6220]],
+    colB: [[2429], [6072], [2102], [5199], [1452], [5285], [1197]],
+    colC: [[5805], [2637], [5124], [2710], [5089], [3473], [4999]],
     colD: [[3759, 4276], [4415, 4079], [3501, 4201], [4470, 4123], [3476, 4141]],
   };
   function isSocalShowdown(s) { return /socal\s*showdown/.test((s.eventName || "").toLowerCase()); }
@@ -3078,16 +3096,31 @@
       const s = Store.getSettings();
       const evk = s.eventKey || "";
       const approved = Store.isBBApproved(evk);
-      const live = eventIsLive();
+      const scs = allScouters().slice().sort((a, b) => (b.bb || 0) - (a.bb || 0) || scouterName(a).localeCompare(scouterName(b)));
       return `<div class="card">
         <div class="section-head"><div class="row" style="gap:10px">${icon("star")}<h2 style="margin:0">Bagel Bucks (BB)</h2></div>
           ${evk ? `<span class="badge ${approved ? "green" : ""} dot">${approved ? "Approved" : "Not approved"}</span>` : ""}</div>
-        <p class="hint">Scouts earn <b>BB</b> only while the event is <b>live</b> <i>and</i> you've approved it here — 10 BB per match scouted, 5 BB per new team pit-scouted.</p>
+        <p class="hint">Once you approve an event, <b>every</b> scout earns <b>BB</b> on any device — 10 BB per match, 5 BB per new team pit-scouted — until you turn it off. BB is tied to the account and shared across devices.</p>
         ${evk ? `<div class="row between" style="align-items:center;gap:12px;flex-wrap:wrap">
-          <div><b>${esc(evk)}</b> <span class="badge ${live ? "green" : ""} dot" style="margin-left:6px">${live ? "Live now" : "Not live"}</span></div>
-          <button class="btn ${approved ? "danger" : "primary"} sm" id="bbApproveBtn">${approved ? "Turn off earning" : "Approve for BB earning"}</button>
-        </div>${!live ? `<p class="hint" style="margin:8px 0 0">Even when approved, BB only accrue during the event's live dates.</p>` : ""}`
+          <div><b>${esc(evk)}</b></div>
+          <button class="btn ${approved ? "danger" : "primary"} sm" id="bbApproveBtn">${approved ? "Turn off earning" : "Approve for BB earning (everyone)"}</button>
+        </div>`
           : `<p class="hint">Pick an event on the Dashboard first, then approve it here.</p>`}
+      </div>
+      <div class="card" style="margin-top:16px">
+        <div class="row" style="gap:10px;margin-bottom:6px">${icon("star")}<h3 style="margin:0">Adjust a scouter's BB</h3></div>
+        <p class="hint">Manually add or remove Bagel Bucks from any account. Applies to that account on every device.</p>
+        ${scs.length ? `<div class="table-wrap"><table>
+          <thead><tr><th>Scouter</th><th class="num">BB</th><th>Adjust</th></tr></thead>
+          <tbody>${scs.map((sc) => `<tr>
+            <td><b>${esc(scouterName(sc))}</b></td>
+            <td class="num">${sc.bb || 0}</td>
+            <td><div class="row" style="gap:6px;flex-wrap:nowrap;align-items:center">
+              <input type="number" class="bb-amt" value="10" style="width:68px;min-width:0" aria-label="Amount" />
+              <button class="btn secondary sm" data-bbadd="${esc(sc.id)}">+ Add</button>
+              <button class="btn ghost sm" data-bbsub="${esc(sc.id)}">− Remove</button>
+            </div></td></tr>`).join("")}</tbody></table></div>`
+          : `<p class="hint">No scouters yet.</p>`}
       </div>`;
     })();
 
@@ -3304,6 +3337,9 @@
       toast(on ? "BB earning approved for this event (team-wide)" : "BB earning turned off");
       renderAdmin(root);
     };
+    const bbAmt = (btn) => { const r = btn.closest("tr"); const i = r && r.querySelector(".bb-amt"); return Math.abs(Math.floor(Number(i && i.value) || 0)); };
+    $$("[data-bbadd]", root).forEach((b) => b.onclick = () => { const amt = bbAmt(b); if (!amt) return toast("Enter an amount", "err"); Cloud.addBB(amt, b.dataset.bbadd); toast(`+${amt} BB added`); });
+    $$("[data-bbsub]", root).forEach((b) => b.onclick = () => { const amt = bbAmt(b); if (!amt) return toast("Enter an amount", "err"); Cloud.addBB(-amt, b.dataset.bbsub); toast(`−${amt} BB removed`); });
 
     $$("[data-approve]", root).forEach((b) => b.onclick = () => { Store.approveMember(b.dataset.approve); Cloud.pushRoster(); toast("Member approved"); renderAdmin(root); refreshChrome(); });
     $$("[data-deny]", root).forEach((b) => b.onclick = () => { Store.denyRequest(b.dataset.deny); Cloud.pushRoster(); toast("Request denied"); renderAdmin(root); refreshChrome(); });
@@ -3608,18 +3644,31 @@
     setInterval(() => Cloud.heartbeat(), 45 * 1000);
     Cloud.onChange(() => {
       const teChanged = applyCloudTestEvent();
+      const bbChanged = reconcileBB(); // keep my local BB mirror = the cloud total
       if (teChanged) refreshChrome();
       // NEVER auto-re-render while the user is filling the match/pit ENTRY forms —
       // a background cloud snapshot (another scout's heartbeat/data) would rebuild
       // the form and wipe everything they typed. On the MATCH page we still live-
-      // update the robot-claim locks in place (no re-render). Both refresh on next visit.
+      // update robot-claim locks; on the PIT page we refresh the shared list + map
+      // in place (never the form). Both refresh fully on next visit.
       if (current() === "match") { refreshRobotClaims(); return; }
-      if (current() === "pit") return;
-      if (teChanged || ["members", "picklist", "data", "admin", "teams"].includes(current())) router();
+      if (current() === "pit") { if (pitPageRefresh) pitPageRefresh(); return; }
+      if (teChanged || bbChanged || ["members", "picklist", "data", "admin", "teams"].includes(current())) router();
     });
     // Global "someone just scouted" popup — show for everyone except the scout who
     // made it (they already got their own toast).
     Cloud.onActivity((a) => { if (a && a.scouterId !== Store.getMe().id) scoutPopup(a); });
+    // One-time BB reconcile: Bagel Bucks is now account-based in the cloud. If this
+    // device's local total is HIGHER than the cloud's (e.g. the phone you actually
+    // scouted on), push it up so no earned BB is lost; otherwise pull the cloud total down.
+    setTimeout(() => {
+      if (!Cloud.enabled()) return;
+      const me = Store.getMe();
+      const cm = (Cloud.getScouters() || []).find((s) => s.id === me.id);
+      const cloudBb = cm && typeof cm.bb === "number" ? cm.bb : 0;
+      if ((me.bb || 0) > cloudBb) Cloud.setBBValue(me.id, me.bb);
+      else if (reconcileBB() && current() === "members") router();
+    }, 3500);
     // Adopt any already-shared test event on startup.
     setTimeout(() => { if (applyCloudTestEvent()) { refreshChrome(); router(); } }, 1500);
     // After the first cloud snapshot has merged the shared roster in, push our

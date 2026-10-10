@@ -377,7 +377,11 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); outlin
 .counter button:hover { border-color: var(--primary); transform: translateY(-2px); }
 .counter button:active { transform: scale(.88); transition-duration:.07s; background: color-mix(in srgb, var(--primary) 14%, var(--surface-2)); }
 .counter .count { font-family: var(--font-display); font-weight: 800; font-size: 1.8rem;
-  min-width: 60px; text-align: center; color: var(--secondary); font-variant-numeric: tabular-nums; }
+  width: 72px; min-width: 60px; text-align: center; color: var(--secondary); font-variant-numeric: tabular-nums;
+  background: var(--surface-2); border: 1.5px solid var(--border-strong); border-radius: var(--radius-sm);
+  padding: 6px 4px; -moz-appearance: textfield; min-height: 48px; }
+.counter .count:focus { outline: none; border-color: var(--primary); }
+.counter .count::-webkit-outer-spin-button, .counter .count::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
 
 /* Rating stars */
 .rating { display: flex; gap: 6px; }
