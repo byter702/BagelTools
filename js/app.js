@@ -1338,6 +1338,7 @@
      ======================================================================== */
   let matchEditId = null;
   let matchEditAlliance = "red";
+  let lastTeamPick = 0; // timestamp of the last robot-pick, for the 5s switch cooldown
   // A robot in a match counts as "taken" when another scout has claimed it (live)
   // or a match record for it already exists. Claims older than this expire so an
   // Order the four alternating shift periods (two Active shifts + two Inactive)
@@ -1462,8 +1463,15 @@
           </div>`).join("");
         paintAvatars(picker, ["red", "blue"].flatMap((c) => m.alliances[c].team_keys.map((k) => k.replace("frc", ""))));
         $$(".robot-pick", picker).forEach((b) => b.onclick = () => {
+          if (b.classList.contains("sel")) return; // already the selected robot
           if (b.disabled) { toast("That robot is already being scouted by someone else", "err"); return; }
+          // 5-second cooldown between switching the team you're scouting
           const prev = $(".robot-pick.sel", picker);
+          if (prev) {
+            const left = 5000 - (Date.now() - lastTeamPick);
+            if (left > 0) { toast(`Wait ${Math.ceil(left / 1000)}s before switching teams`, "err"); return; }
+          }
+          lastTeamPick = Date.now();
           if (prev && prev !== b) Cloud.releaseClaim(s.eventKey, num, prev.dataset.team);
           $$(".robot-pick", picker).forEach((x) => x.classList.remove("sel"));
           b.classList.add("sel");
@@ -1474,9 +1482,10 @@
         refreshRobotClaims();
       };
       $("#mMatchSel", root).onchange = (e) => {
-        // leaving a match: release the robot I had claimed there
+        // leaving a match: release the robot I had claimed there, reset the cooldown
         const prevNum = $("#mNum", root).value, prevSel = $(".robot-pick.sel", root);
         if (prevNum && prevSel) Cloud.releaseClaim(s.eventKey, prevNum, prevSel.dataset.team);
+        lastTeamPick = 0;
         $("#mNum", root).value = e.target.value; renderRobots(e.target.value);
       };
     } else {
