@@ -2368,20 +2368,11 @@
         <p class="hint">Everyone can read every record here — no export needed. New scouting adds to the bottom automatically.</p>
         <div id="dataViewer"></div>
       </div>
-      <div class="grid cols-2">
-        <div class="card"><h2>${icon("download")} Export</h2>
-          <p class="hint">Back up everything or share with the lead scout's device. JSON keeps a full backup you can re-import; CSV opens in Excel / Sheets.</p>
-          <div class="btn-row">
-            <button class="btn primary" id="expJson">${icon("download")} Full backup (.json)</button>
-            <button class="btn ghost" id="expMatchCsv">Matches (.csv)</button>
-            <button class="btn ghost" id="expPitCsv">Pit data (.csv)</button>
-          </div>
-        </div>
-        <div class="card"><h2>${icon("upload")} Import</h2>
-          <p class="hint">Load a teammate's <b>.json</b> backup. <b>Merge</b> combines with what you have; <b>Replace</b> wipes first.</p>
-          <div class="field"><label>Mode</label>
-            <div class="pill-toggle" id="impMode"><button data-v="merge" class="on">Merge</button><button data-v="replace">Replace</button></div></div>
-          <input type="file" id="impFile" accept="application/json,.json" />
+      <div class="card"><h2>${icon("download")} Export</h2>
+        <p class="hint">Export your scouting data as a spreadsheet (CSV) that opens in Excel / Sheets.</p>
+        <div class="btn-row">
+          <button class="btn primary" id="expMatchCsv">Matches (.csv)</button>
+          <button class="btn primary" id="expPitCsv">Pit data (.csv)</button>
         </div>
       </div>
       <div class="card" style="margin-top:16px"><h2 style="color:var(--danger)">Danger zone</h2>
@@ -2405,7 +2396,6 @@
       drawViewer();
     });
 
-    $("#expJson", root).onclick = () => download("bagelbytes-scouting-backup.json", JSON.stringify(Store.exportAll(), null, 2), "application/json");
     $("#expMatchCsv", root).onclick = () => {
       if (!matches.length) return toast("No match data", "err");
       download("matches.csv", matchesToCsv(matches), "text/csv");
@@ -2413,21 +2403,6 @@
     $("#expPitCsv", root).onclick = () => {
       if (!Object.keys(pits).length) return toast("No pit data", "err");
       download("pit-scouting.csv", pitsToCsv(pits), "text/csv");
-    };
-    let impMode = "merge";
-    $$("#impMode button", root).forEach((b) => b.onclick = () => { impMode = b.dataset.v; $$("#impMode button", root).forEach((x) => x.classList.toggle("on", x === b)); });
-    $("#impFile", root).onchange = (e) => {
-      const file = e.target.files[0]; if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        try {
-          const obj = JSON.parse(reader.result);
-          const apply = () => { Store.importAll(obj, impMode); toast("Import complete"); renderData(root); };
-          if (impMode === "replace") confirmDialog("Replace ALL current data with this file?", apply); else apply();
-        } catch (err) { toast("Couldn't read that file", "err"); }
-      };
-      reader.readAsText(file);
-      e.target.value = "";
     };
     $("#clrMatches", root).onclick = () => confirmDialog("Delete all match records on this device?", () => { Store.setCache("__noop", 0); localStorage.removeItem("bb702.matches"); toast("Match data cleared"); renderData(root); });
     $("#clrPits", root).onclick = () => confirmDialog("Delete all pit data on this device?", () => { localStorage.removeItem("bb702.pits"); toast("Pit data cleared"); renderData(root); });
