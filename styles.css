@@ -847,7 +847,19 @@ table.lb th.sortable:hover { color: var(--primary); }
   font-family: var(--font-display); font-weight: 700; font-size: .72rem; letter-spacing: .04em; text-transform: uppercase; color: var(--text-dim); padding: 9px 11px; white-space: nowrap; }
 .data-table td { padding: 8px 11px; border-top: 1px solid var(--border); white-space: nowrap; }
 .data-table td.num, .data-table th.num { text-align: right; }
-.data-table tbody tr:hover, .data-table tbody tr:hover { background: var(--surface); }
+.data-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--surface) 55%, transparent); }
+.data-table tbody tr:hover { background: var(--surface); }
+.data-table td .team-num { color: var(--primary); font-weight: 700; }
+.data-table td:nth-child(2), .data-table.sortable td:first-child { font-weight: 600; }
+/* sortable headers */
+.data-table.sortable th[data-sortkey] { cursor: pointer; user-select: none; transition: color .12s ease; }
+.data-table.sortable th[data-sortkey]:hover { color: var(--text); }
+.data-table.sortable th.sorted { color: var(--primary); }
+/* data viewer controls (search / scouter / sort) */
+.data-controls { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; align-items: center; }
+.data-controls input[type="search"] { flex: 1; min-width: 150px; }
+.data-controls select { min-width: 150px; }
+.data-empty { padding: 8px 0; }
 
 .sl-table td .team-num { color: var(--primary); font-weight: 700; }
 

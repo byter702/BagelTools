@@ -2323,37 +2323,48 @@
      VIEW: DATA (export / import / clear)
      ======================================================================== */
   let dataViewTab = "matches";       // matches | pit — for the always-on data viewer
+  let dataScouter = "";              // scouter filter ("" = all)
+  let dataSearch = "";               // team search filter
+  const dataSort = { matches: { key: "matchNumber", dir: 1 }, pit: { key: "team", dir: 1 } };
 
-  // Sortable, always-visible tables for the Data page (no export needed).
-  function matchTableHtml(matches) {
-    if (!matches.length) return emptyState("clipboard", "No match data yet", "Match records show up here as scouts submit them.");
-    const fields = matchFields();
-    const rows = matches.slice().sort((a, z) => (Number(a.matchNumber) || 0) - (Number(z.matchNumber) || 0) || String(a.team).localeCompare(String(z.team)));
-    return `<div class="table-wrap scroll-y"><table class="data-table">
-      <thead><tr><th>Match</th><th>Team</th><th>Alliance</th><th>Scout</th>${fields.map((f) => `<th>${esc(f.label)}</th>`).join("")}</tr></thead>
-      <tbody>${rows.map((m) => `<tr>
-        <td>${esc(m.matchNumber ?? "")}</td>
-        <td><span class="team-num" data-team="${esc(String(m.team))}" style="cursor:pointer">${esc(String(m.team))}</span></td>
-        <td>${esc(m.alliance || "")}</td>
-        <td>${esc(m.scout || "")}</td>
-        ${fields.map((f) => `<td>${esc(cellVal(m[f.key]))}</td>`).join("")}</tr>`).join("")}</tbody>
-    </table></div>`;
-  }
-  function pitTableHtml(pits) {
-    const list = Object.values(pits || {});
-    if (!list.length) return emptyState("wrench", "No pit data yet", "Pit records show up here as scouts submit them.");
-    const fields = pitFields();
-    const rows = list.slice().sort((a, z) => (Number(a.team) || 0) - (Number(z.team) || 0));
-    return `<div class="table-wrap scroll-y"><table class="data-table">
-      <thead><tr><th>Team</th><th>Name</th><th>Scout</th>${fields.map((f) => `<th>${esc(f.label)}</th>`).join("")}</tr></thead>
-      <tbody>${rows.map((p) => `<tr>
-        <td><span class="team-num" data-team="${esc(String(p.team))}" style="cursor:pointer">${esc(String(p.team))}</span></td>
-        <td>${esc(p.nickname || "")}</td>
-        <td>${esc(p.scout || "")}</td>
-        ${fields.map((f) => `<td>${esc(cellVal(p[f.key]))}</td>`).join("")}</tr>`).join("")}</tbody>
-    </table></div>`;
-  }
   function cellVal(v) { return v == null || v === "" ? "–" : v === true ? "Yes" : v === false ? "No" : String(v); }
+  // Column sets for the Data viewer. get(r) returns the raw value for the column.
+  function matchCols() {
+    return [{ key: "matchNumber", label: "Match" }, { key: "team", label: "Team", team: true },
+      { key: "alliance", label: "Alliance" }, { key: "scout", label: "Scout" },
+      ...matchFields().map((f) => ({ key: f.key, label: f.label }))];
+  }
+  function pitCols() {
+    return [{ key: "team", label: "Team", team: true }, { key: "nickname", label: "Name" },
+      { key: "scout", label: "Scout" }, ...pitFields().map((f) => ({ key: f.key, label: f.label }))];
+  }
+  // Build a filtered + sorted data table for the given tab.
+  function buildDataTable(tab, allRows) {
+    const cols = tab === "pit" ? pitCols() : matchCols();
+    const s = dataSort[tab];
+    const f = dataSearch.trim().toLowerCase();
+    let rows = allRows.filter((r) => {
+      if (dataScouter && (r.scout || "") !== dataScouter) return false;
+      if (f && !String(r.team ?? "").includes(f) && !String(r.nickname || "").toLowerCase().includes(f)) return false;
+      return true;
+    });
+    rows.sort((a, b) => {
+      const av = a[s.key], bv = b[s.key], na = Number(av), nb = Number(bv);
+      const numeric = av !== "" && bv !== "" && av != null && bv != null && !isNaN(na) && !isNaN(nb);
+      const cmp = numeric ? na - nb : String(av ?? "").localeCompare(String(bv ?? ""));
+      return cmp * s.dir;
+    });
+    if (!rows.length) return `<div class="data-empty">${emptyState(tab === "pit" ? "wrench" : "clipboard",
+      "Nothing to show", dataScouter || f ? "No records match these filters." : "Records show up here as scouts submit them.")}</div>`;
+    const arrow = (k) => s.key === k ? (s.dir > 0 ? " ▲" : " ▼") : "";
+    return `<div class="table-wrap scroll-y"><table class="data-table sortable">
+      <thead><tr>${cols.map((c) => `<th data-sortkey="${esc(c.key)}" class="${s.key === c.key ? "sorted" : ""}">${esc(c.label)}${arrow(c.key)}</th>`).join("")}</tr></thead>
+      <tbody>${rows.map((r) => `<tr>${cols.map((c) => `<td>${c.team
+        ? `<span class="team-num" data-team="${esc(String(r.team))}" style="cursor:pointer">${esc(String(r.team))}</span>`
+        : esc(cellVal(r[c.key]))}</td>`).join("")}</tr>`).join("")}</tbody>
+    </table></div>
+    <p class="hint" style="margin:8px 0 0">${rows.length} record${rows.length === 1 ? "" : "s"}${dataScouter ? ` · ${esc(dataScouter)}` : ""} · tap a column header to sort.</p>`;
+  }
 
   function renderData(root) {
     const matches = allMatches(), pits = allPits(), pl = Store.getPicklist();
@@ -2377,12 +2388,12 @@
         <p class="hint">Everyone can read every record here — no export needed. New scouting adds to the bottom automatically.</p>
         <div id="dataViewer"></div>
       </div>
-      <div class="card"><h2>${icon("download")} Export</h2>
-        <p class="hint">Export your scouting data as a spreadsheet (CSV) that opens in Excel / Sheets.</p>
+      <div class="card"><div class="section-head" style="margin-bottom:6px"><h3 style="margin:0">${icon("download")} Export (CSV)</h3>
         <div class="btn-row">
-          <button class="btn primary" id="expMatchCsv">Matches (.csv)</button>
-          <button class="btn primary" id="expPitCsv">Pit data (.csv)</button>
-        </div>
+          <button class="btn ghost sm" id="expMatchCsv">${icon("download")} Matches</button>
+          <button class="btn ghost sm" id="expPitCsv">${icon("download")} Pit data</button>
+        </div></div>
+        <p class="hint" style="margin:0">Full spreadsheet of every record, opens in Excel / Sheets.</p>
       </div>
       <div class="card" style="margin-top:16px"><h2 style="color:var(--danger)">Danger zone</h2>
         <p class="hint">Permanently erase data on <b>this device</b>. Export a backup first — this cannot be undone.</p>
@@ -2395,8 +2406,38 @@
 
     const viewer = $("#dataViewer", root);
     function drawViewer() {
-      viewer.innerHTML = dataViewTab === "pit" ? pitTableHtml(allPits()) : matchTableHtml(allMatches());
-      $$("[data-team]", viewer).forEach((el) => el.onclick = () => openTeam(el.dataset.team));
+      const tab = dataViewTab;
+      const rows = tab === "pit" ? Object.values(allPits()) : allMatches();
+      const scouters = [...new Set(rows.map((r) => r.scout).filter(Boolean))].sort();
+      if (dataScouter && !scouters.includes(dataScouter)) dataScouter = "";
+      viewer.innerHTML = `
+        <div class="data-controls">
+          <input type="search" id="dataSearch" placeholder="Search team…" value="${esc(dataSearch)}" />
+          <select id="dataScouter" aria-label="Filter by scouter">
+            <option value="">All scouters (${scouters.length})</option>
+            ${scouters.map((sc) => `<option ${dataScouter === sc ? "selected" : ""}>${esc(sc)}</option>`).join("")}
+          </select>
+          <select id="dataSortSel" aria-label="Sort by">
+            ${(tab === "pit" ? pitCols() : matchCols()).map((c) => `<option value="${esc(c.key)}" ${dataSort[tab].key === c.key ? "selected" : ""}>Sort: ${esc(c.label)}</option>`).join("")}
+          </select>
+          <button class="btn ghost sm" id="dataSortDir" title="Toggle ascending/descending">${dataSort[tab].dir > 0 ? "▲ Asc" : "▼ Desc"}</button>
+        </div>
+        <div id="dataTableWrap"></div>`;
+      const drawTable = () => {
+        $("#dataTableWrap", viewer).innerHTML = buildDataTable(tab, rows);
+        $$("[data-team]", viewer).forEach((el) => el.onclick = () => openTeam(el.dataset.team));
+        $$("th[data-sortkey]", viewer).forEach((th) => th.onclick = () => {
+          const k = th.dataset.sortkey, st = dataSort[tab];
+          if (st.key === k) st.dir *= -1; else { st.key = k; st.dir = 1; }
+          $("#dataSortSel", viewer).value = st.key; $("#dataSortDir", viewer).textContent = st.dir > 0 ? "▲ Asc" : "▼ Desc";
+          drawTable();
+        });
+      };
+      $("#dataSearch", viewer).oninput = (e) => { dataSearch = e.target.value; drawTable(); };
+      $("#dataScouter", viewer).onchange = (e) => { dataScouter = e.target.value; drawTable(); };
+      $("#dataSortSel", viewer).onchange = (e) => { dataSort[tab].key = e.target.value; drawTable(); };
+      $("#dataSortDir", viewer).onclick = () => { dataSort[tab].dir *= -1; $("#dataSortDir", viewer).textContent = dataSort[tab].dir > 0 ? "▲ Asc" : "▼ Desc"; drawTable(); };
+      drawTable();
     }
     drawViewer();
     $$("#dataTabs button", root).forEach((b) => b.onclick = () => {
