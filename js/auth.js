@@ -92,7 +92,7 @@ const Auth = (() => {
             Cloud.pushAccessRequest(key, entry);
           }
         } catch (e) {}
-        showPending(wrap, f);
+        showPending(wrap, f, l, full, onDone);
         return;
       }
 
@@ -104,18 +104,28 @@ const Auth = (() => {
     });
   }
 
-  function showPending(wrap, first) {
+  function showPending(wrap, first, last, full, onDone) {
     wrap.querySelector(".login-card").innerHTML = `
       <img class="login-logo logo-dark" src="assets/logo-dark.png" alt="FRC 702 logo" />
       <img class="login-logo logo-light" src="assets/logo.png" alt="FRC 702 logo" />
       <h1 class="login-title">Bagel<span>Scout</span></h1>
       <p class="login-sub">Access pending</p>
-      <div class="login-error" style="display:block">Hi ${esc(first)} — your request to join has been sent to the team admins.
-        You'll be able to log in once an admin approves you.</div>
+      <div class="login-pending" style="display:block">Hi ${esc(first)} — your request to join has been sent to the team admins.
+        <b>This screen will sign you in automatically the moment an admin approves you.</b></div>
       <p class="login-foot">Already approved? Make sure your name is spelled exactly as the admin entered it, then try again.</p>
       <button class="btn ghost block" id="pendingBack" style="margin-top:12px">← Back to login</button>`;
+    // Auto sign-in: the admin's approval syncs the roster down (cloud → local), so
+    // poll isAccepted and enter the app the instant this person becomes a member.
+    const enter = () => {
+      clearInterval(poll);
+      Store.setSession({ first, last, ts: Date.now() });
+      if (!Store.getSettings().scoutName && typeof full === "string") Store.setSettings({ scoutName: full });
+      wrap.classList.add("bye");
+      setTimeout(() => { wrap.remove(); document.getElementById("app").style.display = ""; if (onDone) onDone("known"); }, 260);
+    };
+    const poll = setInterval(() => { try { if (isAccepted(first, last)) enter(); } catch (e) {} }, 2500);
     const b = wrap.querySelector("#pendingBack");
-    if (b) b.onclick = () => location.reload();
+    if (b) b.onclick = () => { clearInterval(poll); location.reload(); };
   }
 
   return { currentUser, isLoggedIn, logout, showLogin };

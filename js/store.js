@@ -314,9 +314,11 @@ const Store = (() => {
     write("members", members); write("requests", reqs);
   }
   function denyRequest(key) { const reqs = getRequests(); delete reqs[key]; write("requests", reqs); }
-  // Merge a shared roster (from the cloud) into the local one. Approved members
-  // win over pending requests, so a name approved on any device stops showing as
-  // a request everywhere. Idempotent — safe to call on every cloud snapshot.
+  // Merge a shared roster (from the cloud) into the local one. Members are additive
+  // (approved anywhere → member everywhere). Pending REQUESTS are cloud-authoritative:
+  // the cloud's request list replaces the local one (minus any that are now members).
+  // This is what makes a DENY stick — a denied request removed from the cloud can no
+  // longer linger in some other device's local list and get re-pushed later.
   function mergeRoster(members, requests) {
     if (members && typeof members === "object") {
       const merged = { ...getMembers(), ...members };
@@ -324,9 +326,8 @@ const Store = (() => {
     }
     const mem = getMembers();
     if (requests && typeof requests === "object") {
-      const reqs = { ...getRequests() };
-      Object.keys(requests).forEach((k2) => { if (!reqs[k2]) reqs[k2] = requests[k2]; });
-      Object.keys(reqs).forEach((k2) => { if (mem[k2]) delete reqs[k2]; });
+      const reqs = {};
+      Object.keys(requests).forEach((k2) => { if (!mem[k2]) reqs[k2] = requests[k2]; });
       write("requests", reqs);
     }
   }

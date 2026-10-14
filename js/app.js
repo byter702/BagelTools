@@ -872,7 +872,19 @@
     return `<div class="team-chip-row">${list.map((t) =>
       `<button class="team-chip" data-team="${esc(t)}"><span class="team-num">${esc(t)}</span> <span class="muted">${esc(teamName(t))}</span></button>`).join("")}</div>`;
   }
-  const pitCountOf = (sc) => (sc.pitScoutedTeams || []).length || sc.pitCount || 0;
+  // Counts are derived from the SHARED cloud data (by scouterId) so they're the
+  // same on every device; fall back to the stored per-device count only if there
+  // are no cloud records tagged with this scouter (e.g. older data).
+  const matchCountOf = (sc) => {
+    const id = sc && sc.id;
+    const n = id ? allMatches().filter((m) => String(m.scouterId) === String(id)).length : 0;
+    return n || (sc && sc.matchCount) || 0;
+  };
+  const pitCountOf = (sc) => {
+    const id = sc && sc.id;
+    const n = id ? Object.values(allPits()).filter((p) => String(p.scouterId) === String(id)).length : 0;
+    return n || (sc && sc.pitScoutedTeams || []).length || (sc && sc.pitCount) || 0;
+  };
 
   function renderMembers(root) {
     const { sub } = memberSub();
@@ -914,7 +926,7 @@
       </div>
       <div class="section grid cols-3">
         ${kpi("Bagel Bucks", (sc.bb || 0) + " " + BB, "yellow")}
-        ${kpi("Matches scouted", sc.matchCount || 0, "cyan")}
+        ${kpi("Matches scouted", matchCountOf(sc), "cyan")}
         ${kpi("Teams pit scouted", pitCountOf(sc))}
       </div>
       <div class="section grid cols-2">
@@ -950,7 +962,7 @@
         <span class="lb-name">${esc(scouterName(sc))}${online ? ` <span class="status-dot on inline"></span>` : ""}</span>
         <span class="lb-bbwrap">
           <span class="lb-bb-row"><span class="lb-bb">${sc.bb || 0}</span><span class="lb-bb-unit">${BB}</span></span>
-          <span class="lb-sub">${sc.matchCount || 0} M · ${pitCountOf(sc)} P</span>
+          <span class="lb-sub">${matchCountOf(sc)} M · ${pitCountOf(sc)} P</span>
         </span>
       </button>`;
     }).join("")}</div></div>`;
@@ -3180,7 +3192,7 @@
               <td><div class="row" style="gap:8px;align-items:center">${scouterAvatar(s, "sc-avatar sm")}
                 <b>${esc(scouterName(s))}</b>${isMe ? ` <span class="badge cyan">You</span>` : ""}${dup ? ` <span class="badge">dup</span>` : ""}</div></td>
               <td class="num">${s.bb || 0}</td>
-              <td class="num">${s.matchCount || 0}</td>
+              <td class="num">${matchCountOf(s)}</td>
               <td class="num">${pitCountOf(s)}</td>
               <td class="muted">${s.lastSeen ? esc(timeAgo(s.lastSeen)) : "–"}</td>
               <td><button class="icon-btn" data-del-scouter="${esc(s.id)}" data-scouter-name="${esc(scouterName(s))}" aria-label="Remove scouter">${icon("trash")}</button></td>
@@ -3703,10 +3715,10 @@
     }, 3500);
     // Adopt any already-shared test event on startup.
     setTimeout(() => { if (applyCloudTestEvent()) { refreshChrome(); router(); } }, 1500);
-    // After the first cloud snapshot has merged the shared roster in, push our
-    // roster back up so a brand-new access request from this device reaches the
-    // admins even when a shared roster already exists.
-    setTimeout(() => Cloud.pushRoster(), 3000);
+    // NOTE: we intentionally do NOT re-push the whole roster on startup anymore —
+    // that re-uploaded stale requests (making denied names reappear). New access
+    // requests reach admins via Cloud.pushAccessRequest at login; approve/deny push
+    // the authoritative roster immediately.
 
     if (loginStatus === "new") setTimeout(() => toast("Welcome! Your name was logged for admin review.", "ok"), 400);
   }

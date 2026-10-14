@@ -566,6 +566,9 @@ td .team-num { font-family: var(--font-display); font-weight: 700; }
 .login-error { display: block; background: color-mix(in srgb, var(--danger) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--danger) 50%, transparent); color: var(--danger);
   padding: 9px 12px; border-radius: 10px; font-weight: 600; font-size: .88rem; margin-bottom: 12px; }
+.login-pending { display: block; background: color-mix(in srgb, var(--secondary) 18%, transparent);
+  border: 1px solid color-mix(in srgb, var(--secondary) 55%, transparent); color: color-mix(in srgb, var(--secondary) 85%, var(--text));
+  padding: 9px 12px; border-radius: 10px; font-weight: 600; font-size: .88rem; margin-bottom: 12px; text-align: left; }
 .login-foot { color: var(--text-mut); font-size: .8rem; margin: 18px 0 0; }
 .login-card.shake { animation: shake .4s cubic-bezier(.36,.07,.19,.97); }
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
