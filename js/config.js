@@ -61,8 +61,10 @@ window.CONFIG = {
   owner: "Samuel Wright",
   approvedMembers: ["Samuel Wright"],
 
-  /* --- Dashboard countdown --------------------------------------------------- */
-  countdown: { label: "SoCal Showdown", date: "2026-10-09" },
+  /* --- Dashboard countdown ---------------------------------------------------
+     Set { label, date: "YYYY-MM-DD" } to show a countdown card on the Dashboard;
+     leave it as {} to hide it. */
+  countdown: {},
 
   /* --- Firebase (optional cloud sync) ----------------------------------------
      Leave this EMPTY ({}) to run fully offline / local-only — everything works,
