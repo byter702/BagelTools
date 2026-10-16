@@ -886,6 +886,32 @@
     const n = id ? Object.values(allPits()).filter((p) => String(p.scouterId) === String(id)).length : 0;
     return n || (sc && sc.pitScoutedTeams || []).length || (sc && sc.pitCount) || 0;
   };
+  // "Last teams" lists, also derived from the SHARED cloud records (by scouterId)
+  // so they show every team this account scouted across all its devices, newest
+  // first. Falls back to the per-device stored list only when no cloud records.
+  const lastTeamsFrom = (records, id) => {
+    const mine = records
+      .filter((r) => r && r.team != null && String(r.scouterId) === String(id))
+      .sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const seen = new Set(), out = [];
+    for (const r of mine) {
+      const t = String(r.team);
+      if (seen.has(t)) continue;
+      seen.add(t); out.push(t);
+      if (out.length >= 12) break;
+    }
+    return out;
+  };
+  const lastMatchTeamsOf = (sc) => {
+    const id = sc && sc.id;
+    const list = id ? lastTeamsFrom(allMatches(), id) : [];
+    return list.length ? list : (sc && sc.lastMatchTeams) || [];
+  };
+  const lastPitTeamsOf = (sc) => {
+    const id = sc && sc.id;
+    const list = id ? lastTeamsFrom(Object.values(allPits()), id) : [];
+    return list.length ? list : (sc && sc.lastPitTeams) || [];
+  };
 
   function renderMembers(root) {
     const { sub } = memberSub();
@@ -931,8 +957,8 @@
         ${kpi("Teams pit scouted", pitCountOf(sc))}
       </div>
       <div class="section grid cols-2">
-        <div class="card"><h3>Last teams scouted</h3>${teamChips(sc.lastMatchTeams)}</div>
-        <div class="card"><h3>Last teams pit scouted</h3>${teamChips(sc.lastPitTeams)}</div>
+        <div class="card"><h3>Last teams scouted</h3>${teamChips(lastMatchTeamsOf(sc))}</div>
+        <div class="card"><h3>Last teams pit scouted</h3>${teamChips(lastPitTeamsOf(sc))}</div>
       </div>`;
     $$("[data-team]", body).forEach((c) => c.onclick = () => openTeam(c.dataset.team));
     if (isMe) {
