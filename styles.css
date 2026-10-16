@@ -1057,7 +1057,15 @@ table.lb th.sortable:hover { color: var(--primary); }
 .mu-pick-ph { width: 40px; height: 40px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
   background: var(--surface-2); border: 1.5px dashed var(--border-strong); color: var(--text-mut); font-family: var(--font-display); font-weight: 800; }
 .mu-pick input.mu-team { flex: none; width: 96px; text-align: center; font-family: var(--font-display); font-size: 1.1rem; }
-.mu-pick select.mu-team { flex: 1; min-width: 0; }
+.mu-pick select.mu-team { flex: 1; min-width: 0; height: 46px; padding: 0 40px 0 14px;
+  font-family: var(--font-ui); font-size: .95rem; font-weight: 600; color: var(--text);
+  background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  appearance: none; -webkit-appearance: none; -moz-appearance: none; cursor: pointer;
+  text-overflow: ellipsis; white-space: nowrap;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235bbde2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat; background-position: right 13px center; }
+.mu-pick select.mu-team:hover { border-color: var(--primary); }
+.mu-pick select.mu-team option { font-family: var(--font-ui); font-weight: 500; color: var(--text); background: var(--bg-2); padding: 8px; }
 .mu-pick:has(select) .mu-pick-name { display: none; }
 .mu-pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: var(--font-display); font-weight: 700; font-size: 1rem; }
@@ -1075,8 +1083,8 @@ table.lb th.sortable:hover { color: var(--primary); }
 .mu-score-side.blue .mu-sc-val { color: #7fb4ff; }
 .mu-score-mid { text-align: center; font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--text-mut);
   display: flex; flex-direction: column; gap: 2px; font-weight: 700; }
-.mu-av-strip { display: flex; gap: 4px; margin-top: 8px; }
-.mu-av-strip .team-avatar { width: 30px; height: 30px; border-radius: 50%; border: 1.5px solid var(--border); }
+.mu-av-strip { display: flex; justify-content: center; gap: 14px; margin-top: 12px; }
+.mu-av-strip .team-avatar { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--border); }
 .mu-score-side.red .mu-av-strip .team-avatar { border-color: color-mix(in srgb, #e0564f 55%, transparent); }
 .mu-score-side.blue .mu-av-strip .team-avatar { border-color: color-mix(in srgb, #3f7fe0 55%, transparent); }
 .mu-prob { margin: 16px 0 6px; }
