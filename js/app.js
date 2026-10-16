@@ -543,7 +543,7 @@
   }
   // 702 bagel icon shown for any account without a custom photo — the default
   // profile picture for new accounts and everyone who hasn't uploaded their own.
-  const DEFAULT_PFP = "media/default-pfp.svg";
+  const DEFAULT_PFP = "media/702def.png";
   function scouterAvatar(sc, cls = "sc-avatar") {
     return `<img class="${cls}" src="${(sc && sc.profilePic) || DEFAULT_PFP}" alt="" />`;
   }
