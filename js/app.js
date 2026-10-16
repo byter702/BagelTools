@@ -541,10 +541,11 @@
     if (!sc.lastSeen) return false;
     return (Date.now() - sc.lastSeen) < 90 * 1000; // seen in the last 90s
   }
+  // 702 bagel icon shown for any account without a custom photo — the default
+  // profile picture for new accounts and everyone who hasn't uploaded their own.
+  const DEFAULT_PFP = "media/default-pfp.svg";
   function scouterAvatar(sc, cls = "sc-avatar") {
-    return sc.profilePic
-      ? `<img class="${cls}" src="${sc.profilePic}" alt="" />`
-      : `<span class="${cls} sc-avatar-fallback">${esc(((sc.first || "?")[0] || "?").toUpperCase())}</span>`;
+    return `<img class="${cls}" src="${(sc && sc.profilePic) || DEFAULT_PFP}" alt="" />`;
   }
 
   /* ===========================================================================
@@ -1199,10 +1200,10 @@
     const played = m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0;
     const label = (COMP_LABEL[m.comp_level] || "") + (m.comp_level === "qm" ? m.match_number : (m.set_number || m.match_number));
     const maxEpa = Math.max(1, ...[...red, ...blue].map((t) => epaOf(t) || 0));
-    const teamLine = (t) => {
+    const teamLine = (t, col) => {
       const e = epaOf(t);
       return `<button class="md-team" data-team="${t}">
-        <img class="team-avatar" data-avatar="${t}" alt="" />
+        <img class="team-avatar" data-avatar="${t}" data-ally="${col}" alt="" />
         <span class="md-tinfo"><span class="md-tnum">${t}</span><span class="md-tname">${esc(teamName(t))}</span></span>
         <span class="md-ebar"><span class="md-ebar-fill" style="width:${Math.round((e || 0) / maxEpa * 100)}%"></span></span>
         <span class="md-eval">${e != null ? fmt(e, 1) : "–"}</span>
@@ -1224,8 +1225,8 @@
         </div>
         ${played ? `<div class="md-final"><span class="mf-red">${m.alliances.red.score}</span><span class="mf-vs">final</span><span class="mf-blue">${m.alliances.blue.score}</span></div>` : ""}
         <div class="md-alliances">
-          <div class="md-ally red"><div class="md-ally-head"><span class="alliance-dot alliance-red"></span>Red · ${fmt(redEpa, 0)} EPA</div>${red.map(teamLine).join("")}</div>
-          <div class="md-ally blue"><div class="md-ally-head"><span class="alliance-dot alliance-blue"></span>Blue · ${fmt(blueEpa, 0)} EPA</div>${blue.map(teamLine).join("")}</div>
+          <div class="md-ally red"><div class="md-ally-head"><span class="alliance-dot alliance-red"></span>Red · ${fmt(redEpa, 0)} EPA</div>${red.map((t) => teamLine(t, "red")).join("")}</div>
+          <div class="md-ally blue"><div class="md-ally-head"><span class="alliance-dot alliance-blue"></span>Blue · ${fmt(blueEpa, 0)} EPA</div>${blue.map((t) => teamLine(t, "blue")).join("")}</div>
         </div>
       </div>`,
       (body, close) => {
@@ -1513,7 +1514,7 @@
             <div class="rg-label"><span class="alliance-dot alliance-${col}"></span>${col} alliance</div>
             <div class="robot-row">${m.alliances[col].team_keys.map((k) => { const t = k.replace("frc", ""); return `
               <button type="button" class="robot-pick" data-team="${t}" data-alliance="${col}">
-                <img class="team-avatar" data-avatar="${t}" alt="" />
+                <img class="team-avatar" data-avatar="${t}" data-ally="${col}" alt="" />
                 <span class="rp-num">${t}</span><span class="rp-name">${esc(teamName(t))}</span></button>`; }).join("")}</div>
           </div>`).join("");
         paintAvatars(picker, ["red", "blue"].flatMap((c) => m.alliances[c].team_keys.map((k) => k.replace("frc", ""))));
@@ -2014,7 +2015,7 @@
           </select>`
         : `<input type="number" class="mu-team" data-col="${col}" data-i="${i}" placeholder="Team ${i + 1}" value="${esc(t)}" inputmode="numeric" />`;
       return `<div class="mu-pick ${col}">
-        <span class="mu-pick-av">${t ? `<img class="team-avatar" data-avatar="${esc(t)}" data-tring="${esc(t)}" alt="" />` : `<span class="mu-pick-ph">${i + 1}</span>`}</span>
+        <span class="mu-pick-av">${t ? `<img class="team-avatar" data-avatar="${esc(t)}" data-tring="${esc(t)}" data-ally="${col}" alt="" />` : `<span class="mu-pick-ph">${i + 1}</span>`}</span>
         ${ctrl}
         <span class="mu-pick-name" data-tcolor="${esc(t)}">${t ? (esc(nameOf(t)) || "&nbsp;") : `<span class="muted">empty</span>`}</span>
       </div>`;
@@ -2107,19 +2108,19 @@
       const teamRow = (x, col) => {
         const e = x.e;
         return `<div class="mu-trow" data-team="${esc(x.t)}">
-          <img class="team-avatar mu-tav" data-avatar="${esc(x.t)}" data-tring="${esc(x.t)}" alt="" />
+          <img class="team-avatar mu-tav" data-avatar="${esc(x.t)}" data-tring="${esc(x.t)}" data-ally="${col}" alt="" />
           <span class="mu-tnum" data-tcolor="${esc(x.t)}">${esc(x.t)}</span>
           <span class="mu-tname">${esc(nameOf(x.t))}</span>
           <span class="mu-tbar"><span class="mu-tbar-fill ${col}" style="width:${e ? Math.round(e.total / maxTeamEpa * 100) : 0}%"></span></span>
           <span class="mu-tepa ${col}">${e ? fmt(e.total, 1) : `<span class="muted">–</span>`}</span></div>`;
       };
-      const avStrip = (arr) => `<div class="mu-av-strip">${arr.filter(Boolean).map((t) => `<img class="team-avatar" data-avatar="${esc(t)}" data-tring="${esc(t)}" alt="" />`).join("")}</div>`;
+      const avStrip = (arr, col) => `<div class="mu-av-strip">${arr.filter(Boolean).map((t) => `<img class="team-avatar" data-avatar="${esc(t)}" data-tring="${esc(t)}" data-ally="${col}" alt="" />`).join("")}</div>`;
       el.innerHTML = `
         <div class="card mu-score">
           <div class="mu-score-row">
-            <div class="mu-score-side red"><span class="mu-sc-label">Red Alliance</span><span class="mu-sc-val">${Math.round(rT)}</span>${avStrip(matchupRed)}</div>
+            <div class="mu-score-side red"><span class="mu-sc-label">Red Alliance</span><span class="mu-sc-val">${Math.round(rT)}</span>${avStrip(matchupRed, "red")}</div>
             <div class="mu-score-mid"><span>predicted</span><span>score</span></div>
-            <div class="mu-score-side blue"><span class="mu-sc-label">Blue Alliance</span><span class="mu-sc-val">${Math.round(bT)}</span>${avStrip(matchupBlue)}</div>
+            <div class="mu-score-side blue"><span class="mu-sc-label">Blue Alliance</span><span class="mu-sc-val">${Math.round(bT)}</span>${avStrip(matchupBlue, "blue")}</div>
           </div>
           <div class="mu-prob">
             <div class="md-prob-head"><span class="md-prob-red">${pRed}%</span>
@@ -2828,14 +2829,28 @@
       <div class="hint" style="text-align:center;margin-top:2px">${n} matches · latest EPA ${series[n - 1].epa.toFixed(1)}</div>`;
   }
   // Load TBA avatars into <img data-avatar="team"> elements; fallback class if none.
+  // Alliance background colors — must match the fills baked into the default
+  // icons (media/redicon.png = #ff4040, blueicon.png = #4040ff, blackicon.png = #000).
+  const ALLY_FILL = { red: "#ff4040", blue: "#4040ff", "": "#000" };
+  const ALLY_ICON = { red: "media/redicon.png", blue: "media/blueicon.png", "": "media/blackicon.png" };
   async function paintAvatars(container, teamNums) {
     const uniq = [...new Set(teamNums.map(String))];
     await Promise.all(uniq.map(async (t) => {
       let url = null;
       try { url = await API.getTeamAvatar(t); } catch (e) {}
       container.querySelectorAll(`img[data-avatar="${t}"]`).forEach((el) => {
-        if (url) { el.src = url; el.classList.remove("no-avatar"); }
-        else el.classList.add("no-avatar");
+        const ally = el.dataset.ally || "";          // "red" | "blue" | "" (neutral → black)
+        el.classList.remove("no-avatar");
+        if (url) {
+          // real avatar: fill behind it with the alliance color so avatars with a
+          // transparent background pick up red/blue (or black when no alliance).
+          el.src = url;
+          el.style.backgroundColor = ALLY_FILL[ally] || "#000";
+        } else {
+          // no avatar at all: show the alliance-colored default bagel icon.
+          el.src = ALLY_ICON[ally] || ALLY_ICON[""];
+          el.style.backgroundColor = ALLY_FILL[ally] || "#000";
+        }
       });
     }));
   }
