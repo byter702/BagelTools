@@ -292,7 +292,9 @@ const API = (() => {
     const trim = (arr) => (Array.isArray(arr) ? arr : []).map((m) => {
       const e = m.epas && m.epas[t];
       return { event: m.event, week: m.week, time: m.time || m.predicted_time || 0,
-        epa: e ? e.epa : null, offseason: (m.week == null) };
+        epa: e ? e.epa : null,
+        auto: e ? firstNum(e.auto_epa) : null, teleop: e ? firstNum(e.teleop_epa) : null, endgame: e ? firstNum(e.endgame_epa) : null,
+        offseason: (m.week == null) };
     }).filter((r) => r.epa != null).sort((a, b) => (a.time || 0) - (b.time || 0));
     try {
       const data = await sbFetch("/matches?team=" + team + "&year=" + year + "&limit=300");

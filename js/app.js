@@ -558,6 +558,7 @@
     pit: { title: "Pit Scouting", render: renderPit },
     bagelstats: { title: "BagelStats", render: renderBagelStats },
     compare: { title: "Compare", render: renderCompare },
+    matchup: { title: "Matchup", render: renderMatchup },
     picklist: { title: "Pick List", render: renderPicklist },
     data: { title: "Data", render: renderData },
     admin: { title: "Admin Panel", render: renderAdmin },
@@ -1938,6 +1939,168 @@
     const map = {}; lb.forEach((r) => { map[r.team] = r.epa; });
     const ev = currentEventEpa();
     return (t) => map[String(t)] ?? (ev && ev.byTeam[t] ? ev.byTeam[t].epa : null);
+  }
+
+  /* ===========================================================================
+     VIEW: MATCHUP — pick 6 teams, predict the match from EPA (Event + Global),
+     with a time slider (Global = by week, Event = by qualification).
+     ======================================================================== */
+  let matchupRed = ["", "", ""], matchupBlue = ["", "", ""];
+  let matchupWeek = 99;   // global slider (big = latest)
+  let matchupQual = 999;  // event slider (big = latest)
+  const matchupSeries = {}; // global: team# -> sbTeamMatches rows (in-memory cache)
+
+  function matchupSub() { const p = (location.hash.replace(/^#\/?/, "") || "").split("/"); return p[1] === "global" ? "global" : "event"; }
+
+  function renderMatchup(root) {
+    const sub = matchupSub();
+    const s = Store.getSettings();
+    const teams = eventTeams();
+    const picker = (col, i) => {
+      const arr = col === "red" ? matchupRed : matchupBlue;
+      if (sub === "event") {
+        return `<select class="mu-team" data-col="${col}" data-i="${i}">
+          <option value="">Team ${i + 1}…</option>
+          ${teams.map((t) => `<option value="${t.team_number}" ${arr[i] === String(t.team_number) ? "selected" : ""}>${t.team_number} · ${esc(t.nickname || "")}</option>`).join("")}
+        </select>`;
+      }
+      return `<input type="number" class="mu-team" data-col="${col}" data-i="${i}" placeholder="Team ${i + 1} #" value="${esc(arr[i])}" inputmode="numeric" />`;
+    };
+    root.innerHTML = `
+      <div class="subtabs" id="muTabs">
+        <a href="#/matchup/event" class="${sub === "event" ? "on" : ""}">Event</a>
+        <a href="#/matchup/global" class="${sub === "global" ? "on" : ""}">Global</a>
+      </div>
+      <p class="hint">${sub === "event"
+        ? `Simulate a match from <b>this event's</b> on-device EPA. The slider rewinds to any qualification.`
+        : `Simulate a match from <b>season (global)</b> EPA (Statbotics). The slider rewinds to any week of the season.`}</p>
+      ${sub === "event" && !teams.length
+        ? `<div class="card">${emptyState("calendar", "No event selected", "Choose your event on the Dashboard to pick its teams.")}</div>`
+        : `<div class="mu-pickers">
+          ${["red", "blue"].map((col) => `<div class="card mu-ally ${col}">
+            <div class="mu-ally-head"><span class="alliance-dot alliance-${col}"></span>${col} alliance</div>
+            ${[0, 1, 2].map((i) => picker(col, i)).join("")}</div>`).join("")}
+        </div>
+        <div class="card mu-time" id="muTime"></div>
+        <div id="muResults"></div>`}`;
+    if (sub === "event" && !teams.length) { const g = $("[data-go]", root); if (g) g.onclick = () => go("dashboard"); return; }
+
+    // ---- EPA lookups ------------------------------------------------------
+    // Event: recompute on-device EPA using only quals up to N. Returns {total,auto,teleop,endgame}|null.
+    const eventLookup = (qual) => {
+      const cache = s.eventKey ? Store.getCache("matches." + s.eventKey, null) : null;
+      const all = (cache ? cache.data : []) || [];
+      const upto = all.filter((m) => m.comp_level === "qm" && (Number(m.match_number) || 0) <= qual);
+      const ev = EPA.computeEvent(upto);
+      return (t) => { const r = ev.byTeam[t]; if (!r) return null; const b = r.breakdown || {}; return { total: r.epa, auto: b.auto, teleop: b.teleop, endgame: b.endgame }; };
+    };
+    // Global: a team's EPA at week W (last match with week<=W). Returns {total,auto,teleop,endgame}|null.
+    const globalLookup = (week) => (t) => {
+      const rows = matchupSeries[String(t)];
+      if (!rows || !rows.length) return null;
+      let best = null; rows.forEach((r) => { if (r.week != null && r.week <= week) best = r; });
+      if (!best) { best = rows.filter((r) => r.week == null).slice(-1)[0] || null; } // fall back to offseason/latest
+      if (!best) return null;
+      return { total: best.epa, auto: best.auto, teleop: best.teleop, endgame: best.endgame };
+    };
+
+    const selected = () => [...matchupRed, ...matchupBlue].filter(Boolean);
+    const maxQual = () => {
+      const cache = s.eventKey ? Store.getCache("matches." + s.eventKey, null) : null;
+      const all = (cache ? cache.data : []) || [];
+      return all.filter((m) => m.comp_level === "qm").reduce((mx, m) => Math.max(mx, Number(m.match_number) || 0), 0);
+    };
+    const maxWeek = () => selected().reduce((mx, t) => {
+      const rows = matchupSeries[String(t)] || [];
+      return rows.reduce((m2, r) => (r.week != null ? Math.max(m2, r.week) : m2), mx);
+    }, 0);
+
+    function drawTime() {
+      const el = $("#muTime", root); if (!el) return;
+      if (sub === "event") {
+        const mx = maxQual();
+        if (!mx) { el.innerHTML = `<p class="hint" style="margin:0">Load this event's matches (needs wifi) to use the qualification slider.</p>`; return; }
+        if (matchupQual > mx) matchupQual = mx;
+        el.innerHTML = `<div class="mu-time-head"><span class="mu-time-label">After qualification</span>
+          <span class="mu-time-val" id="muTimeVal">${matchupQual >= mx ? "Q" + mx + " · latest" : "Q" + matchupQual}</span></div>
+          <input type="range" id="muSlider" min="1" max="${mx}" value="${matchupQual}" />`;
+      } else {
+        const mx = maxWeek();
+        if (!mx) { el.innerHTML = `<p class="hint" style="margin:0">Enter teams above to load their season EPA, then rewind by week here.</p>`; return; }
+        if (matchupWeek > mx) matchupWeek = mx;
+        el.innerHTML = `<div class="mu-time-head"><span class="mu-time-label">Season week</span>
+          <span class="mu-time-val" id="muTimeVal">${matchupWeek >= mx ? "Week " + mx + " · latest" : "Week " + matchupWeek}</span></div>
+          <input type="range" id="muSlider" min="1" max="${mx}" value="${matchupWeek}" />`;
+      }
+      const sl = $("#muSlider", el);
+      if (sl) sl.oninput = (e) => { const v = Number(e.target.value); if (sub === "event") matchupQual = v; else matchupWeek = v; drawResults(); const tv = $("#muTimeVal", el); if (tv) { const mx = sub === "event" ? maxQual() : maxWeek(); tv.textContent = (sub === "event" ? (v >= mx ? "Q" + mx + " · latest" : "Q" + v) : (v >= mx ? "Week " + mx + " · latest" : "Week " + v)); } };
+    }
+
+    function drawResults() {
+      const el = $("#muResults", root); if (!el) return;
+      const getEpa = sub === "event" ? eventLookup(matchupQual) : globalLookup(matchupWeek);
+      const sideData = (arr) => arr.filter(Boolean).map((t) => ({ t, e: getEpa(t) }));
+      const red = sideData(matchupRed), blue = sideData(matchupBlue);
+      if (!red.length && !blue.length) { el.innerHTML = `<div class="card">${emptyState("compare", "Pick teams to simulate", "Add teams to the red and blue alliances above to see the predicted outcome.")}</div>`; return; }
+      const sum = (side, k) => side.reduce((a, x) => a + (x.e && x.e[k] != null ? x.e[k] : 0), 0);
+      const rT = sum(red, "total"), bT = sum(blue, "total");
+      const pRed = Math.round(winProb(rT, bT) * 100);
+      const comps = [["auto", "Auto"], ["teleop", "Teleop"], ["endgame", "Endgame"]];
+      const teamRow = (x, col) => `<div class="mu-trow">
+        <span class="mu-tnum team-num" data-team="${esc(x.t)}">${esc(x.t)}</span>
+        <span class="mu-tname">${esc(teamName(x.t))}</span>
+        <span class="mu-tepa ${col}">${x.e ? fmt(x.e.total, 1) : `<span class="muted">no EPA</span>`}</span></div>`;
+      el.innerHTML = `
+        <div class="card mu-score">
+          <div class="mu-score-row">
+            <div class="mu-score-side red"><span class="mu-sc-label">Red</span><span class="mu-sc-val">${Math.round(rT)}</span></div>
+            <div class="mu-score-mid">predicted<br>score</div>
+            <div class="mu-score-side blue"><span class="mu-sc-label">Blue</span><span class="mu-sc-val">${Math.round(bT)}</span></div>
+          </div>
+          <div class="mu-prob">
+            <div class="md-prob-head"><span class="md-prob-red">${pRed}%</span>
+              <span class="md-prob-mid">${rT === bT ? "toss-up" : (rT > bT ? "Red favored" : "Blue favored")}</span>
+              <span class="md-prob-blue">${100 - pRed}%</span></div>
+            <div class="md-prob-bar"><span class="mpb-red" style="width:${pRed}%"></span><span class="mpb-blue" style="width:${100 - pRed}%"></span></div>
+          </div>
+          <table class="mu-breakdown">
+            <thead><tr><th>Phase</th><th class="red">Red</th><th class="blue">Blue</th><th>Edge</th></tr></thead>
+            <tbody>
+              ${comps.map(([k, lbl]) => { const r = sum(red, k), b = sum(blue, k); return `<tr>
+                <td>${lbl}</td><td class="red">${fmt(r, 1)}</td><td class="blue">${fmt(b, 1)}</td>
+                <td class="${r >= b ? "red" : "blue"}">${(r >= b ? "R +" : "B +") + fmt(Math.abs(r - b), 1)}</td></tr>`; }).join("")}
+              <tr class="mu-total"><td>Total EPA</td><td class="red">${fmt(rT, 1)}</td><td class="blue">${fmt(bT, 1)}</td>
+                <td class="${rT >= bT ? "red" : "blue"}">${(rT >= bT ? "R +" : "B +") + fmt(Math.abs(rT - bT), 1)}</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="mu-pergrid">
+          <div class="card"><div class="mu-ally-head"><span class="alliance-dot alliance-red"></span>Red teams</div>${red.length ? red.map((x) => teamRow(x, "red")).join("") : `<p class="muted">No red teams.</p>`}</div>
+          <div class="card"><div class="mu-ally-head"><span class="alliance-dot alliance-blue"></span>Blue teams</div>${blue.length ? blue.map((x) => teamRow(x, "blue")).join("") : `<p class="muted">No blue teams.</p>`}</div>
+        </div>
+        <p class="hint" style="margin:8px 2px 0">${sub === "event"
+          ? "On-device event EPA (expected points) from played quals — an estimate, not an official prediction."
+          : "Season EPA from Statbotics. Predicted score ≈ each alliance's combined EPA."}</p>`;
+      $$("[data-team]", el).forEach((c) => c.onclick = () => openTeam(c.dataset.team));
+    }
+
+    // ---- Wiring -----------------------------------------------------------
+    const refreshGlobalThen = (cb) => {
+      if (sub !== "global") return cb();
+      const need = selected().filter((t) => !matchupSeries[String(t)]);
+      if (!need.length) return cb();
+      const wrap = $("#muResults", root); if (wrap) wrap.innerHTML = `<div class="card"><p class="muted" style="text-align:center;padding:14px 0">Loading season EPA…</p></div>`;
+      Promise.all(need.map((t) => API.sbTeamMatches(t, GAME.season).then((rows) => { matchupSeries[String(t)] = rows; }).catch(() => { matchupSeries[String(t)] = []; })))
+        .then(cb);
+    };
+    $$(".mu-team", root).forEach((ctrl) => ctrl.onchange = () => {
+      const col = ctrl.dataset.col, i = Number(ctrl.dataset.i), v = (ctrl.value || "").replace(/\D/g, "");
+      (col === "red" ? matchupRed : matchupBlue)[i] = v;
+      refreshGlobalThen(() => { drawTime(); drawResults(); });
+    });
+    // initial draw (load any already-selected global teams)
+    refreshGlobalThen(() => { drawTime(); drawResults(); });
+    if (sub === "global" && !API.sbCachedLeaderboard(GAME.season)) { /* season data loads per-team on demand */ }
   }
 
   function picklistSub() {
