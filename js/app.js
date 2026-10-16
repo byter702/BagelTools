@@ -1222,6 +1222,22 @@
     } catch (e) { /* keep team-702 fallback colors */ }
   }
 
+  // Accent elements with each team's frc-colors: [data-tring] gets a colored avatar
+  // ring (primary border + secondary glow). We DON'T tint text — some teams' primary
+  // is white/very light and would be unreadable.
+  function paintTeamColors(el, teamNums) {
+    if (!teamNums || !teamNums.length) return;
+    API.getTeamColors(teamNums).then((colors) => {
+      teamNums.forEach((n) => {
+        const c = colors[n]; if (!c || !c.primary) return;
+        $$(`[data-tring="${n}"]`, el).forEach((x) => {
+          x.style.border = `2.5px solid ${c.primary}`;
+          if (c.secondary) x.style.boxShadow = `0 0 0 1.5px ${c.secondary}`;
+        });
+      });
+    }).catch(() => {});
+  }
+
   /* ---- Team detail modal --------------------------------------------------- */
   function openTeam(team) {
     const st = computeStats(team);
@@ -1948,32 +1964,45 @@
   let matchupRed = ["", "", ""], matchupBlue = ["", "", ""];
   let matchupWeek = 99;   // global slider (big = latest)
   let matchupQual = 999;  // event slider (big = latest)
+  let matchupLbLoading = false;
   const matchupSeries = {}; // global: team# -> sbTeamMatches rows (in-memory cache)
 
-  function matchupSub() { const p = (location.hash.replace(/^#\/?/, "") || "").split("/"); return p[1] === "global" ? "global" : "event"; }
+  function matchupSub() { const p = (location.hash.replace(/^#\/?/, "") || "").split("/"); return p[1] === "event" ? "event" : "global"; }
 
   function renderMatchup(root) {
     const sub = matchupSub();
     const s = Store.getSettings();
     const teams = eventTeams();
+    // Team display name: event teams know their own; global teams come from the
+    // Statbotics season leaderboard (loaded in the background below if needed).
+    const lbRows = API.sbCachedLeaderboard(GAME.season) || [];
+    const lbName = {}; lbRows.forEach((r) => { lbName[String(r.team)] = r.name; });
+    const nameOf = (t) => (sub === "event" ? teamName(t) : (lbName[String(t)] || teamName(t) || ""));
     const picker = (col, i) => {
       const arr = col === "red" ? matchupRed : matchupBlue;
-      if (sub === "event") {
-        return `<select class="mu-team" data-col="${col}" data-i="${i}">
-          <option value="">Team ${i + 1}…</option>
-          ${teams.map((t) => `<option value="${t.team_number}" ${arr[i] === String(t.team_number) ? "selected" : ""}>${t.team_number} · ${esc(t.nickname || "")}</option>`).join("")}
-        </select>`;
-      }
-      return `<input type="number" class="mu-team" data-col="${col}" data-i="${i}" placeholder="Team ${i + 1} #" value="${esc(arr[i])}" inputmode="numeric" />`;
+      const t = arr[i];
+      const ctrl = sub === "event"
+        ? `<select class="mu-team" data-col="${col}" data-i="${i}">
+            <option value="">Team ${i + 1}…</option>
+            ${teams.map((tm) => `<option value="${tm.team_number}" ${t === String(tm.team_number) ? "selected" : ""}>${tm.team_number} · ${esc(tm.nickname || "")}</option>`).join("")}
+          </select>`
+        : `<input type="number" class="mu-team" data-col="${col}" data-i="${i}" placeholder="Team ${i + 1}" value="${esc(t)}" inputmode="numeric" />`;
+      return `<div class="mu-pick ${col}">
+        <span class="mu-pick-av">${t ? `<img class="team-avatar" data-avatar="${esc(t)}" data-tring="${esc(t)}" alt="" />` : `<span class="mu-pick-ph">${i + 1}</span>`}</span>
+        ${ctrl}
+        <span class="mu-pick-name" data-tcolor="${esc(t)}">${t ? (esc(nameOf(t)) || "&nbsp;") : `<span class="muted">empty</span>`}</span>
+      </div>`;
     };
     root.innerHTML = `
-      <div class="subtabs" id="muTabs">
-        <a href="#/matchup/event" class="${sub === "event" ? "on" : ""}">Event</a>
-        <a href="#/matchup/global" class="${sub === "global" ? "on" : ""}">Global</a>
+      <div class="mu-head">
+        <div class="subtabs" id="muTabs">
+          <a href="#/matchup/global" class="${sub === "global" ? "on" : ""}">Global</a>
+          <a href="#/matchup/event" class="${sub === "event" ? "on" : ""}">Event</a>
+        </div>
+        <span class="hint mu-head-hint">${sub === "event"
+          ? `This event's on-device EPA · slider rewinds by qualification`
+          : `Season EPA from Statbotics · slider rewinds by week`}</span>
       </div>
-      <p class="hint">${sub === "event"
-        ? `Simulate a match from <b>this event's</b> on-device EPA. The slider rewinds to any qualification.`
-        : `Simulate a match from <b>season (global)</b> EPA (Statbotics). The slider rewinds to any week of the season.`}</p>
       ${sub === "event" && !teams.length
         ? `<div class="card">${emptyState("calendar", "No event selected", "Choose your event on the Dashboard to pick its teams.")}</div>`
         : `<div class="mu-pickers">
@@ -1984,6 +2013,8 @@
         <div class="card mu-time" id="muTime"></div>
         <div id="muResults"></div>`}`;
     if (sub === "event" && !teams.length) { const g = $("[data-go]", root); if (g) g.onclick = () => go("dashboard"); return; }
+    paintAvatars(root, [...matchupRed, ...matchupBlue].filter(Boolean));
+    paintTeamColors(root, [...new Set([...matchupRed, ...matchupBlue].filter(Boolean))]);
 
     // ---- EPA lookups ------------------------------------------------------
     // Event: recompute on-device EPA using only quals up to N. Returns {total,auto,teleop,endgame}|null.
@@ -2046,16 +2077,23 @@
       const rT = sum(red, "total"), bT = sum(blue, "total");
       const pRed = Math.round(winProb(rT, bT) * 100);
       const comps = [["auto", "Auto"], ["teleop", "Teleop"], ["endgame", "Endgame"]];
-      const teamRow = (x, col) => `<div class="mu-trow">
-        <span class="mu-tnum team-num" data-team="${esc(x.t)}">${esc(x.t)}</span>
-        <span class="mu-tname">${esc(teamName(x.t))}</span>
-        <span class="mu-tepa ${col}">${x.e ? fmt(x.e.total, 1) : `<span class="muted">no EPA</span>`}</span></div>`;
+      const maxTeamEpa = Math.max(1, ...[...red, ...blue].map((x) => (x.e ? x.e.total : 0)));
+      const teamRow = (x, col) => {
+        const e = x.e;
+        return `<div class="mu-trow" data-team="${esc(x.t)}">
+          <img class="team-avatar mu-tav" data-avatar="${esc(x.t)}" data-tring="${esc(x.t)}" alt="" />
+          <span class="mu-tnum" data-tcolor="${esc(x.t)}">${esc(x.t)}</span>
+          <span class="mu-tname">${esc(nameOf(x.t))}</span>
+          <span class="mu-tbar"><span class="mu-tbar-fill ${col}" style="width:${e ? Math.round(e.total / maxTeamEpa * 100) : 0}%"></span></span>
+          <span class="mu-tepa ${col}">${e ? fmt(e.total, 1) : `<span class="muted">–</span>`}</span></div>`;
+      };
+      const avStrip = (arr) => `<div class="mu-av-strip">${arr.filter(Boolean).map((t) => `<img class="team-avatar" data-avatar="${esc(t)}" data-tring="${esc(t)}" alt="" />`).join("")}</div>`;
       el.innerHTML = `
         <div class="card mu-score">
           <div class="mu-score-row">
-            <div class="mu-score-side red"><span class="mu-sc-label">Red</span><span class="mu-sc-val">${Math.round(rT)}</span></div>
-            <div class="mu-score-mid">predicted<br>score</div>
-            <div class="mu-score-side blue"><span class="mu-sc-label">Blue</span><span class="mu-sc-val">${Math.round(bT)}</span></div>
+            <div class="mu-score-side red"><span class="mu-sc-label">Red Alliance</span><span class="mu-sc-val">${Math.round(rT)}</span>${avStrip(matchupRed)}</div>
+            <div class="mu-score-mid"><span>predicted</span><span>score</span></div>
+            <div class="mu-score-side blue"><span class="mu-sc-label">Blue Alliance</span><span class="mu-sc-val">${Math.round(bT)}</span>${avStrip(matchupBlue)}</div>
           </div>
           <div class="mu-prob">
             <div class="md-prob-head"><span class="md-prob-red">${pRed}%</span>
@@ -2075,12 +2113,14 @@
           </table>
         </div>
         <div class="mu-pergrid">
-          <div class="card"><div class="mu-ally-head"><span class="alliance-dot alliance-red"></span>Red teams</div>${red.length ? red.map((x) => teamRow(x, "red")).join("") : `<p class="muted">No red teams.</p>`}</div>
-          <div class="card"><div class="mu-ally-head"><span class="alliance-dot alliance-blue"></span>Blue teams</div>${blue.length ? blue.map((x) => teamRow(x, "blue")).join("") : `<p class="muted">No blue teams.</p>`}</div>
+          <div class="card mu-teamcard red"><div class="mu-ally-head red"><span class="alliance-dot alliance-red"></span>Red teams</div>${red.length ? red.map((x) => teamRow(x, "red")).join("") : `<p class="muted">No red teams.</p>`}</div>
+          <div class="card mu-teamcard blue"><div class="mu-ally-head blue"><span class="alliance-dot alliance-blue"></span>Blue teams</div>${blue.length ? blue.map((x) => teamRow(x, "blue")).join("") : `<p class="muted">No blue teams.</p>`}</div>
         </div>
         <p class="hint" style="margin:8px 2px 0">${sub === "event"
           ? "On-device event EPA (expected points) from played quals — an estimate, not an official prediction."
           : "Season EPA from Statbotics. Predicted score ≈ each alliance's combined EPA."}</p>`;
+      paintAvatars(el, [...matchupRed, ...matchupBlue].filter(Boolean));
+      paintTeamColors(el, [...new Set([...matchupRed, ...matchupBlue].filter(Boolean))]);
       $$("[data-team]", el).forEach((c) => c.onclick = () => openTeam(c.dataset.team));
     }
 
@@ -2096,11 +2136,15 @@
     $$(".mu-team", root).forEach((ctrl) => ctrl.onchange = () => {
       const col = ctrl.dataset.col, i = Number(ctrl.dataset.i), v = (ctrl.value || "").replace(/\D/g, "");
       (col === "red" ? matchupRed : matchupBlue)[i] = v;
-      refreshGlobalThen(() => { drawTime(); drawResults(); });
+      renderMatchup(root); // re-render so the picker's avatar + name update too
     });
     // initial draw (load any already-selected global teams)
     refreshGlobalThen(() => { drawTime(); drawResults(); });
-    if (sub === "global" && !API.sbCachedLeaderboard(GAME.season)) { /* season data loads per-team on demand */ }
+    // Global: load the season leaderboard once (for team names) if it isn't cached.
+    if (sub === "global" && !lbRows.length && !matchupLbLoading) {
+      matchupLbLoading = true;
+      API.sbYearLeaderboard(GAME.season).then(() => { matchupLbLoading = false; if (matchupSub() === "global" && current() === "matchup") renderMatchup(root); }).catch(() => { matchupLbLoading = false; });
+    }
   }
 
   function picklistSub() {
