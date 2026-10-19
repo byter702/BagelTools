@@ -31,6 +31,7 @@
     claims: [], activity: [], config: { matchForm: null, pitForm: null, roster: null } };
   var lastPush = { matches: 0, pits: 0 };
   var cfgBootstrapped = false;
+  var cfgLoaded = false, cfgWaiters = [];
 
   function fire() { changeCbs.forEach(function (cb) { try { cb(); } catch (e) {} }); }
   function fireActivity(d) { activityCbs.forEach(function (cb) { try { cb(d); } catch (e) {} }); }
@@ -115,6 +116,7 @@
             Cloud.pushBBApproved(Store.getBBApproved());
         } catch (e) {}
       }
+      if (!cfgLoaded) { cfgLoaded = true; cfgWaiters.splice(0).forEach(function (r) { r(true); }); }
       fire();
     }, function (e) { log("config listen failed", e); });
   }
@@ -405,6 +407,40 @@
       db.collection("activity").add(doc).catch(function (e) { log("pushActivity failed", e); });
     },
     onActivity: function (cb) { if (typeof cb === "function") activityCbs.push(cb); },
+
+    // Resolves once the shared config (roster) has arrived, or after `ms` — so the
+    // login screen can check membership against the team-wide roster.
+    whenConfig: function (ms) {
+      if (cfgLoaded || !this.enabled()) return Promise.resolve(cfgLoaded);
+      return new Promise(function (resolve) {
+        cfgWaiters.push(resolve);
+        setTimeout(function () { resolve(false); }, ms || 5000);
+      });
+    },
+
+    // ---- Account passwords (creds/{scouterId}) ----
+    // Only a salted PBKDF2 hash is stored — never the password. Read straight from
+    // the server so an admin reset takes effect immediately. Resolves null when the
+    // account has no password yet; REJECTS when the server can't be reached.
+    getCred: function (id) {
+      if (!this.enabled() || !id) return Promise.reject(new Error("cloud off"));
+      return db.collection("creds").doc(id).get({ source: "server" })
+        .then(function (d) { return d.exists ? d.data() : null; });
+    },
+    setCred: function (id, cred) {
+      if (!this.enabled() || !id) return Promise.reject(new Error("cloud off"));
+      return db.collection("creds").doc(id).set(clean(cred));
+    },
+    deleteCred: function (id) {
+      if (!this.enabled() || !id) return Promise.reject(new Error("cloud off"));
+      return db.collection("creds").doc(id).delete();
+    },
+    // Admin: which scouter ids have a password set.
+    listCredIds: function () {
+      if (!this.enabled()) return Promise.resolve([]);
+      return db.collection("creds").get({ source: "server" })
+        .then(function (snap) { return snap.docs.map(function (d) { return d.id; }); });
+    },
 
     getMatchForm: function () { return cache.config.matchForm ? cache.config.matchForm.schema : null; },
     getPitForm: function () { return cache.config.pitForm ? cache.config.pitForm.schema : null; },

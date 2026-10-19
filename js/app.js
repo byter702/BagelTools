@@ -3298,6 +3298,14 @@
      VIEW: ADMIN PANEL (member roster + access requests)
      ======================================================================== */
   let adminUnlocked = false;
+  let adminCredIds = null, adminCredLoading = false; // Set of scouter ids that have a password
+  function loadAdminCreds(root) {
+    if (adminCredLoading || !Cloud.enabled()) return;
+    adminCredLoading = true;
+    Cloud.listCredIds().then((ids) => { adminCredIds = new Set(ids); })
+      .catch(() => { adminCredIds = new Set(); })
+      .finally(() => { adminCredLoading = false; if (current() === "admin") renderAdmin(root); });
+  }
   function renderAdmin(root) {
     const pin = (window.CONFIG && window.CONFIG.adminPin) || "";
     if (pin && !adminUnlocked) {
@@ -3319,6 +3327,7 @@
       return;
     }
 
+    if (!adminCredIds) loadAdminCreds(root);
     const requests = Store.getRequests();
     const reqKeys = Object.keys(requests).sort((a, b) => requests[b].ts - requests[a].ts);
     const members = Store.getMembers();
@@ -3343,7 +3352,7 @@
         <div class="row between" style="align-items:flex-start">
           <div class="row" style="gap:10px">${icon("bell")}
             <div><h2 style="margin:0">${reqKeys.length} access request${reqKeys.length > 1 ? "s" : ""} pending</h2>
-              <p class="hint" style="margin:4px 0 0">These people signed in with a name that isn't on the roster yet. Approve to add them, or deny to dismiss.</p></div>
+              <p class="hint" style="margin:4px 0 0">These people registered with the Registry Key. Approve to let them create their password, or deny to dismiss.</p></div>
           </div>
         </div>
         <div class="req-list" style="margin-top:14px">
@@ -3366,13 +3375,20 @@
           <button class="btn ghost sm" id="addMemberBtn">${icon("plus")} Add member</button>
         </div>
         ${memKeys.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Name</th><th>First seen</th><th>Last seen</th><th></th></tr></thead>
-          <tbody>${memKeys.map((key) => `<tr>
+          <thead><tr><th>Name</th><th>Password</th><th>First seen</th><th>Last seen</th><th></th></tr></thead>
+          <tbody>${memKeys.map((key) => {
+            const sid = Store.scouterIdFor(members[key].first, members[key].last);
+            const hasPw = adminCredIds ? adminCredIds.has(sid) : null;
+            return `<tr>
             <td><b>${esc(members[key].first)} ${esc(members[key].last)}</b></td>
+            <td>${hasPw == null ? `<span class="muted">${Cloud.enabled() ? "…" : "–"}</span>` : hasPw
+              ? `<span class="badge green">Set</span> <button class="btn ghost sm" data-resetpw="${esc(sid)}" data-name="${esc(members[key].first + " " + members[key].last)}">${icon("key")} Reset</button>`
+              : `<span class="badge">Not set</span>`}</td>
             <td class="muted">${esc(dt(members[key].firstSeen))}</td>
             <td class="muted">${esc(dt(members[key].lastSeen))}</td>
             <td><button class="icon-btn" data-remove="${esc(key)}" aria-label="Remove member">${icon("trash")}</button></td>
-          </tr>`).join("")}</tbody></table></div>`
+          </tr>`; }).join("")}</tbody></table></div>
+          <p class="hint" style="margin:10px 2px 0">Reset clears a member's password and signs them out everywhere. They create a new one on their next login.</p>`
           : emptyState("user", "No members yet", "Approve access requests above, or add members manually.")}
       </div>
 
@@ -3636,7 +3652,18 @@
     $$("[data-approve]", root).forEach((b) => b.onclick = () => { Store.approveMember(b.dataset.approve); Cloud.pushRoster(); toast("Member approved"); renderAdmin(root); refreshChrome(); });
     $$("[data-deny]", root).forEach((b) => b.onclick = () => { Store.denyRequest(b.dataset.deny); Cloud.pushRoster(); toast("Request denied"); renderAdmin(root); refreshChrome(); });
     $$("[data-remove]", root).forEach((b) => b.onclick = () =>
-      confirmDialog("Remove this member from the roster?", () => { Store.removeMember(b.dataset.remove); Cloud.pushRoster(); toast("Member removed"); renderAdmin(root); }));
+      confirmDialog("Remove this member from the roster?", () => {
+        const m = Store.getMembers()[b.dataset.remove];
+        Store.removeMember(b.dataset.remove); Cloud.pushRoster();
+        if (m && Cloud.enabled()) { const sid = Store.scouterIdFor(m.first, m.last); Cloud.deleteCred(sid).catch(() => {}); if (adminCredIds) adminCredIds.delete(sid); }
+        toast("Member removed"); renderAdmin(root);
+      }));
+    $$("[data-resetpw]", root).forEach((b) => b.onclick = () =>
+      confirmDialog(`Reset ${b.dataset.name}'s password? They'll be signed out and must create a new one at their next login.`, () => {
+        Cloud.deleteCred(b.dataset.resetpw)
+          .then(() => { if (adminCredIds) adminCredIds.delete(b.dataset.resetpw); toast("Password reset"); renderAdmin(root); })
+          .catch(() => toast("Couldn't reset — check your connection", "err"));
+      }));
     $$("[data-del-scouter]", root).forEach((b) => b.onclick = () => {
       const id = b.dataset.delScouter, nm = b.dataset.scouterName || "this scouter";
       confirmDialog(`Delete the scouter account "${nm}"? This removes their profile from the leaderboard for everyone (their match & pit records are kept).`, () => {
@@ -3930,6 +3957,7 @@
     // Cloud sync (real-time scouters, BB leaderboard, shared lists). No-op if
     // Firebase isn't configured — everything still works locally.
     Cloud.init();
+    Auth.checkSession(); // signs this device out if the account's password was reset
     Cloud.syncMe();
     Cloud.heartbeat();
     Cloud.releaseMyClaims(); // a fresh load = no active selection, so clear my old claims

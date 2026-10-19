@@ -281,9 +281,17 @@ const Store = (() => {
     return h.toString(36);
   }
   function scouterIdFor(first, last) { return "sc_" + hashKey(nameKey(first, last)); }
-  function getSession() { return read("session", null); }        // {first,last,ts} or null
+  function getSession() { return read("session", null); }        // {first,last,ts,v,cv} or null
   function setSession(user) { write("session", user); }
   function clearSession() { try { localStorage.removeItem(k("session")); } catch {} }
+  // Last-known password hash per account on this device, so a member who already
+  // signed in here can still sign in while offline. Never holds the password itself.
+  function getCachedCred(id) { return (read("credCache", {}) || {})[id] || null; }
+  function cacheCred(id, cred) {
+    const all = read("credCache", {}) || {};
+    if (cred) all[id] = cred; else delete all[id];
+    write("credCache", all);
+  }
 
   // members: approved roster { key: {first,last,firstSeen,lastSeen} }
   function getMembers() { return read("members", {}); }
@@ -445,7 +453,7 @@ const Store = (() => {
     getBBApproved, isBBApproved, approveBBEvent, setBBApprovedList,
     getMe, setMe, getMeAccounts, removeAccountById, scouterIdFor, recordMatchScouted, recordPitScouted,
     getStrategy, setStrategy,
-    getSession, setSession, clearSession,
+    getSession, setSession, clearSession, getCachedCred, cacheCred,
     getMembers, getRequests, recordLogin, approveMember, denyRequest, removeMember, addMember, nameKey, mergeRoster,
     getPitSchema, setPitSchema, clearPitSchema,
     getMatchSchema, setMatchSchema, clearMatchSchema,
