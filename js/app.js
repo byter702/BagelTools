@@ -562,6 +562,7 @@
     matchup: { title: "Matchup", render: renderMatchup },
     picklist: { title: "Pick List", render: renderPicklist },
     data: { title: "Data", render: renderData },
+    team: { title: "Team", render: renderTeamPage, navAs: "teams" },
     admin: { title: "Admin Panel", render: renderAdmin },
     settings: { title: "Settings", render: renderSettings },
   };
@@ -581,7 +582,7 @@
     prevRoute = r;
     const route = routes[r] || routes.dashboard;
     $("#pageTitle").textContent = route.title;
-    $$("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === r));
+    $$("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === (route.navAs || r)));
     app.classList.remove("nav-open");
     document.body.classList.remove("nav-lock");
     view.innerHTML = "";
@@ -1403,7 +1404,12 @@
         </div>
       </div>`;
 
-    modal(`Team ${team}${teamName(team) ? " · " + teamName(team) : ""}`, epaCard + `
+    modal(`Team ${team}${teamName(team) ? " · " + teamName(team) : ""}`, `
+      <button class="tp-open" data-act="profile">
+        <span class="tp-open-ico">${icon("user")}</span>
+        <span class="tp-open-txt"><b>View full profile</b><span>Every event, win rate, EPA, awards &amp; all our scouting</span></span>
+        ${icon("arrow-right")}
+      </button>` + epaCard + `
       <div class="grid cols-2 team-detail-grid">
         <div class="card flush"><h3>Match performance</h3>
           ${st.matches ? `<div class="table-wrap"><table><tbody>${
@@ -1463,7 +1469,337 @@
       onAct("match", () => { close(); go("match"); setTimeout(() => prefillMatchTeam(team), 60); });
       onAct("pit", () => { close(); go("pit"); setTimeout(() => prefillPitTeam(team), 60); });
       onAct("compare", () => { close(); addToCompare(String(team)); });
+      onAct("profile", () => { close(); location.hash = "#/team/" + team; });
     });
+  }
+
+  /* ===========================================================================
+     VIEW: TEAM PROFILE  (#/team/<number>[/<year>])
+     Full-page version of the team popup: TBA profile + every event of the season
+     (rank, record, win rate, alliance, playoff result, awards, all matches),
+     Statbotics ranks/EPA, the EPA trend, and our own scouting report.
+     ======================================================================== */
+  let teamPageTab = "events", tpResize = null;
+  function teamRoute() {
+    const p = location.hash.replace(/^#\/?/, "").split("/");
+    return { team: String(p[1] || "").replace(/\D/g, ""), year: Number(p[2]) || GAME.season };
+  }
+  const COMP_NAME = { qm: "Qualifications", ef: "Eighth-finals", qf: "Quarterfinals", sf: "Semifinals", f: "Finals" };
+  const playoffText = (p, dbl) => {
+    if (!p) return "";
+    if (p.status === "won") return p.level === "f" ? "Event winner" : `Won ${COMP_NAME[p.level] || "playoffs"}`;
+    if (p.status === "eliminated") return dbl ? `Out in ${dbl}` : `Out in ${COMP_NAME[p.level] || "playoffs"}`;
+    if (p.status === "playing") return `Playing ${COMP_NAME[p.level] || "playoffs"}`;
+    return "";
+  };
+  const allianceText = (a) => {
+    if (!a || a.number == null) return "";
+    const role = a.pick === 0 ? "Captain" : a.pick === 1 ? "1st pick" : a.pick === 2 ? "2nd pick" : a.pick === 3 ? "3rd pick" : "Backup";
+    return `${role} · Alliance ${a.number}`;
+  };
+  function ringSVG(frac, label) {
+    const r = 22, c = 2 * Math.PI * r, f = Math.max(0, Math.min(1, frac || 0));
+    return `<svg class="tp-ring" viewBox="0 0 56 56" role="img" aria-label="${esc(label)}">
+      <circle cx="28" cy="28" r="${r}" class="tp-ring-bg"/>
+      <circle cx="28" cy="28" r="${r}" class="tp-ring-fg" style="stroke-dasharray:${(c * f).toFixed(1)} ${c.toFixed(1)}"/>
+      <text x="28" y="32" text-anchor="middle">${Math.round(f * 100)}%</text></svg>`;
+  }
+  // Count numbers up from 0 for elements carrying data-count="<value>" data-dec="<decimals>".
+  function countUp(el) {
+    const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    $$("[data-count]", el).forEach((n) => {
+      const to = Number(n.dataset.count), dec = Number(n.dataset.dec || 0), pre = n.dataset.pre || "";
+      const out = (v) => pre + (dec ? v.toFixed(dec) : Math.round(v).toLocaleString());
+      if (reduce || !isFinite(to)) { n.textContent = out(to); return; }
+      const start = performance.now(), dur = 800;
+      const step = (now) => {
+        if (!n.isConnected) return;
+        const p = Math.min(1, (now - start) / dur);
+        n.textContent = out(to * (1 - Math.pow(1 - p, 3)));
+        if (p < 1) requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+      setTimeout(() => { if (n.isConnected) n.textContent = out(to); }, dur + 200);
+    });
+  }
+
+  function renderTeamPage(root) {
+    const { team, year } = teamRoute();
+    if (!team) { root.innerHTML = `<div class="card">${emptyState("search", "No team", "Open a team from Events, BagelStats or Data.")}</div>`; return; }
+    $("#pageTitle").textContent = "Team " + team;
+    const pit = Store.season === year || GAME.season === year ? allPits()[team] : null;
+    const ourMatches = allMatches().filter((m) => String(m.team) === team).length;
+    root.innerHTML = `
+      <div class="tp">
+        <section class="thero tp-hero" data-tfill="${esc(team)}">
+          <span class="thero-mark" aria-hidden="true">${esc(team)}</span>
+          <div class="tp-hero-main">
+            <img class="team-avatar thero-av tp-av" data-avatar="${esc(team)}" alt="" />
+            <div class="thero-id">
+              <span class="thero-num">${esc(team)}</span>
+              <span class="thero-name" id="tpName">${esc(nameFor(team)) || "&nbsp;"}</span>
+              <span class="tp-loc" id="tpLoc"></span>
+              <span class="thero-chips">
+                <span class="thero-chip">${icon("binoculars")} ${ourMatches} scouted by us</span>
+                <span class="thero-chip">${icon("clipboard")} ${allPits()[team] ? "Pit scouted" : "No pit data"}</span>
+              </span>
+            </div>
+          </div>
+          <div class="tp-hero-side">
+            ${pit && pit.photo ? `<button class="tp-robot" id="tpRobot" aria-label="View robot photo"><img src="${esc(pit.photo)}" alt="Team ${esc(team)} robot" /></button>` : ""}
+            <div class="tp-links">
+              <label class="tp-year">${icon("calendar")}<select id="tpYear" aria-label="Season"><option>${year}</option></select></label>
+              <a class="tp-link" href="https://www.thebluealliance.com/team/${esc(team)}/${year}" target="_blank" rel="noopener">${icon("external")} TBA</a>
+              <a class="tp-link" href="https://www.statbotics.io/team/${esc(team)}" target="_blank" rel="noopener">${icon("external")} Statbotics</a>
+              <span id="tpWeb"></span>
+            </div>
+          </div>
+          <span class="thero-accent"></span>
+        </section>
+
+        <div class="tp-tiles" id="tpTiles">${Array.from({ length: 6 }, () => `<div class="tp-tile skel"></div>`).join("")}</div>
+        <div class="card tp-epa" id="tpEpa" hidden></div>
+
+        <div class="tp-tabbar" role="tablist" id="tpTabs">
+          <button data-tp="events" role="tab">${icon("calendar")} Events <b id="tpEvCount"></b></button>
+          <button data-tp="scouting" role="tab">${icon("binoculars")} Our scouting</button>
+          <button data-tp="trend" role="tab">${icon("linegraph")} EPA trend</button>
+          <button data-tp="awards" role="tab">${icon("trophy")} Awards <b id="tpAwCount"></b></button>
+          <span class="tp-ink" aria-hidden="true"></span>
+        </div>
+        <div id="tpPanel" class="tp-panel"></div>
+
+        <div class="btn-row tp-actions">
+          <button class="btn primary" data-tact="match">${icon("plus")} Scout a match</button>
+          <button class="btn secondary" data-tact="pit">${icon("wrench")} Pit scout</button>
+          <button class="btn ghost" data-tact="compare">${icon("compare")} Compare</button>
+          <button class="btn ghost" data-tact="data">${icon("database")} Data report</button>
+        </div>
+      </div>`;
+    paintAvatars(root, [team]);
+    paintTeamFills(root, [team]);
+
+    const robot = $("#tpRobot", root);
+    if (robot) robot.onclick = () => modal(`Team ${team} robot`, `<img class="sr-photo-full" src="${esc(pit.photo)}" alt="Team ${esc(team)} robot" />`);
+    $$("[data-tact]", root).forEach((b) => b.onclick = () => {
+      const a = b.dataset.tact;
+      if (a === "match") { go("match"); setTimeout(() => prefillMatchTeam(team), 60); }
+      else if (a === "pit") { go("pit"); setTimeout(() => prefillPitTeam(team), 60); }
+      else if (a === "compare") addToCompare(team);
+      else location.hash = "#/data/search/team/" + team;
+    });
+
+    // ---- Tabs (sliding ink + animated panel) ----
+    const state = { season: null, sbEvents: [], sbYear: null, trend: null, loadErr: false };
+    const tabs = $("#tpTabs", root), panel = $("#tpPanel", root);
+    const moveInk = () => {
+      const on = $(`[data-tp="${teamPageTab}"]`, tabs), ink = $(".tp-ink", tabs);
+      if (!on || !ink) return;
+      ink.style.width = on.offsetWidth + "px";
+      ink.style.transform = `translateX(${on.offsetLeft}px)`;
+    };
+    const order = ["events", "scouting", "trend", "awards"];
+    const showTab = (name, dir) => {
+      teamPageTab = name;
+      $$("[data-tp]", tabs).forEach((b) => { const on = b.dataset.tp === name; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); });
+      moveInk();
+      panel.className = "tp-panel " + (dir > 0 ? "in-right" : dir < 0 ? "in-left" : "in");
+      void panel.offsetWidth;
+      drawPanel();
+    };
+    $$("[data-tp]", tabs).forEach((b) => b.onclick = () => {
+      if (b.dataset.tp === teamPageTab) return;
+      showTab(b.dataset.tp, order.indexOf(b.dataset.tp) - order.indexOf(teamPageTab));
+    });
+    if (tpResize) window.removeEventListener("resize", tpResize);
+    tpResize = moveInk;
+    window.addEventListener("resize", tpResize, { passive: true });
+
+    const loading = (what) => `<div class="card tp-loading"><span class="tp-spin"></span>Loading ${esc(what)}…</div>`;
+    function drawPanel() {
+      if (teamPageTab === "scouting") {
+        panel.innerHTML = (year !== GAME.season ? `<div class="card tp-note">${icon("clock")} Our scouting below is from the <b>${GAME.season}</b> season you're viewing in the app.</div>` : "") + scoutReportHTML(team);
+        wireScoutReport(panel, team);
+        return;
+      }
+      if (teamPageTab === "trend") return drawTrend();
+      if (teamPageTab === "awards") return drawAwards();
+      return drawEvents();
+    }
+
+    function drawEvents() {
+      const s = state.season;
+      if (!s) { panel.innerHTML = state.loadErr ? `<div class="card">${emptyState("globe", "Couldn't load events", "The Blue Alliance needs wifi the first time. Try again online.")}</div>` : loading("events"); return; }
+      const evs = s.events.slice().sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""));
+      if (!evs.length) { panel.innerHTML = `<div class="card">${emptyState("calendar", `No ${year} events`, seasonUpcoming() && year === GAME.season ? "Events appear once they're scheduled with this team registered." : "This team didn't compete this season.")}</div>`; return; }
+      const sbBy = {}; state.sbEvents.forEach((r) => { sbBy[r.event] = r; });
+      const lvl = { qm: 0, ef: 1, qf: 2, sf: 3, f: 4 };
+      const tk = "frc" + team;
+      const dateRange = (e) => {
+        const a = e.start_date ? new Date(e.start_date + "T12:00:00") : null, b = e.end_date ? new Date(e.end_date + "T12:00:00") : null;
+        if (!a) return "";
+        const f = (d, o) => d.toLocaleDateString([], o);
+        return b && b - a > 0 ? `${f(a, { month: "short", day: "numeric" })} – ${f(b, a.getMonth() === b.getMonth() ? { day: "numeric" } : { month: "short", day: "numeric" })}` : f(a, { month: "short", day: "numeric" });
+      };
+      panel.innerHTML = `<div class="tp-timeline">${evs.map((e, idx) => {
+        const st = s.statuses[e.key] || {}, q = (st.qual && st.qual.ranking) || null, sb = sbBy[e.key];
+        const ms = s.matches.filter((m) => m.event_key === e.key)
+          .sort((a, b) => (lvl[a.comp_level] - lvl[b.comp_level]) || (a.set_number - b.set_number) || (a.match_number - b.match_number));
+        let w = 0, l = 0, t = 0;
+        ms.forEach((m) => {
+          const rs = m.alliances.red.score, bs = m.alliances.blue.score;
+          if (rs < 0 || bs < 0 || rs == null) return;
+          const mine = m.alliances.red.team_keys.includes(tk) ? "red" : "blue";
+          if (rs === bs) t++; else if ((rs > bs) === (mine === "red")) w++; else l++;
+        });
+        const played = w + l + t, wr = played ? w / played : null;
+        const awards = s.awards.filter((a) => a.event_key === e.key);
+        const po = playoffText(st.playoff, st.playoff && st.playoff.double_elim_round);
+        const won = st.playoff && st.playoff.status === "won" && st.playoff.level === "f";
+        const week = e.week != null ? `Week ${e.week + 1}` : (e.event_type === 3 || e.event_type === 4 ? "Championship" : (e.event_type_string || "Offseason"));
+        const label = (m) => (m.comp_level === "qm" ? "Q" : m.comp_level === "f" ? "F" : m.comp_level.toUpperCase()) + (m.comp_level === "qm" ? m.match_number : (m.comp_level === "sf" ? m.set_number : m.match_number));
+        const chips = (keys) => keys.map((k) => { const n = k.replace("frc", ""); return `<button class="tp-tchip${k === tk ? " me" : ""}" data-goteam="${n}">${n}</button>`; }).join("");
+        const rows = ms.map((m) => {
+          const rs = m.alliances.red.score, bs = m.alliances.blue.score, done = rs != null && rs >= 0 && bs >= 0;
+          const mine = m.alliances.red.team_keys.includes(tk) ? "red" : "blue";
+          const res = !done ? "" : rs === bs ? "T" : ((rs > bs) === (mine === "red") ? "W" : "L");
+          return `<tr class="${mine}">
+            <td class="tp-ml">${label(m)}</td>
+            <td><span class="tp-ally red">${chips(m.alliances.red.team_keys)}</span></td>
+            <td><span class="tp-ally blue">${chips(m.alliances.blue.team_keys)}</span></td>
+            <td class="tp-score">${done ? `<span class="${rs > bs ? "win" : ""}">${rs}</span><i>–</i><span class="${bs > rs ? "win" : ""}">${bs}</span>` : `<span class="muted">upcoming</span>`}</td>
+            <td>${res ? `<span class="tp-res ${res}">${res}</span>` : ""}</td></tr>`;
+        }).join("");
+        return `<article class="tp-event${won ? " winner" : ""}" style="--i:${idx}">
+          <div class="tp-ev-dot" aria-hidden="true"></div>
+          <div class="tp-ev-card">
+            <header class="tp-ev-head">
+              <div>
+                <span class="tp-ev-week">${esc(week)} · ${esc(dateRange(e))}</span>
+                <h3 class="tp-ev-name">${esc(e.name)}</h3>
+                <span class="tp-ev-loc">${icon("map-pin")} ${esc([e.city, e.state_prov, e.country].filter(Boolean).join(", "))}</span>
+              </div>
+              ${po ? `<span class="tp-po${won ? " gold" : ""}">${won ? icon("trophy") : icon("flag")} ${esc(po)}</span>` : ""}
+            </header>
+            <div class="tp-ev-stats">
+              <div class="tp-stat"><span>Rank</span><b>${q ? `${q.rank}<small>/${st.qual.num_teams || "?"}</small>` : (sb && sb.rank ? `${sb.rank}<small>/${sb.numTeams || "?"}</small>` : "–")}</b></div>
+              <div class="tp-stat"><span>Record</span><b>${played ? `${w}-${l}-${t}` : "–"}</b></div>
+              <div class="tp-stat ring">${wr != null ? ringSVG(wr, "Win rate") : `<b>–</b>`}<span>Win rate</span></div>
+              <div class="tp-stat"><span>Event EPA</span><b>${sb && sb.epa != null ? fmt(sb.epa) : "–"}</b></div>
+              <div class="tp-stat wide"><span>Alliance</span><b class="small">${esc(allianceText(st.alliance)) || "Not selected"}</b></div>
+            </div>
+            ${awards.length ? `<div class="tp-awards">${awards.map((a) => `<span class="tp-award">${icon("trophy")} ${esc(a.name)}</span>`).join("")}</div>` : ""}
+            ${ms.length ? `<details class="tp-matches"${idx === evs.length - 1 ? " open" : ""}>
+              <summary>${icon("list")} ${ms.length} matches ${icon("chevron-right")}</summary>
+              <div class="table-wrap"><table class="tp-mtable">
+                <thead><tr><th>Match</th><th>Red</th><th>Blue</th><th>Score</th><th></th></tr></thead>
+                <tbody>${rows}</tbody></table></div>
+            </details>` : `<p class="hint" style="margin:10px 0 0">No matches posted yet.</p>`}
+          </div>
+        </article>`;
+      }).join("")}</div>`;
+      $$("[data-goteam]", panel).forEach((b) => b.onclick = () => { location.hash = "#/team/" + b.dataset.goteam + (year !== GAME.season ? "/" + year : ""); });
+    }
+
+    function drawAwards() {
+      const s = state.season;
+      if (!s) { panel.innerHTML = loading("awards"); return; }
+      if (!s.awards.length) { panel.innerHTML = `<div class="card">${emptyState("trophy", `No ${year} awards`, "Awards show up here as events finish.")}</div>`; return; }
+      const evName = {}; s.events.forEach((e) => { evName[e.key] = e.name; });
+      panel.innerHTML = `<div class="tp-award-grid">${s.awards.map((a, i) => `
+        <div class="card tp-award-card" style="--i:${i}">${icon("trophy")}<b>${esc(a.name)}</b><span>${esc(evName[a.event_key] || a.event_key)}</span></div>`).join("")}</div>`;
+    }
+
+    function drawTrend() {
+      panel.innerHTML = `<div class="card"><div class="sr-head"><h3>${icon("linegraph")} EPA over the season</h3>
+          <span class="hint">every match · dividers mark events</span></div><div id="tpChart">${state.trend ? "" : `<p class="hint">Loading trend…</p>`}</div></div>
+        <div class="card" style="margin-top:14px"><div class="sr-head"><h3>${icon("chart")} EPA by event</h3></div><div id="tpEvBars"></div></div>`;
+      const chart = $("#tpChart", panel);
+      if (state.trend) renderLineChart(chart, state.trend.map((m) => ({ epa: m.epa, event: m.event })), { dividers: true });
+      else if (state.trendErr) chart.innerHTML = `<p class="hint">${seasonUpcoming() && year === GAME.season ? `No ${year} matches yet.` : "EPA trend needs Statbotics (offline?)."}</p>`;
+      const bars = $("#tpEvBars", panel);
+      const rows = state.sbEvents.filter((r) => r.epa != null).sort((a, b) => (a.week ?? 99) - (b.week ?? 99));
+      if (!rows.length) { bars.innerHTML = `<p class="muted">No event EPA yet.</p>`; return; }
+      const hi = Math.max(...rows.map((r) => r.epa));
+      bars.innerHTML = rows.map((r) => `<div class="tp-evbar"><span class="tp-evbar-name">${esc(r.name || r.event)}</span>
+        <span class="tp-evbar-track"><i style="width:${Math.round(r.epa / hi * 100)}%"></i></span><b>${fmt(r.epa)}</b></div>`).join("");
+    }
+
+    function drawTiles() {
+      const y = state.sbYear, tilesEl = $("#tpTiles", root);
+      if (!y) {
+        tilesEl.innerHTML = `<div class="card tp-note">${icon("chart")} ${seasonUpcoming() && year === GAME.season
+          ? `No ${year} EPA yet. Statbotics ranks start once the season's matches begin.` : "Season stats need Statbotics (offline?)."}</div>`;
+        return;
+      }
+      const rk = (o, label) => `<div class="tp-tile"><span class="tp-tile-l">${esc(label)}</span>
+        <b class="tp-tile-v">${o ? `<span data-count="${o.rank}" data-pre="#">#${o.rank}</span>` : "–"}</b>
+        <span class="tp-tile-s">${o ? `of ${o.count.toLocaleString()}${o.pct != null ? ` · top ${Math.max(1, Math.round((1 - o.pct) * 100))}%` : ""}` : "&nbsp;"}</span></div>`;
+      const rec = y.record, games = rec.w + rec.l + rec.t;
+      tilesEl.innerHTML = `
+        <div class="tp-tile hl"><span class="tp-tile-l">Season EPA</span><b class="tp-tile-v"><span data-count="${y.epa || 0}" data-dec="1">${fmt(y.epa)}</span></b><span class="tp-tile-s">expected points</span></div>
+        ${rk(y.ranks.world, "World")}
+        ${rk(y.ranks.country, y.country || "Country")}
+        ${rk(y.ranks.state, y.state || "State")}
+        ${y.ranks.district && String(y.district || "").toLowerCase() !== String(y.state || "").toLowerCase()
+          ? rk(y.ranks.district, (y.district || "District").toUpperCase()) : ""}
+        <div class="tp-tile"><span class="tp-tile-l">Record</span><b class="tp-tile-v">${games ? `${rec.w}-${rec.l}-${rec.t}` : "–"}</b>
+          <span class="tp-tile-s">${games ? `${Math.round((rec.winrate != null ? rec.winrate : rec.w / games) * 100)}% win rate` : "&nbsp;"}</span></div>`;
+      countUp(tilesEl);
+      const b = y.breakdown || {}, parts = [["Auto", b.auto, "a"], ["Teleop", b.teleop, "t"], ["Endgame", b.endgame, "e"]].filter((p) => p[1] != null);
+      const epaEl = $("#tpEpa", root);
+      if (!parts.length) return;
+      const total = parts.reduce((s2, p) => s2 + Math.max(0, p[1]), 0) || 1;
+      // Percentile of each phase vs. the season leaderboard (when it's cached).
+      const lb = API.sbCachedLeaderboard(year) || [];
+      const pctOf = (key, v) => {
+        const vals = lb.map((r) => r.breakdown && r.breakdown[key]).filter((x) => x != null);
+        if (vals.length < 20) return null;
+        return vals.filter((x) => x < v).length / vals.length;
+      };
+      epaEl.hidden = false;
+      epaEl.innerHTML = `<div class="sr-head"><h3>${icon("chart")} Where their points come from</h3><span class="hint">Statbotics EPA breakdown</span></div>
+        <div class="tp-stack">${parts.map(([k, v, c]) => `<span class="tp-seg ${c}" style="flex:${Math.max(0.0001, v) / total}" title="${k} ${fmt(v)}"></span>`).join("")}</div>
+        <div class="tp-phases">${parts.map(([k, v, c]) => {
+          const key = k.toLowerCase(), p = pctOf(key, v);
+          return `<div class="tp-phase"><span class="tp-key ${c}"></span><span class="tp-phase-l">${k}</span>
+            <b>${fmt(v)}</b>${p != null ? `<span class="tp-pct">better than ${Math.round(p * 100)}%</span>` : ""}</div>`;
+        }).join("")}</div>`;
+    }
+
+    // ---- Load everything (each piece fills in as it arrives) ----
+    showTab(teamPageTab, 0);
+    API.getTeamInfo(team).then((info) => {
+      if (!info || !root.isConnected) return;
+      const nm = info.nickname || nameFor(team);
+      $("#tpName", root).textContent = nm || " ";
+      $("#pageTitle").textContent = `Team ${team}${nm ? " · " + nm : ""}`;
+      $("#tpLoc", root).innerHTML = `${icon("map-pin")} ${esc([info.city, info.state_prov, info.country].filter(Boolean).join(", "))}${info.rookie_year ? ` · Rookie ${info.rookie_year}` : ""}${info.school_name ? ` · ${esc(info.school_name)}` : ""}`;
+      if (info.website) {
+        const href = /^https?:\/\//i.test(info.website) ? info.website : "https://" + info.website;
+        $("#tpWeb", root).innerHTML = `<a class="tp-link" href="${esc(href)}" target="_blank" rel="noopener">${icon("globe")} Website</a>`;
+      }
+    }).catch(() => {});
+    API.getTeamYears(team).then((years) => {
+      if (!years.length || !root.isConnected) return;
+      const sel = $("#tpYear", root);
+      if (!years.includes(year)) years.unshift(year);
+      sel.innerHTML = years.map((y) => `<option value="${y}" ${y === year ? "selected" : ""}>${y}</option>`).join("");
+      sel.onchange = () => { location.hash = "#/team/" + team + (Number(sel.value) !== GAME.season ? "/" + sel.value : ""); };
+    }).catch(() => {});
+    API.sbTeamYear(team, year).then((y) => { state.sbYear = y; if (root.isConnected) drawTiles(); })
+      .catch(() => { if (root.isConnected) drawTiles(); });
+    API.sbTeamEvents(team, year).then(({ rows }) => { state.sbEvents = rows; if (root.isConnected && ["events", "trend"].includes(teamPageTab)) drawPanel(); })
+      .catch(() => {});
+    API.getTeamSeason(team, year).then((s) => {
+      state.season = s;
+      if (!root.isConnected) return;
+      $("#tpEvCount", root).textContent = s.events.length || "";
+      $("#tpAwCount", root).textContent = s.awards.length || "";
+      if (["events", "awards"].includes(teamPageTab)) drawPanel();
+    }).catch(() => { state.loadErr = true; if (root.isConnected && ["events", "awards"].includes(teamPageTab)) drawPanel(); });
+    API.sbTeamMatches(team, year).then((rows) => { state.trend = rows; if (root.isConnected && teamPageTab === "trend") drawPanel(); })
+      .catch(() => { state.trendErr = true; if (root.isConnected && teamPageTab === "trend") drawPanel(); });
   }
 
   /* ===========================================================================
@@ -2689,8 +3025,398 @@
     <p class="hint" style="margin:8px 0 0">${rows.length} record${rows.length === 1 ? "" : "s"}${dataScouter ? ` · ${esc(dataScouter)}` : ""} · tap a column header to sort.</p>`;
   }
 
+  /* ---- Data page: Search (default) + Spreadsheet ---------------------------
+     #/data/search                 team & scouter browser
+     #/data/search/team/<num>      one team's scouting report
+     #/data/search/scouter/<id>    everything one scouter recorded
+     #/data/spreadsheet            the full sortable tables + CSV export     */
+  let dsQuery = "", dsMode = "teams", lastDataSig = "";
+  function dataRoute() {
+    const p = location.hash.replace(/^#\/?/, "").split("/");
+    return { sub: p[1] === "spreadsheet" ? "spreadsheet" : "search", kind: p[2] || "", id: decodeURIComponent(p[3] || "") };
+  }
+  // Cheap fingerprint of the shared scouting data, so cloud heartbeats don't
+  // re-render (and scroll-jump) the Data page unless records actually changed.
+  function dataSig() {
+    const ms = allMatches(), ps = Object.values(allPits());
+    return ms.length + ":" + ps.length + ":" + Math.max(0, ...ms.map((m) => m.ts || 0), ...ps.map((p) => p.ts || 0));
+  }
   function renderData(root) {
-    const matches = allMatches(), pits = allPits(), pl = Store.getPicklist();
+    const r = dataRoute();
+    root.innerHTML = `
+      <div class="subtabs" id="dataSubtabs">
+        <a href="#/data/search" class="${r.sub === "search" ? "on" : ""}">${icon("search")} Search</a>
+        <a href="#/data/spreadsheet" class="${r.sub === "spreadsheet" ? "on" : ""}">${icon("database")} Spreadsheet</a>
+      </div>
+      <div id="dataBody"></div>`;
+    const body = $("#dataBody", root);
+    if (r.sub === "spreadsheet") renderDataSheet(body);
+    else if (r.kind === "team" && r.id) renderDataTeam(body, r.id);
+    else if (r.kind === "scouter" && r.id) renderDataScouter(body, r.id);
+    else renderDataSearch(body);
+  }
+
+  // Name for any team: event roster / pit record, then the Statbotics leaderboard,
+  // then a cached TBA profile.
+  let lbNameMap = null, lbNameMapAt = 0;
+  function nameFor(t) {
+    t = String(t);
+    const n = teamName(t); if (n) return n;
+    if (!lbNameMap || Date.now() - lbNameMapAt > 60000) {
+      lbNameMap = {}; lbNameMapAt = Date.now();
+      (API.sbCachedLeaderboard(GAME.season) || []).forEach((x) => { lbNameMap[x.team] = x.name; });
+    }
+    if (lbNameMap[t]) return lbNameMap[t];
+    const ti = Store.getCache("teaminfo." + t, null);
+    return (ti && ti.data && ti.data.nickname) || "";
+  }
+  // Give [data-tfill="<team>"] elements that team's frc-colors as CSS variables
+  // (--tc primary, --tc2 secondary, --tcf readable text color on --tc).
+  function paintTeamFills(el, teams) {
+    const list = [...new Set(teams.map(String))].filter(Boolean);
+    if (!list.length) return;
+    API.getTeamColors(list).then((colors) => {
+      list.forEach((t) => {
+        const c = colors[t];
+        if (!c || !c.primary) return;
+        $$(`[data-tfill="${t}"]`, el).forEach((x) => {
+          x.style.setProperty("--tc", c.primary);
+          x.style.setProperty("--tc2", c.secondary || c.primary);
+          x.style.setProperty("--tcf", contrastText(c.primary) || "#ffffff");
+          x.classList.add("has-tc");
+        });
+      });
+    }).catch(() => {});
+  }
+  const fieldVal = (v) => v === true ? "Yes" : v === false ? "No" : (v == null || v === "") ? "–" : String(v);
+  const isYes = (v) => v === true || v === "true" || v === "Yes";
+
+  function renderDataSearch(body) {
+    const pits = allPits(), ms = allMatches();
+    const scouted = allScoutedTeams();
+    const mCount = {}; ms.forEach((m) => { const t = String(m.team); mCount[t] = (mCount[t] || 0) + 1; });
+    const evOnly = eventTeams().map((t) => String(t.team_number)).filter((t) => !scouted.includes(t));
+    const scouters = allScouters().map((sc) => ({ sc, m: matchCountOf(sc), p: pitCountOf(sc) }))
+      .filter((x) => x.m || x.p).sort((a, b) => (b.m + b.p) - (a.m + a.p));
+    body.innerHTML = `
+      <div class="card ds-top">
+        <label class="ds-search" for="dsInput">${icon("search")}
+          <input id="dsInput" type="search" autocomplete="off" placeholder="Search a team number or name, or a scouter's name…" value="${esc(dsQuery)}" />
+        </label>
+        <div class="ds-modes" role="tablist">
+          <button data-mode="teams" class="${dsMode === "teams" ? "on" : ""}" role="tab">${icon("bagel")} Teams <b>${scouted.length}</b></button>
+          <button data-mode="scouters" class="${dsMode === "scouters" ? "on" : ""}" role="tab">${icon("user")} Scouters <b>${scouters.length}</b></button>
+        </div>
+      </div>
+      <div id="dsResults"></div>`;
+    const res = $("#dsResults", body), input = $("#dsInput", body);
+    const teamTile = (t, dim) => {
+      const n = mCount[t] || 0, p = !!pits[t];
+      return `<button class="ds-team${dim ? " dim" : ""}" data-dteam="${esc(t)}" data-tfill="${esc(t)}">
+        <img class="team-avatar" data-avatar="${esc(t)}" alt="" />
+        <span class="ds-num">${esc(t)}</span>
+        <span class="ds-name">${esc(nameFor(t)) || "&nbsp;"}</span>
+        <span class="ds-meta">${dim ? "No data yet" : `${n} match${n === 1 ? "" : "es"}${p ? ` · ${icon("check")} pit` : ""}`}</span>
+      </button>`;
+    };
+    const scouterTile = (x) => `<button class="ds-scouter" data-dscouter="${esc(x.sc.id)}">
+        ${scouterAvatar(x.sc, "sc-avatar")}
+        <span class="ds-sname">${esc(scouterName(x.sc))}</span>
+        <span class="ds-meta"><b>${x.m}</b> matches · <b>${x.p}</b> pits</span>
+      </button>`;
+    const draw = () => {
+      const q = dsQuery.trim().toLowerCase();
+      const tMatch = (t) => !q || t.includes(q) || nameFor(t).toLowerCase().includes(q);
+      const sMatch = (x) => !q || scouterName(x.sc).toLowerCase().includes(q);
+      const tList = scouted.filter(tMatch), eList = evOnly.filter(tMatch);
+      const sList = q
+        ? allScouters().filter((sc) => scouterName(sc).toLowerCase().includes(q)).map((sc) => ({ sc, m: matchCountOf(sc), p: pitCountOf(sc) }))
+        : scouters;
+      const teamsBlock = (tList.length || eList.length) ? `
+        ${tList.length ? `<div class="ds-section"><h3>${icon("bagel")} ${q ? "Teams" : "Scouted teams"} <span class="muted">${tList.length}</span></h3>
+          <div class="ds-grid">${tList.map((t) => teamTile(t)).join("")}</div></div>` : ""}
+        ${eList.length ? `<div class="ds-section"><h3>${icon("calendar")} At this event, no data yet <span class="muted">${eList.length}</span></h3>
+          <div class="ds-grid">${eList.map((t) => teamTile(t, true)).join("")}</div></div>` : ""}` : "";
+      const scoutersBlock = sList.length ? `<div class="ds-section"><h3>${icon("user")} Scouters <span class="muted">${sList.length}</span></h3>
+          <div class="ds-sgrid">${sList.map(scouterTile).join("")}</div></div>` : "";
+      let html;
+      if (q) html = teamsBlock + scoutersBlock;
+      else html = dsMode === "scouters" ? scoutersBlock : teamsBlock;
+      res.innerHTML = html || `<div class="card">${emptyState("search", q ? "No matches" : "Nothing scouted yet",
+        q ? `Nothing matches “${dsQuery.trim()}”. Try a team number or a scouter's name.` : "Teams and scouters appear here as soon as scouting data comes in.")}</div>`;
+      $$("[data-dteam]", res).forEach((b) => b.onclick = () => { location.hash = "#/data/search/team/" + b.dataset.dteam; });
+      $$("[data-dscouter]", res).forEach((b) => b.onclick = () => { location.hash = "#/data/search/scouter/" + encodeURIComponent(b.dataset.dscouter); });
+      const shown = [...tList, ...eList];
+      paintAvatars(res, shown);
+      paintTeamFills(res, shown);
+    };
+    input.oninput = () => { dsQuery = input.value; draw(); };
+    input.onkeydown = (e) => {
+      if (e.key !== "Enter") return;
+      const q = dsQuery.trim();
+      const tiles = $$("[data-dteam], [data-dscouter]", res);
+      if (/^\d+$/.test(q) && scouted.concat(evOnly).includes(q)) location.hash = "#/data/search/team/" + q;
+      else if (tiles.length === 1) tiles[0].click();
+    };
+    $$("[data-mode]", body).forEach((b) => b.onclick = () => {
+      dsMode = b.dataset.mode;
+      $$("[data-mode]", body).forEach((x) => x.classList.toggle("on", x === b));
+      draw();
+    });
+    draw();
+    // After the router's own view.focus(), put the cursor in the search box (desktop only).
+    if (!(window.matchMedia && matchMedia("(pointer: coarse)").matches)) setTimeout(() => {
+      if (input.isConnected) { input.focus({ preventScroll: true }); input.setSelectionRange(input.value.length, input.value.length); }
+    }, 0);
+  }
+
+  // Colored team banner used by the Data team report.
+  function teamBannerHTML(t, extra) {
+    return `<div class="thero ds-banner" data-tfill="${esc(t)}">
+      <span class="thero-mark" aria-hidden="true">${esc(t)}</span>
+      <img class="team-avatar thero-av" data-avatar="${esc(t)}" alt="" />
+      <div class="thero-id">
+        <span class="thero-num">${esc(t)}</span>
+        <span class="thero-name">${esc(nameFor(t)) || "&nbsp;"}</span>
+        ${extra || ""}
+      </div>
+      <span class="thero-accent"></span>
+    </div>`;
+  }
+
+  function renderDataTeam(body, team) {
+    team = String(team).replace(/\D/g, "");
+    const n = allMatches().filter((m) => String(m.team) === team).length, pit = allPits()[team];
+    body.innerHTML = `
+      <div class="ds-crumbs">
+        <button class="btn ghost sm" id="dsBack">${icon("chevron-left")} All teams</button>
+        <div class="btn-row">
+          <button class="btn primary sm" id="dsProfile">${icon("user")} Full team profile</button>
+          <button class="btn ghost sm" id="dsCompare">${icon("compare")} Compare</button>
+        </div>
+      </div>
+      ${teamBannerHTML(team, `<span class="thero-chips">
+        <span class="thero-chip">${icon("binoculars")} ${n} match${n === 1 ? "" : "es"} scouted</span>
+        <span class="thero-chip">${icon("clipboard")} ${pit ? "Pit scouted" : "No pit data"}</span></span>`)}
+      ${scoutReportHTML(team)}`;
+    $("#dsBack", body).onclick = () => { location.hash = "#/data/search"; };
+    $("#dsProfile", body).onclick = () => { location.hash = "#/team/" + team; };
+    $("#dsCompare", body).onclick = () => addToCompare(team);
+    wireScoutReport(body, team);
+    paintAvatars(body, [team]);
+    paintTeamFills(body, [team]);
+  }
+
+  function renderDataScouter(body, id) {
+    const sc = allScouters().find((s) => String(s.id) === String(id));
+    if (!sc) { body.innerHTML = `<div class="card">${emptyState("user", "Scouter not found", "They may have been removed.")}</div>`; return; }
+    const nm = scouterName(sc).toLowerCase();
+    const mine = (r) => String(r.scouterId || "") === String(sc.id) || (!r.scouterId && String(r.scout || "").toLowerCase() === nm);
+    const ms = allMatches().filter(mine).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const ps = Object.values(allPits()).filter(mine).sort((a, b) => (b.ts || 0) - (a.ts || 0));
+    const teams = [...new Set([...ms.map((m) => String(m.team)), ...ps.map((p) => String(p.team))])].sort((a, b) => a - b);
+    body.innerHTML = `
+      <div class="ds-crumbs"><button class="btn ghost sm" id="dsBack">${icon("chevron-left")} All scouters</button></div>
+      <div class="card ds-shero">
+        ${scouterAvatar(sc, "ph-avatar")}
+        <div class="ds-shero-id">
+          <span class="ds-shero-name">${esc(scouterName(sc))}</span>
+          <span class="ds-shero-sub">${sc.lastSeen ? "Last seen " + esc(timeAgo(sc.lastSeen)) : "Scouter"}</span>
+        </div>
+        <div class="ds-shero-stats">
+          <div><b>${ms.length}</b><span>matches</span></div>
+          <div><b>${ps.length}</b><span>pits</span></div>
+          <div><b>${teams.length}</b><span>teams</span></div>
+          <div><b>${sc.bb || 0}</b><span>${BB}</span></div>
+        </div>
+      </div>
+      ${teams.length ? `<div class="ds-section"><h3>${icon("bagel")} Teams they scouted <span class="muted">${teams.length}</span></h3>
+        <div class="ds-grid">${teams.map((t) => {
+          const n = ms.filter((m) => String(m.team) === t).length, p = ps.some((x) => String(x.team) === t);
+          return `<button class="ds-team" data-dteam="${esc(t)}" data-tfill="${esc(t)}">
+            <img class="team-avatar" data-avatar="${esc(t)}" alt="" /><span class="ds-num">${esc(t)}</span>
+            <span class="ds-name">${esc(nameFor(t)) || "&nbsp;"}</span>
+            <span class="ds-meta">${n ? `${n} match${n === 1 ? "" : "es"}` : ""}${n && p ? " · " : ""}${p ? `${icon("check")} pit` : ""}</span></button>`;
+        }).join("")}</div></div>` : ""}
+      <div class="grid cols-2 ds-split">
+        <div class="card"><h3>${icon("binoculars")} Match entries <span class="muted">${ms.length}</span></h3>
+          ${ms.length ? `<div class="ds-feed">${ms.map((m) => `
+            <button class="ds-feed-row" data-dteam="${esc(String(m.team))}">
+              <span class="ds-feed-q ${esc(m.alliance || "")}">Q${esc(m.matchNumber || "?")}</span>
+              <span class="ds-feed-t">${esc(String(m.team))} <span class="muted">${esc(nameFor(m.team))}</span></span>
+              <span class="ds-feed-when">${m.ts ? esc(timeAgo(m.ts)) : ""}</span>
+              ${m.notes ? `<span class="ds-feed-note">“${esc(m.notes)}”</span>` : ""}
+            </button>`).join("")}</div>` : `<p class="muted">No match entries this season.</p>`}
+        </div>
+        <div class="card"><h3>${icon("clipboard")} Pit entries <span class="muted">${ps.length}</span></h3>
+          ${ps.length ? `<div class="ds-feed">${ps.map((p) => `
+            <button class="ds-feed-row" data-dteam="${esc(String(p.team))}">
+              ${p.photo ? `<img class="ds-feed-photo" src="${esc(p.photo)}" alt="" />` : `<span class="ds-feed-q">${icon("wrench")}</span>`}
+              <span class="ds-feed-t">${esc(String(p.team))} <span class="muted">${esc(nameFor(p.team))}</span></span>
+              <span class="ds-feed-when">${p.ts ? esc(timeAgo(p.ts)) : ""}</span>
+            </button>`).join("")}</div>` : `<p class="muted">No pit entries this season.</p>`}
+        </div>
+      </div>`;
+    $("#dsBack", body).onclick = () => { dsMode = "scouters"; location.hash = "#/data/search"; };
+    $$("[data-dteam]", body).forEach((b) => b.onclick = () => { location.hash = "#/data/search/team/" + b.dataset.dteam; });
+    paintAvatars(body, teams);
+    paintTeamFills(body, teams);
+  }
+
+  /* ---- Team scouting report (Data → Search team view, team profile) ----------
+     Everything our scouts recorded on one team, laid out to be read at a glance:
+     robot photo + pit facts, per-field averages grouped by game phase (bars are
+     relative to the best scouted team), and a match-by-match timeline.
+     Built from the active form schema, so it works for any season's form. */
+  function scoutReportHTML(team) {
+    team = String(team);
+    const pit = allPits()[team];
+    const fields = matchFields();
+    const ms = allMatches().filter((m) => String(m.team) === team)
+      .sort((a, b) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0) || (a.ts || 0) - (b.ts || 0));
+
+    // --- Pit card ---
+    const pFields = pitFields().filter((f) => f.key !== "photo");
+    const facts = pit ? pFields.filter((f) => f.type !== "text" && pit[f.key] != null && pit[f.key] !== "") : [];
+    const pitTexts = pit ? pFields.filter((f) => f.type === "text" && pit[f.key]) : [];
+    const pitCard = `
+      <div class="card sr-pit">
+        <div class="sr-head"><h3>${icon("clipboard")} Pit scouting</h3>
+          ${pit ? `<span class="hint">${pit.scout ? "by " + esc(pit.scout) : ""}${pit.ts ? " · " + esc(timeAgo(pit.ts)) : ""}</span>` : ""}</div>
+        ${pit ? `<div class="sr-pit-body">
+          ${pit.photo ? `<button class="sr-photo" data-photo="1" aria-label="View robot photo"><img src="${esc(pit.photo)}" alt="Team ${esc(team)} robot" /></button>`
+            : `<div class="sr-photo empty">${icon("image")}<span>No robot photo</span></div>`}
+          <div class="sr-facts">${facts.map((f) => {
+            const v = pit[f.key];
+            const val = f.type === "bool"
+              ? `<span class="sr-yn ${isYes(v) ? "yes" : "no"}">${icon(isYes(v) ? "check" : "x")} ${isYes(v) ? "Yes" : "No"}</span>`
+              : `<b>${esc(fieldVal(v))}</b>`;
+            return `<div class="sr-fact"><span>${esc(f.label)}</span>${val}</div>`;
+          }).join("") || `<p class="muted">No pit details recorded.</p>`}</div>
+        </div>
+        ${pitTexts.map((f) => `<blockquote class="sr-quote"><span>${esc(f.label)}</span>${esc(pit[f.key])}</blockquote>`).join("")}`
+        : `<p class="muted">Not pit scouted yet.</p><button class="btn secondary sm" data-act-pit="1">${icon("wrench")} Pit scout this team</button>`}
+      </div>`;
+
+    if (!ms.length) return `<div class="sr">${pitCard}
+      <div class="card"><div class="sr-head"><h3>${icon("binoculars")} Match scouting</h3></div>
+        <p class="muted">No matches scouted for this team yet.</p>
+        <button class="btn primary sm" data-act-match="1">${icon("plus")} Scout a match</button></div></div>`;
+
+    // --- Per-field aggregates, with bars relative to the best scouted team ---
+    const byTeam = {};
+    allMatches().forEach((m) => { (byTeam[String(m.team)] = byTeam[String(m.team)] || []).push(m); });
+    const numAvg = (list, key) => {
+      const v = list.map((m) => m[key]).filter((x) => x !== "" && x != null && !isNaN(Number(x))).map(Number);
+      return v.length ? avg(v) : null;
+    };
+    const best = {};
+    fields.forEach((f) => {
+      if (f.type !== "counter" && f.type !== "number") return;
+      best[f.key] = Math.max(0, ...Object.values(byTeam).map((list) => numAvg(list, f.key) || 0));
+    });
+    const agg = (f) => {
+      const vals = ms.map((m) => m[f.key]).filter((v) => v !== undefined && v !== null && v !== "");
+      if (!vals.length) return "";
+      if (f.type === "bool") {
+        const pct = vals.filter(isYes).length / vals.length;
+        return `<div class="sr-row"><span class="sr-label">${esc(f.label)}</span>
+          <span class="sr-bar"><i style="width:${Math.round(pct * 100)}%"></i></span><b class="sr-val">${Math.round(pct * 100)}%</b></div>`;
+      }
+      if (f.type === "rating") {
+        const nums = vals.map(Number).filter((x) => !isNaN(x) && x > 0);
+        if (!nums.length) return "";
+        const a = avg(nums), max = f.max || 5;
+        return `<div class="sr-row"><span class="sr-label">${esc(f.label)}</span>
+          <span class="sr-dots" aria-label="${fmt(a)} out of ${max}">${Array.from({ length: max }, (_, i) =>
+            `<i class="${a >= i + 0.75 ? "on" : a >= i + 0.25 ? "half" : ""}"></i>`).join("")}</span><b class="sr-val">${fmt(a)}</b></div>`;
+      }
+      if (f.type === "counter" || f.type === "number") {
+        const a = numAvg(ms, f.key);
+        if (a == null) return "";
+        const hi = Math.max(...vals.map(Number).filter((x) => !isNaN(x)));
+        const pct = best[f.key] ? Math.min(100, Math.round(a / best[f.key] * 100)) : 0;
+        return `<div class="sr-row"><span class="sr-label">${esc(f.label)}</span>
+          <span class="sr-bar num" title="Compared with the best scouted team (${fmt(best[f.key])})"><i style="width:${pct}%"></i></span>
+          <b class="sr-val">${fmt(a)}<small>max ${fmt(hi, 0)}</small></b></div>`;
+      }
+      if (f.type === "select") {
+        const counts = {}; vals.forEach((v) => { counts[v] = (counts[v] || 0) + 1; });
+        const top = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+        return `<div class="sr-row sel"><span class="sr-label">${esc(f.label)}</span>
+          <span class="sr-chips">${top.map(([v, c]) => `<span class="sr-chip">${esc(v)}${top.length > 1 || c > 1 ? ` <b>×${c}</b>` : ""}</span>`).join("")}</span></div>`;
+      }
+      return "";
+    };
+    const phases = [...((GAME.matchPhases) || [])];
+    const known = new Set(phases.map((p) => p.id));
+    if (fields.some((f) => !known.has(f.phase))) phases.push({ id: "__other", label: "Other" });
+    const phaseCards = phases.map((ph) => {
+      const rows = fields.filter((f) => f.type !== "text" && (ph.id === "__other" ? !known.has(f.phase) : f.phase === ph.id)).map(agg).filter(Boolean);
+      return rows.length ? `<div class="sr-phase"><h4>${esc(ph.label)}</h4>${rows.join("")}</div>` : "";
+    }).join("");
+
+    // --- Headline numbers ---
+    const st = computeStats(team);
+    const tiles = [
+      ["Matches scouted", ms.length],
+      st.avgCycles ? ["Avg cycles", fmt(st.avgCycles)] : null,
+      st.avgDriver ? ["Driver skill", fmt(st.avgDriver) + "/5"] : null,
+      ["Played defense", Math.round(st.defenseRate * 100) + "%"],
+      ["Broke down", Math.round(st.diedRate * 100) + "%"],
+      st.avgFouls ? ["Fouls / match", fmt(st.avgFouls)] : null,
+    ].filter(Boolean);
+
+    // --- Match timeline ---
+    const textKeys = fields.filter((f) => f.type === "text").map((f) => f.key);
+    const highlight = (m) => fields.filter((f) => f.type !== "text").map((f) => {
+      const v = m[f.key];
+      if (v === undefined || v === null || v === "" ) return "";
+      if (f.type === "bool") return isYes(v) ? `<span class="sr-tag">${esc(f.label)}</span>` : "";
+      if ((f.type === "counter" || f.type === "number") && Number(v) > 0) return `<span class="sr-kv">${esc(f.label)} <b>${esc(String(v))}</b></span>`;
+      if (f.type === "rating" && Number(v) > 0) return `<span class="sr-kv">${esc(f.label)} <b>${esc(String(v))}★</b></span>`;
+      if (f.type === "select" && v !== "N/A") return `<span class="sr-kv">${esc(f.label)} <b>${esc(String(v))}</b></span>`;
+      return "";
+    }).filter(Boolean).join("");
+    const timeline = ms.map((m) => `
+      <details class="sr-match">
+        <summary>
+          <span class="sr-q ${esc(m.alliance || "")}">Q${esc(m.matchNumber || "?")}</span>
+          <span class="sr-mby">${esc(m.scout || "Scout")}${m.ts ? ` · ${esc(timeAgo(m.ts))}` : ""}</span>
+          ${textKeys.some((k) => m[k]) ? `<span class="sr-note-flag" title="Has notes">${icon("edit")}</span>` : ""}
+          ${icon("chevron-right")}
+        </summary>
+        <div class="sr-mbody">
+          <div class="sr-kvs">${highlight(m) || `<span class="muted">Nothing notable recorded.</span>`}</div>
+          ${textKeys.filter((k) => m[k]).map((k) => `<blockquote class="sr-quote">${esc(m[k])}</blockquote>`).join("")}
+        </div>
+      </details>`).join("");
+
+    return `<div class="sr">
+      <div class="sr-tiles">${tiles.map(([k, v]) => `<div class="sr-tile"><span>${esc(k)}</span><b>${esc(String(v))}</b></div>`).join("")}</div>
+      <div class="sr-cols">
+        <div class="sr-col">
+          ${pitCard}
+          <div class="card"><div class="sr-head"><h3>${icon("list")} Match by match</h3><span class="hint">tap a match for details</span></div>
+            <div class="sr-timeline">${timeline}</div></div>
+        </div>
+        <div class="sr-col">
+          <div class="card"><div class="sr-head"><h3>${icon("chart")} Averages</h3><span class="hint">bars vs. the best scouted team</span></div>
+            <div class="sr-phases">${phaseCards || `<p class="muted">No numeric fields recorded.</p>`}</div></div>
+        </div>
+      </div>
+    </div>`;
+  }
+  function wireScoutReport(el, team) {
+    const ph = $("[data-photo]", el);
+    if (ph) ph.onclick = () => { const img = ph.querySelector("img"); if (img) modal(`Team ${team} robot`, `<img class="sr-photo-full" src="${esc(img.src)}" alt="Team ${esc(team)} robot" />`); };
+    $$("[data-act-pit]", el).forEach((b) => b.onclick = () => { go("pit"); setTimeout(() => prefillPitTeam(team), 60); });
+    $$("[data-act-match]", el).forEach((b) => b.onclick = () => { go("match"); setTimeout(() => prefillMatchTeam(team), 60); });
+  }
+
+  // Spreadsheet subpage: the full sortable tables + CSV export.
+  function renderDataSheet(root) {
+    const matches = allMatches(), pits = allPits();
     const storeOk = Store.storageAvailable();
     root.innerHTML = `
       ${!storeOk ? `<div class="card"><div class="badge red dot">Warning</div>
@@ -2717,14 +3443,6 @@
           <button class="btn ghost sm" id="expPitCsv">${icon("download")} Pit data</button>
         </div></div>
         <p class="hint" style="margin:0">Full spreadsheet of every record, opens in Excel / Sheets.</p>
-      </div>
-      <div class="card" style="margin-top:16px"><h2 style="color:var(--danger)">Danger zone</h2>
-        <p class="hint">Permanently erase data on <b>this device</b>. Export a backup first — this cannot be undone.</p>
-        <div class="btn-row">
-          <button class="btn danger" id="clrMatches">Clear match data</button>
-          <button class="btn danger" id="clrPits">Clear pit data</button>
-          <button class="btn danger" id="clrAll">Clear everything</button>
-        </div>
       </div>`;
 
     const viewer = $("#dataViewer", root);
@@ -2777,11 +3495,6 @@
       if (!Object.keys(pits).length) return toast("No pit data", "err");
       download("pit-scouting.csv", pitsToCsv(pits), "text/csv");
     };
-    $("#clrMatches", root).onclick = () => confirmDialog("Delete all match records on this device?", () => { Store.setCache("__noop", 0); localStorage.removeItem("bb702.matches"); toast("Match data cleared"); renderData(root); });
-    $("#clrPits", root).onclick = () => confirmDialog("Delete all pit data on this device?", () => { localStorage.removeItem("bb702.pits"); toast("Pit data cleared"); renderData(root); });
-    $("#clrAll", root).onclick = () => confirmDialog("Erase ALL scouting data (matches, pits, pick list, strategy) on this device?", () => {
-      ["matches", "pits", "picklist", "strategy"].forEach((k) => localStorage.removeItem("bb702." + k)); toast("All data cleared"); renderData(root);
-    });
   }
 
   function csvCell(v) { const s = v == null ? "" : String(v === true ? "Yes" : v === false ? "No" : v);
@@ -2842,11 +3555,16 @@
     return EPA.computeEvent(cache.data);
   }
 
+  // Readable text color on a background: whichever of white / near-black has the
+  // higher WCAG contrast ratio against it.
   function contrastText(hex) {
     const m = /^#?([0-9a-f]{6})$/i.exec(hex || "");
     if (!m) return null;
-    const n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
-    return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.6 ? "#08131a" : "#ffffff";
+    const n = parseInt(m[1], 16);
+    const lin = (c) => { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
+    const L = 0.2126 * lin((n >> 16) & 255) + 0.7152 * lin((n >> 8) & 255) + 0.0722 * lin(n & 255);
+    const onWhite = 1.05 / (L + 0.05), onDark = (L + 0.05) / 0.0565; // #08131a ≈ L 0.0065
+    return onDark > onWhite ? "#08131a" : "#ffffff";
   }
 
   // Resize+compress an image File to a small JPEG dataURL (keeps localStorage light).
@@ -4078,7 +4796,19 @@
       // in place (never the form). Both refresh fully on next visit.
       if (current() === "match") { refreshRobotClaims(); return; }
       if (current() === "pit") { if (pitPageRefresh) pitPageRefresh(); return; }
-      if (teChanged || bbChanged || ["members", "picklist", "data", "admin", "teams"].includes(current())) router();
+      // Data page: only rebuild when records actually changed (heartbeats would
+      // otherwise reset the search box and scroll position every few seconds).
+      if (current() === "data") {
+        const sig = dataSig();
+        if (sig === lastDataSig && !teChanged) return;
+        lastDataSig = sig;
+        const typing = document.activeElement && document.activeElement.id === "dsInput";
+        router();
+        const inp = typing && $("#dsInput");
+        if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+        return;
+      }
+      if (teChanged || bbChanged || ["members", "picklist", "admin", "teams"].includes(current())) router();
     });
     // Global "someone just scouted" popup — show for everyone except the scout who
     // made it (they already got their own toast).

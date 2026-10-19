@@ -308,15 +308,57 @@ const API = (() => {
     }
   }
 
-  // A single team's per-event EPA rows for the year (for last-event EPA).
+  // A single team's per-event EPA rows for the year (last-event EPA, team profile).
   async function sbTeamEvents(team, year) {
     const { data, fromCache } = await sbCached("sb.te." + team + "." + year,
       "/team_events?team=" + team + "&year=" + year + "&limit=100");
-    const rows = (Array.isArray(data) ? data : []).map((r) => ({
-      team: sbTeam(r), event: r.event, name: r.event_name || r.name,
-      week: firstNum(r.week), epa: sbEpa(r), breakdown: sbBreakdown(r),
-    }));
+    const rows = (Array.isArray(data) ? data : []).map((r) => {
+      const rec = r.record || {}, q = rec.qual || {}, tot = rec.total || {};
+      return {
+        team: sbTeam(r), event: r.event, name: r.event_name || r.name,
+        week: firstNum(r.week), epa: sbEpa(r), breakdown: sbBreakdown(r),
+        rank: firstNum(q.rank), numTeams: firstNum(q.num_teams),
+        record: { w: firstNum(tot.wins) || 0, l: firstNum(tot.losses) || 0, t: firstNum(tot.ties) || 0, winrate: firstNum(tot.winrate) },
+      };
+    });
     return { rows, fromCache };
+  }
+
+  // One team's season summary from Statbotics: EPA + breakdown, official ranks, record.
+  async function sbTeamYear(team, year) {
+    const { data, fromCache } = await sbCached("sb.ty." + team + "." + year, "/team_year/" + team + "/" + year);
+    const ranks = (data && data.epa && data.epa.ranks) || {};
+    const rk = (o) => (o && typeof o.rank === "number") ? { rank: o.rank, count: o.team_count, pct: firstNum(o.percentile) } : null;
+    const rec = (data && data.record) || {};
+    return {
+      fromCache, epa: sbEpa(data), breakdown: sbBreakdown(data),
+      country: data && data.country, state: data && data.state, district: data && data.district,
+      ranks: { world: rk(ranks.total), country: rk(ranks.country), state: rk(ranks.state), district: rk(ranks.district) },
+      record: { w: firstNum(rec.wins) || 0, l: firstNum(rec.losses) || 0, t: firstNum(rec.ties) || 0, winrate: firstNum(rec.winrate) },
+    };
+  }
+
+  /* ---- TBA: one team's profile + a season of results (team profile page) ---- */
+  async function getTeamInfo(team) {
+    return (await cachedTba("teaminfo." + team, "/team/" + teamKey(team))).data;
+  }
+  async function getTeamYears(team) {
+    const d = (await cachedTba("teamyears." + team, "/team/" + teamKey(team) + "/years_participated")).data;
+    return (Array.isArray(d) ? d : []).slice().sort((a, b) => b - a);
+  }
+  // Events (with dates/locations), per-event status (rank, record, alliance,
+  // playoff result), awards and every match for one team in one season.
+  async function getTeamSeason(team, year) {
+    const tk = teamKey(team), base = "/team/" + tk;
+    const get = (name, path) => cachedTba(name, path).then((r) => r.data).catch(() => null);
+    const [events, statuses, awards, matches] = await Promise.all([
+      get("tevents." + team + "." + year, base + "/events/" + year), // full: includes week + type
+      get("tstatus." + team + "." + year, base + "/events/" + year + "/statuses"),
+      get("tawards." + team + "." + year, base + "/awards/" + year),
+      get("tmatches." + team + "." + year, base + "/matches/" + year + "/simple"),
+    ]);
+    if (!events) throw new Error("TBA_OFFLINE");
+    return { events, statuses: statuses || {}, awards: awards || [], matches: matches || [] };
   }
 
   /* ---- Nexus (frc.nexus) — live pit map ----------------------------------- */
@@ -359,7 +401,8 @@ const API = (() => {
   }
 
   return { teamKey, verifyKey, hasKey, effectiveKey, getEvents, getEventTeams, getEventMatches, getEventRankings, getTeamColors, getTeamAvatar,
-    sbYearLeaderboard, sbCachedLeaderboard, sbTeamEvents, sbTeamMatches, sbEpa,
+    sbYearLeaderboard, sbCachedLeaderboard, sbTeamEvents, sbTeamMatches, sbTeamYear, sbEpa,
+    getTeamInfo, getTeamYears, getTeamSeason,
     hasNexusKey, nexusPitMap };
 })();
 
