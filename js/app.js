@@ -741,6 +741,7 @@
     $$("[data-go]", root).forEach((b) => b.onclick = () => go(b.dataset.go));
     $$("[data-team]", root).forEach((r) => r.onclick = () => openTeam(r.dataset.team));
     const ce = $("#chooseEvent", root); if (ce) ce.onclick = openEventPicker;
+    initCountdown(root);
     loadLiveSection(root);
   }
 
@@ -811,27 +812,97 @@
     </div>`;
     $$("[data-team]", el).forEach((r) => r.onclick = () => openTeam(r.dataset.team));
   }
+  /* ---- Dashboard countdowns (CONFIG.countdowns) -----------------------------
+     One card; ‹ › arrows (or dots / swipe / arrow keys) flip between upcoming
+     dates with a slide animation, the day count rolls up, and a live h:m:s ticks. */
+  let cdIndex = 0, cdTimer = null;
+  function upcomingCountdowns() {
+    const now = Date.now();
+    return ((window.CONFIG && CONFIG.countdowns) || [])
+      .map((c) => ({ ...c, t: new Date(c.at).getTime() }))
+      .filter((c) => !isNaN(c.t) && c.t > now - 2 * 86400000) // stays up through the event weekend
+      .sort((a, b) => a.t - b.t);
+  }
   function countdownHTML() {
-    const cd = window.CONFIG && window.CONFIG.countdown;
-    if (!cd || !cd.date) return "";
-    const target = new Date(cd.date + "T00:00:00");
-    if (isNaN(target)) return "";
-    const now = new Date();
-    const days = Math.ceil((target - now) / 86400000);
-    const dateStr = target.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
-    let big, unit;
-    if (days > 1) { big = days; unit = "days to go"; }
-    else if (days === 1) { big = 1; unit = "day to go"; }
-    else if (days === 0) { big = "Today"; unit = "it's here!"; }
-    else { big = "—"; unit = "event passed"; }
-    return `<div class="section"><div class="card countdown-card">
-      <div class="cd-left">
-        <span class="cd-label">${icon("calendar")} Countdown</span>
-        <span class="cd-event">${esc(cd.label)}</span>
-        <span class="hint">${esc(dateStr)}</span>
+    const list = upcomingCountdowns();
+    if (!list.length) return "";
+    const multi = list.length > 1;
+    return `<div class="section"><div class="card cd-card" id="cdCard" tabindex="0" aria-roledescription="carousel" aria-label="Countdowns">
+      <div class="cd-info" id="cdInfo"></div>
+      <div class="cd-right">
+        ${multi ? `<button class="cd-arrow" data-cd="-1" aria-label="Previous countdown">${icon("chevron-left")}</button>` : ""}
+        <div class="cd-num" id="cdNum"></div>
+        ${multi ? `<button class="cd-arrow" data-cd="1" aria-label="Next countdown">${icon("chevron-right")}</button>` : ""}
       </div>
-      <div class="cd-num"><span class="cd-days">${big}</span><span class="cd-unit">${unit}</span></div>
     </div></div>`;
+  }
+  function initCountdown(root) {
+    const card = $("#cdCard", root);
+    if (!card) return;
+    const list = upcomingCountdowns();
+    cdIndex = ((cdIndex % list.length) + list.length) % list.length;
+    const pad = (n) => String(n).padStart(2, "0");
+    const reduce = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let rollToken = 0;
+    const tick = (roll) => {
+      const c = list[cdIndex], ms = c.t - Date.now();
+      const daysEl = $("#cdDays", card), unitEl = $("#cdUnit", card), clockEl = $("#cdClock", card);
+      if (!daysEl) return;
+      if (ms <= 0) { daysEl.textContent = "LIVE"; unitEl.textContent = "it's here!"; clockEl.textContent = ""; return; }
+      const d = Math.floor(ms / 864e5);
+      unitEl.textContent = d === 1 ? "day to go" : "days to go";
+      clockEl.textContent = `${pad(Math.floor(ms % 864e5 / 36e5))}h ${pad(Math.floor(ms % 36e5 / 6e4))}m ${pad(Math.floor(ms % 6e4 / 1e3))}s`;
+      if (!roll || reduce) { if (!daysEl.dataset.rolling) daysEl.textContent = d; return; }
+      // Count up from 0 to d (ease-out) so switching feels alive.
+      const token = ++rollToken, start = performance.now(), dur = 650;
+      daysEl.dataset.rolling = "1";
+      const step = (now) => {
+        if (token !== rollToken || !daysEl.isConnected) return;
+        const p = Math.min(1, (now - start) / dur);
+        daysEl.textContent = Math.round(d * (1 - Math.pow(1 - p, 3)));
+        if (p < 1) requestAnimationFrame(step); else delete daysEl.dataset.rolling;
+      };
+      requestAnimationFrame(step);
+      // Background tabs pause rAF — make sure the roll always lands on the real number.
+      setTimeout(() => { if (token === rollToken && daysEl.isConnected) { daysEl.textContent = d; delete daysEl.dataset.rolling; } }, dur + 150);
+    };
+    const paint = (dir) => {
+      const c = list[cdIndex];
+      const anim = dir > 0 ? " cd-in-right" : dir < 0 ? " cd-in-left" : "";
+      const date = new Date(c.t).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+      $("#cdInfo", card).innerHTML = `<div class="cd-slide${anim}">
+        <span class="cd-label">${icon("clock")} Countdown${list.length > 1 ? ` <span class="cd-count">${cdIndex + 1} / ${list.length}</span>` : ""}</span>
+        <span class="cd-event">${esc(c.label)}</span>
+        ${c.sub ? `<span class="cd-sub">${esc(c.sub)}</span>` : ""}
+        <span class="cd-meta">${icon("calendar")} ${esc(date)}${c.where ? ` · ${esc(c.where)}` : ""}</span>
+        ${list.length > 1 ? `<span class="cd-dots">${list.map((x, i) =>
+          `<button class="cd-dot${i === cdIndex ? " on" : ""}" data-cdi="${i}" aria-label="Show ${esc(x.label)}"></button>`).join("")}</span>` : ""}
+      </div>`;
+      $("#cdNum", card).innerHTML = `<div class="cd-slide${anim}"><span class="cd-days" id="cdDays">0</span>
+        <span class="cd-unit" id="cdUnit"></span><span class="cd-clock" id="cdClock"></span></div>`;
+      $$("[data-cdi]", card).forEach((b) => b.onclick = (e) => { e.stopPropagation(); step(Number(b.dataset.cdi) - cdIndex); });
+      tick(true);
+    };
+    const step = (d) => {
+      if (!d || list.length < 2) return;
+      cdIndex = (cdIndex + d + list.length * 4) % list.length;
+      paint(d > 0 ? 1 : -1);
+    };
+    $$("[data-cd]", card).forEach((b) => b.onclick = () => step(Number(b.dataset.cd)));
+    card.onkeydown = (e) => {
+      if (e.key === "ArrowRight") { e.preventDefault(); step(1); }
+      else if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+    };
+    let sx = null; // swipe
+    card.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse") sx = e.clientX; });
+    card.addEventListener("pointerup", (e) => {
+      if (sx == null) return;
+      const dx = e.clientX - sx; sx = null;
+      if (Math.abs(dx) > 45) step(dx < 0 ? 1 : -1);
+    });
+    clearInterval(cdTimer);
+    cdTimer = setInterval(() => { if (!card.isConnected) { clearInterval(cdTimer); return; } tick(false); }, 1000);
+    paint(0);
   }
   function kpi(label, value, tone = "") {
     return `<div class="card"><div class="kpi">

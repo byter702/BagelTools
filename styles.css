@@ -789,18 +789,47 @@ tr.focus-row { background: color-mix(in srgb, var(--secondary) 18%, transparent)
 .ep-pin.on .ico { fill: var(--secondary); }
 .ep-pin .ico { width: 18px; height: 18px; }
 
-/* ---- Dashboard countdown -------------------------------------------------- */
-.countdown-card { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
-  border-color: color-mix(in srgb, var(--secondary) 45%, var(--border)); }
-.countdown-card .cd-left { display: flex; flex-direction: column; gap: 2px; }
-.countdown-card .cd-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .12em; color: var(--text-mut);
-  display: flex; align-items: center; gap: 6px; }
-.countdown-card .cd-label .ico { width: 15px; height: 15px; color: var(--secondary); }
-.countdown-card .cd-event { font-family: var(--font-display); font-weight: 800; font-size: 1.3rem; color: var(--text); }
-.countdown-card .cd-num { display: flex; flex-direction: column; align-items: center; line-height: 1; }
-.countdown-card .cd-days { font-family: var(--font-display); font-weight: 900; font-size: 2.6rem; color: var(--secondary);
+/* ---- Dashboard countdowns (carousel) ------------------------------------- */
+.cd-card { position: relative; display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap;
+  overflow: hidden; border-color: color-mix(in srgb, var(--secondary) 40%, var(--border)); padding-left: 24px; }
+.cd-card::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--secondary); }
+.cd-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.cd-info { flex: 1 1 260px; min-width: 0; }
+.cd-slide { display: flex; flex-direction: column; gap: 3px; }
+.cd-label { display: flex; align-items: center; gap: 6px; font-size: .72rem; font-weight: 800; letter-spacing: .12em;
+  text-transform: uppercase; color: var(--text-mut); }
+.cd-label .ico { width: 15px; height: 15px; color: var(--secondary); }
+.cd-count { margin-left: 2px; padding: 1px 8px; border-radius: 999px; background: var(--surface-2); color: var(--text-dim);
+  font-family: var(--font-display); font-size: .64rem; letter-spacing: .06em; }
+.cd-event { font-family: var(--font-display); font-weight: 800; font-size: 1.35rem; line-height: 1.2; color: var(--text); }
+.cd-sub { color: var(--text-dim); font-weight: 600; }
+.cd-meta { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; color: var(--text-mut); font-size: .88rem; font-weight: 600; }
+.cd-meta .ico { width: 14px; height: 14px; }
+.cd-dots { display: flex; gap: 6px; margin-top: 10px; }
+.cd-dot { width: 8px; height: 8px; padding: 0; border: 0; border-radius: 999px; cursor: pointer; background: var(--border-strong);
+  transition: width .3s ease, background .3s ease; }
+.cd-dot:hover { background: var(--text-mut); }
+.cd-dot.on { width: 24px; background: var(--secondary); }
+.cd-right { display: flex; align-items: center; gap: 10px; }
+.cd-arrow { width: 42px; height: 42px; flex: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text);
+  transition: border-color .15s ease, color .15s ease, transform .15s ease; }
+.cd-arrow:hover { border-color: var(--secondary); color: var(--secondary); transform: translateY(-1px); }
+.cd-arrow:active { transform: scale(.94); }
+.cd-arrow .ico { width: 20px; height: 20px; }
+.cd-num { min-width: 150px; }
+.cd-num .cd-slide { align-items: center; gap: 2px; }
+.cd-days { font-family: var(--font-display); font-weight: 900; font-size: 3.1rem; line-height: 1; color: var(--secondary);
   font-variant-numeric: tabular-nums; }
-.countdown-card .cd-unit { font-size: .74rem; text-transform: uppercase; letter-spacing: .1em; color: var(--text-dim); margin-top: 3px; }
+.cd-unit { font-size: .72rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--text-dim); }
+.cd-clock { margin-top: 4px; font-family: var(--font-display); font-size: .8rem; letter-spacing: .06em; color: var(--text-mut);
+  font-variant-numeric: tabular-nums; }
+.cd-in-right { animation: cdInRight .45s cubic-bezier(.2,.8,.2,1) both; }
+.cd-in-left { animation: cdInLeft .45s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes cdInRight { from { opacity: 0; transform: translateX(38px); filter: blur(3px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes cdInLeft { from { opacity: 0; transform: translateX(-38px); filter: blur(3px); } to { opacity: 1; transform: none; filter: none; } }
+@media (max-width: 560px) { .cd-right { width: 100%; justify-content: space-between; } }
+@media (prefers-reduced-motion: reduce) { .cd-in-right, .cd-in-left { animation: none; } .cd-dot { transition: none; } }
 
 /* ---- Team detail grid spacing (Match performance / Pit scouting) ---------- */
 .team-detail-grid { gap: 16px; margin-top: 16px; }
