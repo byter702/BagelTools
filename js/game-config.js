@@ -31,6 +31,7 @@ const GAME_2026 = {
   // flips whether each pair starts Inactive-first or Active-first — see app.js
   // applyPhaseOrder().
   matchPhases: [
+    { id: "pre",        label: "Pre-Match" },  // rendered inside the Pre-Match card (with the robot picker)
     { id: "auto",       label: "Autonomous" },
     { id: "transition", label: "Transition Shift" },
     { id: "active1",    label: "1st Shift" },
@@ -118,7 +119,7 @@ const GAME_2026 = {
     { key: "shotblocker", label: "Has shotblocker", type: "bool" },
     { key: "canUnderTrench", label: "Can go under trench", type: "bool" },
     { key: "canShoot", label: "Can shoot", type: "bool" },
-    { key: "canShootMove", label: "Can Shoot on the Move?", type: "bool" },
+    { key: "canShootMove", label: "Can shoot on the move", type: "bool" },
     { key: "canClimb", label: "Can Climb", type: "bool" },
     { key: "shooterType", label: "Type of shooter", type: "select",
       options: ["No shooter", "Dye Rotor", "Turret", "Double Turret", "Drum Shooter", "Laned Shooter", "Fixed Shooter", "Other"] },
@@ -136,6 +137,7 @@ const GAME_2027 = {
   name: "BIOCORE",
   seasonLabel: "2027 BIOCORE",
   matchPhases: [
+    { id: "pre", label: "Pre-Match" },
     { id: "auto", label: "Autonomous" },
     { id: "teleop", label: "Teleop" },
     { id: "endgame", label: "Endgame" },

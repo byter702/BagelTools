@@ -696,54 +696,151 @@
     const stats = allScoutedTeams().map(computeStats).filter((x) => x.matches > 0);
     stats.sort((a, b) => b.avgCycles - a.avgCycles);
 
+    const me = Store.getMe(), u = Auth.currentUser();
+    const hr = new Date().getHours();
+    const greet = hr < 5 ? "Up late" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
+    const pitN = Object.keys(pits).length;
+    const actions = [
+      ["match", "plus", "New match", "Scout a robot", "y"],
+      ["pit", "wrench", "Pit scout", "Robot + photo", "c"],
+      ["bagelstats", "chart", "BagelStats", "EPA rankings", "g"],
+      ["data/spreadsheet", "download", "Export data", "Spreadsheet + CSV", "v"],
+    ];
     root.innerHTML = `
-      <div class="section">
-        <div class="card">
-          <h2>Quick actions</h2>
-          <div class="btn-row">
-            <button class="btn primary" data-go="match">${icon("plus")} New match</button>
-            <button class="btn secondary" data-go="pit">${icon("wrench")} Pit scout</button>
-            <button class="btn ghost" data-go="bagelstats">${icon("chart")} BagelStats</button>
-            <button class="btn ghost" data-go="picklist">${icon("list")} Pick list</button>
-            <button class="btn ghost" data-go="data">${icon("download")} Export data</button>
-          </div>
+      <section class="db-hero">
+        <div class="db-hero-txt">
+          <span class="pg-eyebrow">${esc(new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }))} · ${esc(GAME.seasonLabel)}</span>
+          <h2 class="db-hello">${greet}${u ? `, <span>${esc(u.first)}</span>` : ""}</h2>
+          <p class="pg-sub">${s.eventName ? `Scouting <b>${esc(s.eventName)}</b>.` : "Pick an event to load teams, the schedule and live stats."}</p>
         </div>
+        <div class="db-hero-stats">
+          <a class="db-chip y" href="#/members/profile"><b data-count="${me.bb || 0}">${me.bb || 0}</b><span>${BB}</span></a>
+          <a class="db-chip" href="#/members/profile"><b data-count="${matchCountOf(me)}">${matchCountOf(me)}</b><span>your matches</span></a>
+          <a class="db-chip" href="#/members/profile"><b data-count="${pitCountOf(me)}">${pitCountOf(me)}</b><span>your pits</span></a>
+        </div>
+      </section>
+
+      <div class="db-actions">
+        ${actions.map(([r, ic, t, sub, tone], i) => `<a class="db-act ${tone}" href="#/${r}" style="animation-delay:${i * 50}ms">
+          <span class="db-act-ico">${icon(ic)}</span><span class="db-act-txt"><b>${t}</b><span>${sub}</span></span>${icon("chevron-right")}</a>`).join("")}
       </div>
 
-      <div class="section">
-        <div class="card event-hero">
-          <div class="eh-left">
-            <span class="eh-label">${icon("calendar")} Current event</span>
-            <span class="eh-name">${s.eventName ? esc(s.eventName) : "No event selected"}</span>
-            <span class="hint">${s.eventName
-              ? (teams.length ? teams.length + " teams loaded · tap to switch" : "Loaded · tap to switch")
-              : "Choose your event to load teams, schedule & stats."}</span>
-          </div>
-          <button class="btn primary eh-btn" id="chooseEvent">${icon("calendar")} ${s.eventName ? "Change event" : "Choose event"}</button>
+      <section class="card db-event">
+        <div class="db-event-txt">
+          <span class="pg-eyebrow">${icon("calendar")} Current event</span>
+          <span class="db-event-name">${s.eventName ? esc(s.eventName) : "No event selected"}</span>
+          <span class="hint">${s.eventName ? (teams.length ? `${teams.length} teams loaded` : "Loaded") : "Choose your event to load teams, schedule & stats."}</span>
         </div>
-      </div>
+        <div class="db-event-kpis">
+          <div><b>${teams.length || "–"}</b><span>teams</span></div>
+          <div><b>${stats.length}</b><span>with data</span></div>
+          <div><b>${matches.length}</b><span>matches</span></div>
+          <div><b>${pitN}</b><span>pits</span></div>
+        </div>
+        <div class="db-event-btns">
+          ${s.eventName ? `<a class="btn ghost sm" href="#/teams">${icon("bagel")} Event page</a>` : ""}
+          <button class="btn primary sm" id="chooseEvent">${icon("calendar")} ${s.eventName ? "Change" : "Choose event"}</button>
+        </div>
+      </section>
 
       ${countdownHTML()}
 
       <div id="liveSection"></div>
 
-      <div class="section grid cols-2">
-        ${kpi("Teams at event", teams.length || "–")}
-        ${kpi("Teams w/ data", stats.length)}
-      </div>
+      <section class="section" id="spotlight"></section>`;
 
-      <div class="section">
-        <div class="card">
-          <h2>Recent teams scouted</h2>
-          ${recentMatchesTable(matches.slice(-6).reverse())}
-        </div>
-      </div>`;
-
-    $$("[data-go]", root).forEach((b) => b.onclick = () => go(b.dataset.go));
-    $$("[data-team]", root).forEach((r) => r.onclick = () => openTeam(r.dataset.team));
     const ce = $("#chooseEvent", root); if (ce) ce.onclick = openEventPicker;
+    countUp(root);
     initCountdown(root);
+    initSpotlight(root);
     loadLiveSection(root);
+  }
+
+  /* ---- Dashboard team spotlight: a random team every 10 s ------------------
+     Pool = the current event's teams (else every scouted team). Shows the team in
+     its colors with event rank/record, EPA, and what our scouts saw. */
+  let spotTimer = null, spotIdx = 0, spotPool = null, spotKey = "";
+  function initSpotlight(root) {
+    const el = $("#spotlight", root);
+    if (!el) return;
+    const s = Store.getSettings();
+    const base = eventTeams().map((t) => String(t.team_number));
+    const pool = base.length ? base : allScoutedTeams();
+    if (!pool.length) { el.innerHTML = ""; return; }
+    const key = (s.eventKey || "") + ":" + pool.length;
+    if (!spotPool || spotKey !== key) { // shuffle once per event so it keeps going where it left off
+      spotPool = pool.slice().sort(() => Math.random() - 0.5);
+      spotKey = key; spotIdx = 0;
+    }
+    const DUR = 10000;
+    const ev = currentEventEpa();
+    const rk = {}; ((Store.getCache("rankings." + s.eventKey, null) || {}).data || {}).rankings?.forEach((r) => { rk[r.team_key.replace("frc", "")] = r; });
+    const lb = {}; (API.sbCachedLeaderboard(GAME.season) || []).forEach((r) => { lb[r.team] = r; });
+    el.innerHTML = `
+      <div class="sl-head">
+        <h3>${icon("star")} Team spotlight</h3>
+        <div class="sl-ctrl">
+          <span class="hint" id="slCount"></span>
+          <button class="cd-arrow sm" data-sl="-1" aria-label="Previous team">${icon("chevron-left")}</button>
+          <button class="cd-arrow sm" data-sl="1" aria-label="Next team">${icon("chevron-right")}</button>
+        </div>
+      </div>
+      <div class="sl-stage" id="slStage"></div>
+      <div class="sl-bar"><i id="slBar"></i></div>`;
+    const stage = $("#slStage", el), bar = $("#slBar", el);
+    let started = 0, paused = false, left = DUR;
+    const paint = (dir) => {
+      const t = spotPool[spotIdx % spotPool.length];
+      const st = computeStats(t), pit = allPits()[t], r = rk[t], e = ev && ev.byTeam[t], sb = lb[t];
+      const stat = (label, val, sub) => `<div class="sl-stat"><span>${label}</span><b>${val}</b>${sub ? `<small>${sub}</small>` : ""}</div>`;
+      stage.innerHTML = `<div class="sl-card thero${dir > 0 ? " cd-in-right" : dir < 0 ? " cd-in-left" : ""}" data-tfill="${esc(t)}">
+        <span class="thero-mark" aria-hidden="true">${esc(t)}</span>
+        <div class="sl-main">
+          <img class="team-avatar thero-av" data-avatar="${esc(t)}" alt="" />
+          <div class="thero-id">
+            <span class="thero-num">${esc(t)}</span>
+            <span class="thero-name">${esc(nameFor(t)) || "&nbsp;"}</span>
+            <span class="thero-chips">
+              ${r ? `<span class="thero-chip">${icon("trophy")} Rank ${r.rank}${r.record ? ` · ${r.record.wins}-${r.record.losses}-${r.record.ties}` : ""}</span>` : ""}
+              <span class="thero-chip">${icon("binoculars")} ${st.matches} scouted</span>
+              ${pit ? `<span class="thero-chip">${icon("clipboard")} Pit ✓</span>` : ""}
+            </span>
+          </div>
+          ${pit && pit.photo ? `<img class="sl-photo" src="${esc(pit.photo)}" alt="Team ${esc(t)} robot" />` : ""}
+        </div>
+        <div class="sl-stats">
+          ${stat("Event EPA", e ? fmt(e.epa) : "–", e ? `#${e.rank} of ${e.outOf}` : "on-device")}
+          ${stat("Season EPA", sb ? fmt(sb.epa) : "–", sb && sb.worldRank ? `#${sb.worldRank} world` : "Statbotics")}
+          ${stat("Avg cycles", st.matches && st.avgCycles ? fmt(st.avgCycles) : "–", "our scouting")}
+          ${stat("Driver skill", st.avgDriver ? fmt(st.avgDriver) + "/5" : "–", st.matches ? `${Math.round(st.diedRate * 100)}% broke down` : "")}
+        </div>
+        <button class="sl-open" data-slopen="${esc(t)}">${icon("user")} Open profile ${icon("arrow-right")}</button>
+        <span class="thero-accent"></span>
+      </div>`;
+      $("#slCount", el).textContent = `${(spotIdx % spotPool.length) + 1} / ${spotPool.length}`;
+      $("[data-slopen]", stage).onclick = () => { location.hash = "#/team/" + t; };
+      paintAvatars(stage, [t]); paintTeamFills(stage, [t]);
+      started = performance.now(); left = DUR;
+      bar.style.transition = "none"; bar.style.width = "0%"; void bar.offsetWidth;
+      if (!paused) { bar.style.transition = `width ${DUR}ms linear`; bar.style.width = "100%"; }
+    };
+    const step = (d) => { spotIdx = (spotIdx + d + spotPool.length) % spotPool.length; paint(d); };
+    $$("[data-sl]", el).forEach((b) => b.onclick = () => step(Number(b.dataset.sl)));
+    // Pause while the pointer is over it (so people can read), resume on leave.
+    el.onmouseenter = () => {
+      paused = true; left = Math.max(0, left - (performance.now() - started));
+      bar.style.transition = "none"; bar.style.width = (100 - left / DUR * 100) + "%";
+    };
+    el.onmouseleave = () => {
+      paused = false; started = performance.now() - (DUR - left);
+      bar.style.transition = `width ${left}ms linear`; bar.style.width = "100%";
+    };
+    clearInterval(spotTimer);
+    spotTimer = setInterval(() => {
+      if (!el.isConnected) { clearInterval(spotTimer); return; }
+      if (!paused && !document.hidden && performance.now() - started >= DUR) step(1);
+    }, 250);
+    paint(0);
   }
 
   const matchLabel = (m) => (({ qm: "Q", ef: "EF", qf: "QF", sf: "SF", f: "F" })[m.comp_level] || String(m.comp_level).toUpperCase()) + m.match_number;
@@ -992,20 +1089,54 @@
     return list.length || !baseSeason() ? list : (sc && sc.lastPitTeams) || [];
   };
 
+  /* ---- Shared revamp building blocks ---------------------------------------- */
+  // Page header: icon tile + eyebrow + title + subtitle, with an optional right slot.
+  function pageHero({ ic, eyebrow, title, sub, side }) {
+    return `<header class="pg-hero">
+      <span class="pg-hero-ico">${icon(ic || "dashboard")}</span>
+      <div class="pg-hero-txt">
+        ${eyebrow ? `<span class="pg-eyebrow">${eyebrow}</span>` : ""}
+        <h2 class="pg-title">${title}</h2>
+        ${sub ? `<p class="pg-sub">${sub}</p>` : ""}
+      </div>
+      ${side ? `<div class="pg-hero-side">${side}</div>` : ""}
+    </header>`;
+  }
+  // A team as a button in its own frc-colors (paint with paintAvatars + paintTeamFills).
+  function teamTileHTML(t, meta, opts = {}) {
+    t = String(t);
+    return `<button class="ds-team${opts.dim ? " dim" : ""}${opts.mini ? " mini" : ""}" data-tteam="${esc(t)}" data-tfill="${esc(t)}"${opts.style ? ` style="${opts.style}"` : ""}>
+      <img class="team-avatar" data-avatar="${esc(t)}"${opts.ally ? ` data-ally="${opts.ally}"` : ""} alt="" />
+      <span class="ds-num">${esc(t)}</span>
+      <span class="ds-name">${esc(nameFor(t)) || "&nbsp;"}</span>
+      ${meta ? `<span class="ds-meta">${meta}</span>` : ""}
+    </button>`;
+  }
+  function wireTeamTiles(el, onPick) {
+    const teams = $$("[data-tteam]", el).map((b) => b.dataset.tteam);
+    $$("[data-tteam]", el).forEach((b) => b.onclick = () => (onPick || openTeam)(b.dataset.tteam));
+    paintAvatars(el, teams);
+    paintTeamFills(el, teams);
+  }
+
   function renderMembers(root) {
     const { sub } = memberSub();
     const activeTab = ["profile", "leaderboard", "scouters"].includes(sub) ? sub : "profile";
-    const tabs = [["profile", "Profile"], ["leaderboard", "Leaderboard"], ["scouters", "Scouters"]];
+    const tabs = [["profile", "Profile", "user"], ["leaderboard", "Leaderboard", "trophy"], ["scouters", "Scouters", "teams"]];
     root.innerHTML = `
       <div class="subtabs" id="memberTabs">
-        ${tabs.map(([k, l]) => `<a href="#/members/${k}" class="${activeTab === k ? "on" : ""}">${esc(l)}</a>`).join("")}
+        ${tabs.map(([k, l, ic]) => `<a href="#/members/${k}" class="${activeTab === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}
       </div>
       ${Cloud.enabled() ? "" : `<div class="card cloud-note">${icon("globe")}
         <span>Cloud sync is off, so you'll only see yourself here. A lead can turn it on in <b>js/config.js</b> to share Bagel Bucks, the leaderboard, and live online status across the whole team.</span></div>`}
       <div id="memberBody"></div>`;
     const body = $("#memberBody", root);
     if (activeTab === "leaderboard") renderLeaderboard(body);
-    else if (activeTab === "scouters") renderScoutersList(body);
+    else if (activeTab === "scouters") {
+      const id = memberSub().id;
+      if (id) renderScouterReport(body, decodeURIComponent(id), "#/members/scouters");
+      else renderScoutersList(body);
+    }
     else renderProfile(body, memberSub().id || Store.getMe().id);
   }
 
@@ -1014,32 +1145,38 @@
     const sc = allScouters().find((s) => s.id === id) || me;
     const isMe = sc.id === me.id;
     const online = isMe || isOnline(sc);
+    const lastM = lastMatchTeamsOf(sc), lastP = lastPitTeamsOf(sc);
+    const rank = allScouters().slice().sort((a, b) => (b.bb || 0) - (a.bb || 0)).findIndex((s) => s.id === sc.id) + 1;
+    const tiles = (list, empty) => list.length
+      ? `<div class="mb-tiles">${list.map((t, i) => teamTileHTML(t, "", { mini: true, style: `animation-delay:${i * 35}ms` })).join("")}</div>`
+      : `<div class="mb-empty">${icon("binoculars")}<span>${empty}</span></div>`;
     body.innerHTML = `
-      <div class="section">
-        <div class="card profile-hero">
-          <div class="ph-avatar-wrap">
-            ${scouterAvatar(sc, "ph-avatar")}
-            ${isMe ? `<button class="btn ghost sm" id="editPic">${icon("edit")} Photo</button>
-              <input type="file" id="picInput" accept="image/*" hidden />` : ""}
-          </div>
-          <div class="ph-info">
-            <div class="ph-name">${esc(scouterName(sc))}${isMe ? ` <span class="badge cyan">You</span>` : ""}</div>
-            <div class="ph-status"><span class="status-dot ${online ? "on" : ""}"></span>${
-              online ? "Online now" : (sc.lastSeen ? "Last seen " + timeAgo(sc.lastSeen) : "Offline")}</div>
-          </div>
-          <div class="ph-bb"><span class="bb-big">${sc.bb || 0}</span><span class="bb-unit">${BB}</span></div>
+      <section class="card mb-hero">
+        <div class="mb-hero-av">
+          ${scouterAvatar(sc, "ph-avatar")}
+          <span class="mb-online ${online ? "on" : ""}" title="${online ? "Online now" : "Offline"}"></span>
+          ${isMe ? `<button class="mb-pic" id="editPic" aria-label="Change profile photo">${icon("edit")}</button>
+            <input type="file" id="picInput" accept="image/*" hidden />` : ""}
         </div>
+        <div class="mb-hero-id">
+          <span class="pg-eyebrow">${isMe ? "Your profile" : "Scouter"}${rank ? ` · #${rank} on the leaderboard` : ""}</span>
+          <h2 class="mb-name">${esc(scouterName(sc))}${isMe ? ` <span class="badge cyan">You</span>` : ""}</h2>
+          <span class="mb-status">${online ? "Online now" : (sc.lastSeen ? "Last seen " + timeAgo(sc.lastSeen) : "Offline")}</span>
+        </div>
+        <div class="mb-bb"><span class="mb-bb-num" data-count="${sc.bb || 0}">${sc.bb || 0}</span><span class="mb-bb-unit">Bagel Bucks</span></div>
+      </section>
+      <div class="mb-stats">
+        <a class="tp-tile hl" href="#/members/leaderboard"><span class="tp-tile-l">Leaderboard</span><b class="tp-tile-v">${rank ? `#<span data-count="${rank}">${rank}</span>` : "–"}</b><span class="tp-tile-s">of ${allScouters().length} scouters</span></a>
+        <div class="tp-tile"><span class="tp-tile-l">Matches scouted</span><b class="tp-tile-v"><span data-count="${matchCountOf(sc)}">${matchCountOf(sc)}</span></b><span class="tp-tile-s">this season</span></div>
+        <div class="tp-tile"><span class="tp-tile-l">Teams pit scouted</span><b class="tp-tile-v"><span data-count="${pitCountOf(sc)}">${pitCountOf(sc)}</span></b><span class="tp-tile-s">this season</span></div>
       </div>
-      <div class="section grid cols-3">
-        ${kpi("Bagel Bucks", (sc.bb || 0) + " " + BB, "yellow")}
-        ${kpi("Matches scouted", matchCountOf(sc), "cyan")}
-        ${kpi("Teams pit scouted", pitCountOf(sc))}
+      <div class="grid cols-2 mb-lists">
+        <div class="card"><div class="sr-head"><h3>${icon("binoculars")} Last teams scouted</h3><span class="hint">${lastM.length ? "newest first" : ""}</span></div>${tiles(lastM, "No matches scouted yet")}</div>
+        <div class="card"><div class="sr-head"><h3>${icon("clipboard")} Last teams pit scouted</h3><span class="hint">${lastP.length ? "newest first" : ""}</span></div>${tiles(lastP, "No pits scouted yet")}</div>
       </div>
-      <div class="section grid cols-2">
-        <div class="card"><h3>Last teams scouted</h3>${teamChips(lastMatchTeamsOf(sc))}</div>
-        <div class="card"><h3>Last teams pit scouted</h3>${teamChips(lastPitTeamsOf(sc))}</div>
-      </div>`;
-    $$("[data-team]", body).forEach((c) => c.onclick = () => openTeam(c.dataset.team));
+      <div class="btn-row" style="margin-top:14px"><a class="btn ghost sm" href="#/members/scouters/${encodeURIComponent(sc.id)}">${icon("list")} Everything ${isMe ? "you" : esc(sc.first || "they")} scouted</a></div>`;
+    wireTeamTiles(body);
+    countUp(body);
     if (isMe) {
       const pic = $("#picInput", body), btn = $("#editPic", body);
       if (btn) btn.onclick = () => pic.click();
@@ -1060,34 +1197,70 @@
     const meId = Store.getMe().id;
     const scs = allScouters().slice().sort((a, b) =>
       (b.bb || 0) - (a.bb || 0) || scouterName(a).localeCompare(scouterName(b)));
-    body.innerHTML = `<div class="section"><div class="lb-list">${scs.map((sc, i) => {
-      const online = sc.id === meId || isOnline(sc);
-      return `<button class="lb-row" data-id="${esc(sc.id)}">
-        <span class="lb-rank">${i + 1}</span>
-        ${scouterAvatar(sc, "lb-avatar")}
-        <span class="lb-name">${esc(scouterName(sc))}${online ? ` <span class="status-dot on inline"></span>` : ""}</span>
-        <span class="lb-bbwrap">
-          <span class="lb-bb-row"><span class="lb-bb">${sc.bb || 0}</span><span class="lb-bb-unit">${BB}</span></span>
-          <span class="lb-sub">${matchCountOf(sc)} M · ${pitCountOf(sc)} P</span>
-        </span>
-      </button>`;
-    }).join("")}</div></div>`;
+    const top = scs[0] ? (scs[0].bb || 0) : 0;
+    const podium = scs.slice(0, 3);
+    const order = [1, 0, 2].filter((i) => podium[i]); // 2nd · 1st · 3rd
+    const medal = ["gold", "silver", "bronze"];
+    body.innerHTML = `
+      ${podium.length ? `<section class="lb-podium">${order.map((i) => {
+        const sc = podium[i];
+        return `<button class="lb-pod ${medal[i]}${sc.id === meId ? " me" : ""}" data-id="${esc(sc.id)}" style="animation-delay:${[1, 0, 2].indexOf(i) * 90}ms">
+          <span class="lb-pod-av">${scouterAvatar(sc, "lb-avatar")}<span class="lb-medal">${i + 1}</span></span>
+          <span class="lb-pod-name">${esc(scouterName(sc))}</span>
+          <span class="lb-pod-bb"><b data-count="${sc.bb || 0}">${sc.bb || 0}</b> ${BB}</span>
+          <span class="lb-pod-sub">${matchCountOf(sc)} matches · ${pitCountOf(sc)} pits</span>
+          <span class="lb-pod-step"><span>${i + 1}</span></span>
+        </button>`;
+      }).join("")}</section>` : ""}
+      <div class="lb-list">${scs.slice(3).map((sc, j) => {
+        const i = j + 3, online = sc.id === meId || isOnline(sc);
+        const pct = top ? Math.round((sc.bb || 0) / top * 100) : 0;
+        return `<button class="lb-row${sc.id === meId ? " me" : ""}" data-id="${esc(sc.id)}" style="animation-delay:${Math.min(j, 12) * 30}ms">
+          <span class="lb-rank">${i + 1}</span>
+          <span class="lb-av-wrap">${scouterAvatar(sc, "lb-avatar")}${online ? `<span class="mb-online on sm"></span>` : ""}</span>
+          <span class="lb-mid">
+            <span class="lb-name">${esc(scouterName(sc))}${sc.id === meId ? ` <span class="badge cyan">You</span>` : ""}</span>
+            <span class="lb-track"><i style="width:${pct}%"></i></span>
+          </span>
+          <span class="lb-bbwrap">
+            <span class="lb-bb-row"><span class="lb-bb">${sc.bb || 0}</span><span class="lb-bb-unit">${BB}</span></span>
+            <span class="lb-sub">${matchCountOf(sc)} M · ${pitCountOf(sc)} P</span>
+          </span>
+        </button>`;
+      }).join("")}</div>`;
     $$("[data-id]", body).forEach((r) => r.onclick = () => { location.hash = "#/members/profile/" + r.dataset.id; });
+    countUp(body);
   }
 
+  // Scouters subpage: every scouter as a tile (search by name) → their full report.
+  let mbScoutQ = "";
   function renderScoutersList(body) {
     const meId = Store.getMe().id;
-    const scs = allScouters().slice().sort((a, b) => scouterName(a).localeCompare(scouterName(b)));
-    body.innerHTML = `<div class="section"><div class="sc-list">${scs.map((sc) => {
-      const online = sc.id === meId || isOnline(sc);
-      return `<button class="sc-row" data-id="${esc(sc.id)}">
-        ${scouterAvatar(sc, "sc-avatar")}
-        <span class="sc-name">${esc(scouterName(sc))}</span>
-        <span class="sc-status"><span class="status-dot ${online ? "on" : ""}"></span>${
-          online ? "Online" : (sc.lastSeen ? timeAgo(sc.lastSeen) : "Offline")}</span>
-      </button>`;
-    }).join("")}</div></div>`;
-    $$("[data-id]", body).forEach((r) => r.onclick = () => { location.hash = "#/members/profile/" + r.dataset.id; });
+    const all = allScouters().map((sc) => ({ sc, m: matchCountOf(sc), p: pitCountOf(sc), on: sc.id === meId || isOnline(sc) }))
+      .sort((a, b) => (b.m + b.p) - (a.m + a.p) || scouterName(a.sc).localeCompare(scouterName(b.sc)));
+    body.innerHTML = `
+      <div class="card ds-top">
+        <label class="ds-search" for="mbScoutQ">${icon("search")}
+          <input id="mbScoutQ" type="search" autocomplete="off" placeholder="Search a scouter's name…" value="${esc(mbScoutQ)}" />
+        </label>
+        <span class="hint">${all.filter((x) => x.on).length} online · ${all.length} scouters</span>
+      </div>
+      <div id="mbScoutList"></div>`;
+    const list = $("#mbScoutList", body), input = $("#mbScoutQ", body);
+    const draw = () => {
+      const q = mbScoutQ.trim().toLowerCase();
+      const rows = all.filter((x) => !q || scouterName(x.sc).toLowerCase().includes(q));
+      list.innerHTML = rows.length ? `<div class="ds-sgrid">${rows.map((x, i) => `
+        <button class="ds-scouter" data-dscouter="${esc(x.sc.id)}" style="animation-delay:${Math.min(i, 16) * 25}ms">
+          <span class="lb-av-wrap">${scouterAvatar(x.sc, "sc-avatar")}${x.on ? `<span class="mb-online on sm"></span>` : ""}</span>
+          <span class="ds-sname">${esc(scouterName(x.sc))}${x.sc.id === meId ? ` <span class="badge cyan">You</span>` : ""}</span>
+          <span class="ds-meta"><b>${x.m}</b> matches · <b>${x.p}</b> pits</span>
+        </button>`).join("")}</div>`
+        : `<div class="card">${emptyState("user", "No scouters found", "Try a different name.")}</div>`;
+      $$("[data-dscouter]", list).forEach((b) => b.onclick = () => { location.hash = "#/members/scouters/" + encodeURIComponent(b.dataset.dscouter); });
+    };
+    input.oninput = () => { mbScoutQ = input.value; draw(); };
+    draw();
   }
 
   /* ===========================================================================
@@ -1109,19 +1282,62 @@
   }
 
   function teamsSub() { const p = (location.hash.replace(/^#\/?/, "") || "").split("/"); return p[1] || "list"; }
+  const OUR_TEAM = "702";
+  let evView = "grid", evSchedFilter = "all", evSchedTeam = "";
+  function currentEventInfo() {
+    const s = Store.getSettings();
+    const evc = Store.getCache("events." + GAME.season, null);
+    return (evc && evc.data || []).find((e) => e.key === s.eventKey) || null;
+  }
   function renderEventsPage(root) {
-    const own = [["list", "Teams"], ["schedule", "Schedule"]];
+    const s = Store.getSettings();
+    const own = [["list", "Teams", "bagel"], ["schedule", "Schedule", "calendar"], ["rankings", "Rankings", "trophy"]];
     const sub = own.some((t) => t[0] === teamsSub()) ? teamsSub() : "list";
-    // Stats + Compare are shortcuts that jump to the Event tab of those pages.
-    root.innerHTML = `<div class="subtabs" id="evTabs">
-      ${own.map(([k, l]) => `<a href="#/teams/${k}" class="${sub === k ? "on" : ""}">${esc(l)}</a>`).join("")}
-      <a href="#/bagelstats" id="evStats">Stats</a>
-      <a href="#/compare" id="evCompare">Compare</a>
-    </div><div id="evBody"></div>`;
-    const st = $("#evStats", root); if (st) st.onclick = () => { bagelTab = "event"; };
-    const cp = $("#evCompare", root); if (cp) cp.onclick = () => { compareTab = "event"; };
+    if (!s.eventKey) {
+      root.innerHTML = pageHero({ ic: "calendar", eyebrow: "Events", title: "No event selected", sub: "Pick the event you're scouting to load its teams, schedule and rankings." }) +
+        `<div class="card">${emptyState("calendar", "Choose an event", "Use the event chip in the sidebar, or the button below.")}
+          <div class="btn-row" style="justify-content:center"><button class="btn primary" id="evChoose">${icon("calendar")} Choose event</button></div></div>`;
+      $("#evChoose", root).onclick = openEventPicker;
+      return;
+    }
+    const info = currentEventInfo();
+    const cacheM = Store.getCache("matches." + s.eventKey, null);
+    const all = (cacheM ? cacheM.data : []) || [];
+    const played = all.filter((m) => m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0).length;
+    const teams = eventTeams();
+    const start = info && info.start_date ? new Date(info.start_date + "T12:00:00") : null;
+    const end = info && info.end_date ? new Date(info.end_date + "T12:00:00") : null;
+    const status = all.length && played === all.length ? ["done", "Completed"] : played ? ["live", "Live now"]
+      : (start && start > new Date() ? ["soon", "Upcoming"] : ["soon", all.length ? "Not started" : "No schedule yet"]);
+    const dateStr = start ? start.toLocaleDateString([], { month: "short", day: "numeric" }) + (end && end - start > 0 ? " – " + end.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) : "") : "";
+    const loc = info ? [info.city, info.state_prov, info.country].filter(Boolean).join(", ") : "";
+    const pct = all.length ? played / all.length : 0;
+    root.innerHTML = `
+      <section class="ev-hero">
+        <div class="ev-hero-main">
+          <span class="ev-status ${status[0]}"><i></i>${status[1]}</span>
+          <h2 class="ev-name">${esc(s.eventName || s.eventKey)}</h2>
+          <span class="ev-meta">${dateStr ? `${icon("calendar")} ${esc(dateStr)}` : ""}${loc ? ` <span>${icon("map-pin")} ${esc(loc)}</span>` : ""}</span>
+          <div class="ev-hero-btns">
+            <button class="btn ghost sm" id="evChange">${icon("calendar")} Change event</button>
+            ${s.eventKey !== "2026test" ? `<a class="btn ghost sm" href="https://www.thebluealliance.com/event/${esc(s.eventKey)}" target="_blank" rel="noopener">${icon("external")} TBA</a>` : ""}
+          </div>
+        </div>
+        <div class="ev-hero-stats">
+          <div><b data-count="${teams.length}">${teams.length}</b><span>teams</span></div>
+          <div><b>${played}<small>/${all.length}</small></b><span>matches played</span></div>
+          <div class="ev-ring">${ringSVG(pct, "Matches played")}<span>progress</span></div>
+        </div>
+      </section>
+      <div class="subtabs ev-tabs" id="evTabs">
+        ${own.map(([k, l, ic]) => `<a href="#/teams/${k}" class="${sub === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}
+      </div>
+      <div id="evBody"></div>`;
+    $("#evChange", root).onclick = openEventPicker;
+    countUp(root);
     const body = $("#evBody", root);
     if (sub === "schedule") renderSchedule(body);
+    else if (sub === "rankings") renderEventRankings(body);
     else renderTeamsList(body);
   }
 
@@ -1130,69 +1346,69 @@
     const teams = eventTeams();
     if (!teams.length) {
       root.innerHTML = `<div class="card">${emptyState("teams", "No team list loaded",
-        "Pick your event on the Dashboard to pull every team attending from The Blue Alliance.")}
-        <div class="btn-row" style="justify-content:center"><button class="btn primary" data-go="dashboard">${icon("calendar")} Choose event</button></div></div>`;
-      $("[data-go]", root).onclick = () => go("dashboard");
+        "This event's team list loads from The Blue Alliance once you're online.")}</div>`;
       return;
     }
     let epaMap = buildSeasonEpa();
-    const epaOf = (num) => epaMap[String(num)] ?? (computeStats(num).avgCycles || 0);
-    let rankMap = {}; // team# -> { rank, wr }
-
+    const ev = currentEventEpa();
+    const epaOf = (num) => (ev && ev.byTeam[num] ? ev.byTeam[num].epa : null) ?? epaMap[String(num)] ?? null;
+    let rankMap = {}; // team# -> { rank, wr, rec }
+    const sorts = [["number", "#"], ["name", "A–Z"], ["epa", "EPA"], ["rank", "Rank"], ["win", "Win %"]];
     root.innerHTML = `
-      <div class="section-head">
-        <div class="row"><h2 style="margin:0">${teams.length} teams · ${esc(s.eventName || s.eventKey)}</h2></div>
-        <div class="row" style="gap:10px;flex-wrap:wrap">
-          <div class="pill-toggle" id="teamSort">
-            <button data-s="number" class="${teamSort === "number" ? "on" : ""}">#</button>
-            <button data-s="name" class="${teamSort === "name" ? "on" : ""}">A–Z</button>
-            <button data-s="epa" class="${teamSort === "epa" ? "on" : ""}">EPA</button>
-            <button data-s="rank" class="${teamSort === "rank" ? "on" : ""}">Rank</button>
-            <button data-s="win" class="${teamSort === "win" ? "on" : ""}">Win%</button>
-          </div>
-          <input type="search" id="teamSearch" placeholder="Search…" style="min-width:160px" />
+      <div class="card ev-toolbar">
+        <label class="ds-search" for="teamSearch">${icon("search")}<input type="search" id="teamSearch" placeholder="Search teams…" /></label>
+        <div class="seg" id="teamSort">${sorts.map(([k, l]) => `<button data-s="${k}" class="${teamSort === k ? "on" : ""}">${l}</button>`).join("")}</div>
+        <div class="seg" id="evView">
+          <button data-v="grid" class="${evView === "grid" ? "on" : ""}" aria-label="Grid view">${icon("dashboard")}</button>
+          <button data-v="list" class="${evView === "list" ? "on" : ""}" aria-label="List view">${icon("list")}</button>
         </div>
       </div>
-      <div class="team-list" id="teamList"></div>`;
+      <div id="teamList"></div>`;
 
     const listEl = $("#teamList", root);
     function draw(filter = "") {
       const f = filter.toLowerCase();
       const pits = allPits();
-      let list = teams.filter((t) => !f ||
-        String(t.team_number).includes(f) || (t.nickname || "").toLowerCase().includes(f));
+      let list = teams.filter((t) => !f || String(t.team_number).includes(f) || (t.nickname || "").toLowerCase().includes(f));
       list = list.slice().sort((a, b) => {
         if (teamSort === "name") return (a.nickname || "").localeCompare(b.nickname || "");
-        if (teamSort === "epa") return epaOf(b.team_number) - epaOf(a.team_number);
+        if (teamSort === "epa") return (epaOf(b.team_number) ?? -1e9) - (epaOf(a.team_number) ?? -1e9);
         if (teamSort === "rank") return ((rankMap[a.team_number] || {}).rank || 1e9) - ((rankMap[b.team_number] || {}).rank || 1e9);
         if (teamSort === "win") return ((rankMap[b.team_number] || {}).wr ?? -1) - ((rankMap[a.team_number] || {}).wr ?? -1);
         return a.team_number - b.team_number;
       });
-      listEl.innerHTML = list.map((t) => {
-        const n = t.team_number;
-        const epa = epaMap[String(n)];
-        const rk = rankMap[n] || {};
-        const photo = (pits[n] || {}).photo;
-        return `<button class="team-row" data-team="${n}">
+      if (!list.length) { listEl.innerHTML = `<div class="card">${emptyState("search", "No matches", "Try another search.")}</div>`; return; }
+      if (evView === "grid") {
+        listEl.innerHTML = `<div class="ds-grid ev-grid">${list.map((t, i) => {
+          const n = String(t.team_number), rk = rankMap[n] || {}, e = epaOf(n);
+          return teamTileHTML(n, `${e != null ? `<span class="ev-pill">EPA <b>${fmt(e)}</b></span>` : ""}${rk.rank ? `<span class="ev-pill">#<b>${rk.rank}</b></span>` : ""}${rk.wr != null ? `<span class="ev-pill"><b>${Math.round(rk.wr * 100)}</b>%</span>` : ""}${pits[n] ? `<span class="ev-pill">${icon("check")}pit</span>` : ""}`,
+            { style: `animation-delay:${Math.min(i, 30) * 15}ms` });
+        }).join("")}</div>`;
+        wireTeamTiles(listEl);
+        return;
+      }
+      listEl.innerHTML = `<div class="team-list">${list.map((t) => {
+        const n = t.team_number, e = epaOf(n), rk = rankMap[n] || {}, photo = (pits[n] || {}).photo;
+        return `<button class="team-row" data-team="${n}" data-tfill="${n}">
           <img class="team-avatar tr-icon" data-avatar="${n}" alt="" />
           <span class="tr-robot">${photo ? `<img src="${esc(photo)}" alt="robot" />` : `<span class="tr-robot-ph">${icon("wrench")}</span>`}</span>
           <span class="tr-id"><span class="tr-num">${n}</span><span class="tr-name">${esc(t.nickname || t.name || "")}</span></span>
-          <span class="tr-stat"><span class="trs-val">${epa != null ? fmt(epa, 1) : "–"}</span><span class="trs-label">EPA</span></span>
+          <span class="tr-stat"><span class="trs-val">${e != null ? fmt(e, 1) : "–"}</span><span class="trs-label">EPA</span></span>
           <span class="tr-stat"><span class="trs-val">${rk.rank ? "#" + rk.rank : "–"}</span><span class="trs-label">Rank</span></span>
           <span class="tr-stat"><span class="trs-val">${rk.wr != null ? Math.round(rk.wr * 100) + "%" : "–"}</span><span class="trs-label">Win</span></span>
         </button>`;
-      }).join("") || emptyState("search", "No matches", "Try another search.");
+      }).join("")}</div>`;
       $$("[data-team]", listEl).forEach((c) => c.onclick = () => openTeam(c.dataset.team));
       paintAvatars(listEl, list.map((t) => t.team_number));
+      paintTeamFills(listEl, list.map((t) => String(t.team_number)));
     }
     draw();
     if (!Object.keys(epaMap).length) {
       API.sbYearLeaderboard(GAME.season).then((res) => {
         (res && res.rows || []).forEach((r) => { epaMap[String(r.team)] = r.epa; });
-        if (Object.keys(epaMap).length) draw($("#teamSearch", root).value);
+        if (Object.keys(epaMap).length && root.isConnected) draw($("#teamSearch", root).value);
       }).catch(() => {});
     }
-    // Event rank + win-rate from rankings (TBA, or on-device for the test event).
     if (s.eventKey) API.getEventRankings(s.eventKey).then(({ rankings }) => {
       rankMap = {};
       (rankings || []).forEach((r) => {
@@ -1200,13 +1416,18 @@
         const rec = r.record || {}; const g = (rec.wins || 0) + (rec.losses || 0) + (rec.ties || 0);
         rankMap[tn] = { rank: r.rank, wr: g ? (rec.wins || 0) / g : null };
       });
-      draw($("#teamSearch", root).value);
+      if (root.isConnected) draw($("#teamSearch", root).value);
     }).catch(() => {});
 
     $("#teamSearch", root).oninput = (e) => draw(e.target.value);
     $$("#teamSort button", root).forEach((b) => b.onclick = () => {
       teamSort = b.dataset.s;
       $$("#teamSort button", root).forEach((x) => x.classList.toggle("on", x === b));
+      draw($("#teamSearch", root).value);
+    });
+    $$("#evView button", root).forEach((b) => b.onclick = () => {
+      evView = b.dataset.v;
+      $$("#evView button", root).forEach((x) => x.classList.toggle("on", x === b));
       draw($("#teamSearch", root).value);
     });
   }
@@ -1218,49 +1439,113 @@
     const s = Store.getSettings();
     const cache = s.eventKey ? Store.getCache("matches." + s.eventKey, null) : null;
     const all = (cache ? cache.data : []) || [];
-    if (!s.eventKey) {
-      root.innerHTML = `<div class="card">${emptyState("calendar", "No event selected",
-        "Choose your event on the Dashboard to see the match schedule.")}
-        <div class="btn-row" style="justify-content:center"><button class="btn primary" data-go="dashboard">${icon("calendar")} Choose event</button></div></div>`;
-      $("[data-go]", root).onclick = () => go("dashboard");
+    if (!all.length) {
+      root.innerHTML = `<div class="card">${emptyState("calendar", "No schedule yet", "The match schedule loads once it's posted on The Blue Alliance (needs wifi to fetch).")}</div>`;
       return;
     }
-    const quals = all.filter((m) => m.comp_level === "qm");
-    const playoffs = all.filter((m) => m.comp_level && m.comp_level !== "qm");
     const byOrder = (a, b) => (COMP_ORDER[a.comp_level] - COMP_ORDER[b.comp_level]) ||
       ((a.set_number || 0) - (b.set_number || 0)) || (a.match_number - b.match_number);
-    quals.sort((a, b) => a.match_number - b.match_number);
-    playoffs.sort(byOrder);
-
+    const sorted = all.slice().sort(byOrder);
     const fmtTime = (m) => { const u = m.actual_time || m.predicted_time || m.time; return u ? new Date(u * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""; };
     const teamsOf = (m, c) => (m.alliances[c].team_keys || []).map((k) => k.replace("frc", ""));
     const played = (m) => m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0;
     const label = (m) => COMP_LABEL[m.comp_level] + (m.comp_level === "qm" ? m.match_number : (m.set_number || m.match_number));
-
-    const matchRow = (m, idx) => {
-      const red = teamsOf(m, "red"), blue = teamsOf(m, "blue");
-      const done = played(m);
-      const rWon = done && m.alliances.red.score > m.alliances.blue.score;
-      const bWon = done && m.alliances.blue.score > m.alliances.red.score;
-      return `<button class="sched-row" data-mi="${idx}">
-        <span class="sr-label">${esc(label(m))}</span>
-        <span class="sr-alliance red ${rWon ? "won" : ""}">${red.map((t) => `<span class="sr-team">${t}</span>`).join("")}</span>
-        <span class="sr-score">${done ? `${m.alliances.red.score}<span class="sr-dash">–</span>${m.alliances.blue.score}` : `<span class="sr-time">${esc(fmtTime(m))}</span>`}</span>
-        <span class="sr-alliance blue ${bWon ? "won" : ""}">${blue.map((t) => `<span class="sr-team">${t}</span>`).join("")}</span>
-      </button>`;
+    const ev = currentEventEpa();
+    const epaOf = (t) => (ev && ev.byTeam[t]) ? ev.byTeam[t].epa : null;
+    const probOf = (m) => {
+      const r = teamsOf(m, "red"), b = teamsOf(m, "blue");
+      if (![...r, ...b].every((t) => epaOf(t) != null)) return null;
+      return winProb(r.reduce((x, t) => x + epaOf(t), 0), b.reduce((x, t) => x + epaOf(t), 0));
     };
-
+    const filters = [["all", "All"], ["qm", "Quals"], ["po", "Playoffs"], ["us", OUR_TEAM], ["up", "Upcoming"], ["done", "Played"]];
     root.innerHTML = `
-      <div class="section-head"><h2 style="margin:0">Schedule · ${esc(s.eventName || s.eventKey)}</h2></div>
-      ${!all.length ? `<div class="card">${emptyState("calendar", "No schedule yet", "The match schedule loads once it's posted on The Blue Alliance (needs wifi to fetch).")}</div>` : ""}
-      ${quals.length ? `<div class="card"><h3 style="margin-top:0">Qualifications (${quals.length})</h3>
-        <div class="sched-list" id="qualList">${quals.map((m) => matchRow(m, all.indexOf(m))).join("")}</div></div>` : ""}
-      ${playoffs.length ? `<div class="card" style="margin-top:16px"><h3 style="margin-top:0">Playoffs (${playoffs.length})</h3>
-        <div class="sched-list" id="poList">${playoffs.map((m) => matchRow(m, all.indexOf(m))).join("")}</div></div>`
-        : (quals.length ? `<div class="card" style="margin-top:16px"><p class="hint" style="margin:0">Playoff matches will appear here once the alliance selections finish and they're posted.</p></div>` : "")}`;
+      <div class="card ev-toolbar">
+        <label class="ds-search" for="schedTeam">${icon("search")}<input type="search" id="schedTeam" placeholder="Find a team's matches…" value="${esc(evSchedTeam)}" inputmode="numeric" /></label>
+        <div class="seg wrap" id="schedFilter">${filters.map(([k, l]) => `<button data-f="${k}" class="${evSchedFilter === k ? "on" : ""}">${l}</button>`).join("")}</div>
+        <button class="btn primary sm" id="schedNext">${icon("arrow-right")} Next match</button>
+      </div>
+      <div id="schedBody"></div>`;
+    const bodyEl = $("#schedBody", root);
+    const draw = () => {
+      const q = evSchedTeam.trim();
+      const keep = (m) => {
+        const ts = [...teamsOf(m, "red"), ...teamsOf(m, "blue")];
+        if (q && !ts.some((t) => t === q || t.startsWith(q))) return false;
+        if (evSchedFilter === "qm") return m.comp_level === "qm";
+        if (evSchedFilter === "po") return m.comp_level !== "qm";
+        if (evSchedFilter === "us") return ts.includes(OUR_TEAM);
+        if (evSchedFilter === "up") return !played(m);
+        if (evSchedFilter === "done") return played(m);
+        return true;
+      };
+      const list = sorted.filter(keep);
+      const row = (m) => {
+        const red = teamsOf(m, "red"), blue = teamsOf(m, "blue"), done = played(m);
+        const rWon = done && m.alliances.red.score > m.alliances.blue.score;
+        const bWon = done && m.alliances.blue.score > m.alliances.red.score;
+        const p = probOf(m), ours = red.includes(OUR_TEAM) || blue.includes(OUR_TEAM);
+        const chip = (t) => `<span class="sr-team${t === q || t === OUR_TEAM ? " hl" : ""}">${t}</span>`;
+        return `<button class="sched-row${ours ? " ours" : ""}${done ? "" : " upcoming"}" data-mi="${all.indexOf(m)}" data-mkey="${esc(m.key || "")}">
+          <span class="sr-label">${esc(label(m))}<small>${done ? "final" : esc(fmtTime(m))}</small></span>
+          <span class="sr-alliance red ${rWon ? "won" : ""}">${red.map(chip).join("")}</span>
+          <span class="sr-score">${done ? `<b class="${rWon ? "w" : ""}">${m.alliances.red.score}</b><span class="sr-dash">–</span><b class="${bWon ? "w" : ""}">${m.alliances.blue.score}</b>` : `<span class="sr-vs">vs</span>`}</span>
+          <span class="sr-alliance blue ${bWon ? "won" : ""}">${blue.map(chip).join("")}</span>
+          ${p != null ? `<span class="sr-prob" title="Win probability (event EPA)"><i style="width:${Math.round(p * 100)}%"></i></span>` : ""}
+        </button>`;
+      };
+      const quals = list.filter((m) => m.comp_level === "qm"), po = list.filter((m) => m.comp_level !== "qm");
+      bodyEl.innerHTML = list.length ? `
+        ${quals.length ? `<section class="card ev-sched"><div class="sr-head"><h3>${icon("list")} Qualifications</h3><span class="hint">${quals.length} matches</span></div>
+          <div class="sched-list">${quals.map(row).join("")}</div></section>` : ""}
+        ${po.length ? `<section class="card ev-sched" style="margin-top:16px"><div class="sr-head"><h3>${icon("trophy")} Playoffs</h3><span class="hint">${po.length} matches</span></div>
+          <div class="sched-list">${po.map(row).join("")}</div></section>` : ""}`
+        : `<div class="card">${emptyState("search", "No matches", q ? `No matches for team ${q} with this filter.` : "Nothing matches this filter.")}</div>`;
+      $$(".sched-row", bodyEl).forEach((b) => b.onclick = () => openMatchDetail(all[+b.dataset.mi]));
+    };
+    draw();
+    $("#schedTeam", root).oninput = (e) => { evSchedTeam = e.target.value.replace(/\D/g, ""); draw(); };
+    $$("#schedFilter button", root).forEach((b) => b.onclick = () => {
+      evSchedFilter = b.dataset.f;
+      $$("#schedFilter button", root).forEach((x) => x.classList.toggle("on", x === b));
+      draw();
+    });
+    $("#schedNext", root).onclick = () => {
+      let next = $(".sched-row.upcoming", bodyEl);
+      if (!next) { evSchedFilter = "all"; evSchedTeam = ""; renderSchedule(root); next = $(".sched-row.upcoming", root); }
+      if (!next) { toast("Every match has been played"); return; }
+      next.scrollIntoView({ behavior: "smooth", block: "center" });
+      next.classList.add("flash"); setTimeout(() => next.classList.remove("flash"), 1600);
+    };
+  }
 
-    $$(".sched-row", root).forEach((b) => b.onclick = () => openMatchDetail(all[+b.dataset.mi]));
-    $("[data-go]", root) && ($("[data-go]", root).onclick = () => go("dashboard"));
+  /* ---- Rankings subpage (TBA rankings + on-device event EPA) --------------- */
+  function renderEventRankings(root) {
+    const s = Store.getSettings();
+    root.innerHTML = `<div class="card tp-loading"><span class="tp-spin"></span>Loading rankings…</div>`;
+    API.getEventRankings(s.eventKey).then(({ rankings, fromCache }) => {
+      if (!root.isConnected) return;
+      if (!rankings || !rankings.length) { root.innerHTML = `<div class="card">${emptyState("trophy", "No rankings yet", "Rankings appear once qualification matches are played.")}</div>`; return; }
+      const ev = currentEventEpa();
+      const rps = rankings.map((r) => (r.sort_orders && r.sort_orders[0]) || 0);
+      const maxRp = Math.max(0.01, ...rps);
+      root.innerHTML = `<section class="card ev-ranks">
+        <div class="sr-head"><h3>${icon("trophy")} Qualification rankings</h3><span class="hint">${fromCache ? "cached · " : ""}top 8 are usually alliance captains</span></div>
+        <div class="er-list">${rankings.map((r, i) => {
+          const t = String(r.team_key).replace("frc", ""), rec = r.record || {}, rp = (r.sort_orders && r.sort_orders[0]) || 0;
+          const e = ev && ev.byTeam[t];
+          return `<button class="er-row${r.rank <= 8 ? " cap" : ""}${t === OUR_TEAM ? " ours" : ""}" data-team="${esc(t)}" data-tfill="${esc(t)}" style="animation-delay:${Math.min(i, 24) * 18}ms">
+            <span class="er-rank">${r.rank}</span>
+            <img class="team-avatar" data-avatar="${esc(t)}" alt="" />
+            <span class="er-id"><b>${esc(t)}</b><span>${esc(nameFor(t))}</span></span>
+            <span class="er-rp"><span class="er-track"><i style="width:${Math.round(rp / maxRp * 100)}%"></i></span><b>${fmt(rp, 2)}</b><small>RP</small></span>
+            <span class="er-rec">${rec.wins ?? 0}-${rec.losses ?? 0}-${rec.ties ?? 0}</span>
+            <span class="er-epa">${e ? fmt(e.epa) : "–"}<small>EPA</small></span>
+          </button>`;
+        }).join("")}</div></section>`;
+      const ts = rankings.map((r) => String(r.team_key).replace("frc", ""));
+      paintAvatars(root, ts); paintTeamFills(root, ts);
+      $$("[data-team]", root).forEach((b) => b.onclick = () => openTeam(b.dataset.team));
+    }).catch(() => { if (root.isConnected) root.innerHTML = `<div class="card">${emptyState("globe", "Rankings need wifi", "Connect once to load this event's rankings.")}</div>`; });
   }
 
   function openMatchDetail(m) {
@@ -1873,40 +2158,48 @@
           teams.map((t) => `<option value="${t.team_number}">${t.team_number} · ${esc(t.nickname || "")}</option>`).join("")}</select>`
       : `<input type="number" id="mTeam" placeholder="Team #" inputmode="numeric" />`;
 
-    const phases = GAME.matchPhases.map((p) => {
-      const fs = matchFields().filter((f) => (f.phase || "post") === p.id);
+    const allFields = matchFields();
+    const preFields = allFields.filter((f) => f.phase === "pre");
+    const phases = GAME.matchPhases.filter((p) => p.id !== "pre").map((p) => {
+      const fs = allFields.filter((f) => (f.phase || "post") === p.id);
       if (!fs.length) return "";
-      return `<div class="card" data-phase="${p.id}"><h3>${esc(p.label)}</h3>
+      return `<div class="card ms-phase" data-phase="${p.id}"><h3><span class="ms-phase-dot"></span>${esc(p.label)}</h3>
         <div class="form-grid">${fs.map((f) => renderField(f, "")).join("")}</div></div>`;
     }).join("");
+    const preHTML = preFields.length ? `<div class="form-grid ms-pre-fields">${preFields.map((f) => renderField(f, "")).join("")}</div>` : "";
 
     const fmtTime = (unix) => unix ? " · " + new Date(unix * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
     const topCard = liveMode ? `
-      <div class="card" style="margin-bottom:16px">
+      <section class="card ms-pre">
+        <div class="sr-head"><h3>${icon("flag")} Pre-Match</h3><span class="badge green dot">Live · ${upcomingQuals.length} quals left</span></div>
         <div class="form-grid">
-          <div class="field"><label>Upcoming match</label>
+          <div class="field"><label>Match</label>
             <select id="mMatchSel"><option value="">Select match…</option>${upcomingQuals.map((m) =>
               `<option value="${m.match_number}">Q${m.match_number}${esc(fmtTime(m.predicted_time || m.time))}</option>`).join("")}</select></div>
         </div>
         <div id="robotPicker" class="robot-picker"><p class="hint">Pick a match above, then tap the robot you're scouting.</p></div>
+        ${preHTML}
         <input type="hidden" id="mNum" /><input type="hidden" id="mTeam" />
-      </div>` : `
-      <div class="card" style="margin-bottom:16px">
+      </section>` : `
+      <section class="card ms-pre">
+        <div class="sr-head"><h3>${icon("flag")} Pre-Match</h3>${matchEditId ? `<span class="badge yellow">Editing a record</span>` : ""}</div>
         <div class="form-grid">
           <div class="field"><label>Match #</label><input type="number" id="mNum" placeholder="e.g. 14" inputmode="numeric" /></div>
           <div class="field"><label>Team scouted</label>${teamControl}</div>
           <div class="field"><label>Alliance</label>
-            <div class="pill-toggle" id="mAlliance">
+            <div class="pill-toggle ally" id="mAlliance">
               <button type="button" data-v="red" class="on">Red</button>
               <button type="button" data-v="blue">Blue</button></div></div>
         </div>
-      </div>`;
+        ${preHTML}
+      </section>`;
 
     root.innerHTML = `
-      <form id="matchForm">
+      <form id="matchForm" class="ms-form">
         ${topCard}
+        <div class="ms-banner thero" id="msBanner" hidden></div>
         <div class="grid cols-2" id="matchPhaseGrid" style="margin-bottom:16px">${phases}</div>
-        <div class="btn-row">
+        <div class="ms-savebar">
           <button type="submit" class="btn primary">${icon("check")} <span id="mSaveLabel">Save match</span></button>
           <button type="button" class="btn ghost" id="mReset">Clear form</button>
         </div>
@@ -1917,20 +2210,43 @@
         <div id="matchList"></div>
       </div>`;
 
+    // Sticky "now scouting" banner: the team in its colors + an alliance band, and
+    // the whole form takes the alliance accent.
+    const form = $("#matchForm", root), banner = $("#msBanner", root);
+    const setScouting = (team, ally) => {
+      form.dataset.ally = ally || "";
+      if (!team) { banner.hidden = true; banner.innerHTML = ""; return; }
+      const num = $("#mNum", root).value;
+      banner.hidden = false;
+      banner.className = `ms-banner thero ${ally || ""}`;
+      banner.dataset.tfill = team;
+      banner.innerHTML = `<span class="ms-band" aria-hidden="true"></span>
+        <img class="team-avatar thero-av" data-avatar="${esc(team)}" data-ally="${esc(ally || "")}" alt="" />
+        <div class="thero-id"><span class="ms-eyebrow">Now scouting${num ? " · Q" + esc(num) : ""}</span>
+          <span class="thero-num">${esc(team)}</span><span class="thero-name">${esc(nameFor(team)) || "&nbsp;"}</span></div>
+        ${ally ? `<span class="ms-ally-pill ${ally}">${ally} alliance</span>` : ""}`;
+      paintAvatars(banner, [team]);
+      paintTeamFills(form, [team]);
+    };
+
     if (liveMode) {
       const picker = $("#robotPicker", root);
       const renderRobots = (num) => {
         const m = upcomingQuals.find((x) => String(x.match_number) === String(num));
+        setScouting(null);
         if (!m) { picker.innerHTML = `<p class="hint">Pick a match above, then tap the robot you're scouting.</p>`; return; }
         picker.innerHTML = ["red", "blue"].map((col) => `
-          <div class="robot-group">
+          <div class="robot-group ${col}">
             <div class="rg-label"><span class="alliance-dot alliance-${col}"></span>${col} alliance</div>
-            <div class="robot-row">${m.alliances[col].team_keys.map((k) => { const t = k.replace("frc", ""); return `
-              <button type="button" class="robot-pick" data-team="${t}" data-alliance="${col}">
+            <div class="robot-row">${m.alliances[col].team_keys.map((k, i) => { const t = k.replace("frc", ""); return `
+              <button type="button" class="robot-pick ${col}" data-team="${t}" data-alliance="${col}" data-tfill="${t}">
+                <span class="rp-station">${col === "red" ? "R" : "B"}${i + 1}</span>
                 <img class="team-avatar" data-avatar="${t}" data-ally="${col}" alt="" />
                 <span class="rp-num">${t}</span><span class="rp-name">${esc(teamName(t))}</span></button>`; }).join("")}</div>
           </div>`).join("");
-        paintAvatars(picker, ["red", "blue"].flatMap((c) => m.alliances[c].team_keys.map((k) => k.replace("frc", ""))));
+        const ts = ["red", "blue"].flatMap((c) => m.alliances[c].team_keys.map((k) => k.replace("frc", "")));
+        paintAvatars(picker, ts);
+        paintTeamFills(picker, ts);
         $$(".robot-pick", picker).forEach((b) => b.onclick = () => {
           if (b.classList.contains("sel")) return; // already the selected robot
           if (b.disabled) { toast("That robot is already being scouted by someone else", "err"); return; }
@@ -1945,6 +2261,7 @@
           $$(".robot-pick", picker).forEach((x) => x.classList.remove("sel"));
           b.classList.add("sel");
           $("#mTeam", root).value = b.dataset.team;
+          setScouting(b.dataset.team, b.dataset.alliance);
           Cloud.pushClaim(s.eventKey, num, b.dataset.team, b.dataset.alliance);
           refreshRobotClaims();
         });
@@ -1958,9 +2275,16 @@
         $("#mNum", root).value = e.target.value; renderRobots(e.target.value);
       };
     } else {
+      const sync = () => {
+        const t = String($("#mTeam", root).value || "").trim();
+        const a = $("#mAlliance button.on", root);
+        setScouting(t, a ? a.dataset.v : "red");
+      };
       $$("#mAlliance button", root).forEach((b) => b.onclick = () => {
         $$("#mAlliance button", root).forEach((x) => x.classList.toggle("on", x === b));
+        sync();
       });
+      ["input", "change"].forEach((ev) => { $("#mTeam", root).addEventListener(ev, sync); $("#mNum", root).addEventListener(ev, sync); });
     }
 
     wireFields(root);
@@ -1986,7 +2310,7 @@
         alliance = matchEditId ? matchEditAlliance : (a ? a.dataset.v : "red");
       }
       if (!team) { toast("Pick a team first", "err"); return; }
-      const fields = readForm($(".grid.cols-2", root));
+      const fields = readForm($("#matchForm", root)); // phase cards + Pre-Match fields
       const entry = {
         id: matchEditId || undefined,
         event: s.eventKey, scout: scoutDisplayName(),
@@ -2050,7 +2374,7 @@
     $$("#mAlliance button", root).forEach((x) => x.classList.toggle("on", x.dataset.v === m.alliance));
     // re-render field values
     matchFields().forEach((f) => {
-      const wrap = $(`.grid.cols-2 [data-key="${f.key}"]`, root);
+      const wrap = $(`#matchForm [data-key="${f.key}"]`, root);
       if (!wrap) return;
       const v = m[f.key];
       if (f.type === "bool") wrap.querySelector("input").checked = !!v;
@@ -2061,6 +2385,7 @@
       else if (f.type === "text") wrap.querySelector("textarea").value = v || "";
     });
     applyPhaseOrder(root); // order the shifts to match this record's Won-auto value
+    $("#mTeam", root).dispatchEvent(new Event("change")); // refresh the "now scouting" banner
     $("#mSaveLabel", root).textContent = "Update match";
     window.scrollTo({ top: 0, behavior: "smooth" });
     toast("Editing — make changes and Update");
@@ -2072,32 +2397,42 @@
      ======================================================================== */
   function renderPit(root) {
     const teams = eventTeams();
+    const s = Store.getSettings();
+    const pitsNow = allPits();
+    const doneN = teams.filter((t) => pitsNow[t.team_number]).length;
     const teamControl = teams.length
       ? `<select id="pTeam"><option value="">Select team…</option>${
-          teams.map((t) => `<option value="${t.team_number}">${t.team_number} · ${esc(t.nickname || "")}</option>`).join("")}</select>`
+          teams.map((t) => `<option value="${t.team_number}">${t.team_number} · ${esc(t.nickname || "")}${pitsNow[t.team_number] ? " ✓" : ""}</option>`).join("")}</select>`
       : `<input type="number" id="pTeam" placeholder="Team #" inputmode="numeric" />`;
+    const pct = teams.length ? doneN / teams.length : 0;
 
     root.innerHTML = `
+      ${pageHero({ ic: "clipboard", eyebrow: "Pit scouting", title: s.eventName ? esc(s.eventName) : "No event selected",
+        sub: teams.length ? `${doneN} of ${teams.length} pits scouted${doneN === teams.length ? " · every pit done!" : ""}` : "Pick an event in the sidebar to get the pit map.",
+        side: teams.length ? ringSVG(pct, "Pits scouted") : "" })}
       <div id="pitMap"></div>
-      <form id="pitForm">
-        <div class="card" style="margin-bottom:16px">
+      <form id="pitForm" class="pf-form">
+        <section class="card pf-pick">
+          <div class="sr-head"><h3>${icon("bagel")} Team</h3><span class="hint">tap a pit on the map, or pick below</span></div>
           <div class="form-grid">
             <div class="field"><label>Team</label>${teamControl}</div>
             <div class="field"><label>Robot photo</label>
-              <input type="file" id="pPhoto" accept="image/*" />
+              <label class="pf-drop" for="pPhoto">${icon("image")}<span><b>Add a robot photo</b><small>Tap to take or choose one</small></span></label>
+              <input type="file" id="pPhoto" accept="image/*" hidden />
               <div id="pPhotoPreview" class="photo-preview"></div></div>
           </div>
-        </div>
-        <div class="card" style="margin-bottom:16px"><h3>Robot</h3>
+        </section>
+        <div class="ms-banner thero" id="pfBanner" hidden></div>
+        <section class="card pf-fields" id="pitFieldsCard"><h3>${icon("wrench")} Robot</h3>
           <div class="form-grid">${pitFields().map((f) => renderField(f, "")).join("")}</div>
-        </div>
-        <div class="btn-row">
+        </section>
+        <div class="ms-savebar">
           <button type="submit" class="btn primary">${icon("check")} Save pit data</button>
           <button type="button" class="btn ghost" id="pReset">Clear</button>
         </div>
       </form>
       <div class="section" style="margin-top:26px">
-        <div class="section-head"><h2>Pit-scouted teams</h2></div>
+        <div class="section-head"><h2>Pit-scouted teams</h2><span class="hint">${Object.keys(pitsNow).length} teams</span></div>
         <div id="pitList"></div>
       </div>`;
 
@@ -2106,6 +2441,27 @@
     loadPitMap(root);
     // Let cloud updates refresh the shared pit list + map live without touching the form.
     pitPageRefresh = () => { try { drawPitList(); loadPitMap(root); } catch (e) {} };
+
+    // Selected team → colored banner (+ "edit what's already saved" if it was scouted).
+    const pfBanner = $("#pfBanner", root);
+    const syncTeam = () => {
+      const t = String($("#pTeam", root).value || "").trim();
+      pitSelected = t;
+      $$(".pm-cell", root).forEach((c) => c.classList.toggle("sel", c.dataset.team === t));
+      if (!t) { pfBanner.hidden = true; pfBanner.innerHTML = ""; return; }
+      const prev = allPits()[t];
+      pfBanner.hidden = false;
+      pfBanner.className = "ms-banner thero";
+      pfBanner.dataset.tfill = t;
+      pfBanner.innerHTML = `<img class="team-avatar thero-av" data-avatar="${esc(t)}" alt="" />
+        <div class="thero-id"><span class="ms-eyebrow">${prev ? "Already pit scouted" + (prev.scout ? " by " + esc(prev.scout) : "") : "Pit scouting"}</span>
+          <span class="thero-num">${esc(t)}</span><span class="thero-name">${esc(nameFor(t)) || "&nbsp;"}</span></div>
+        ${prev ? `<button type="button" class="ms-ally-pill" id="pfLoad">${icon("edit")} Load saved data</button>` : ""}`;
+      paintAvatars(pfBanner, [t]);
+      paintTeamFills(pfBanner.parentNode, [t]);
+      const ld = $("#pfLoad", pfBanner); if (ld) ld.onclick = () => loadPitIntoForm(t, root);
+    };
+    ["input", "change"].forEach((ev) => $("#pTeam", root).addEventListener(ev, syncTeam));
 
     let pitPhoto = null; // dataURL of the current robot photo
     const photoInput = $("#pPhoto", root);
@@ -2117,15 +2473,16 @@
     function showPhotoPreview(dataUrl) {
       const p = $("#pPhotoPreview", root);
       p.innerHTML = dataUrl ? `<img src="${dataUrl}" alt="robot photo" /><button type="button" class="btn ghost sm" id="pPhotoClear">Remove photo</button>` : "";
+      $(".pf-drop", root).hidden = !!dataUrl;
       const clr = $("#pPhotoClear", root); if (clr) clr.onclick = () => { pitPhoto = null; $("#pPhoto", root).value = ""; showPhotoPreview(null); };
     }
 
-    $("#pReset", root).onclick = () => renderPit(root);
+    $("#pReset", root).onclick = () => { pitSelected = ""; renderPit(root); };
     $("#pitForm", root).onsubmit = (e) => {
       e.preventDefault();
       const team = $("#pTeam", root).value.trim();
       if (!team) { toast("Pick a team first", "err"); return; }
-      const fields = readForm($("#pitForm .card:nth-of-type(2)", root));
+      const fields = readForm($("#pitFieldsCard", root));
       const data = { ...fields, scout: scoutDisplayName(), event: Store.getSettings().eventKey, nickname: teamName(team) };
       if (pitPhoto) data.photo = pitPhoto; // keep existing photo if none newly chosen
       const isNewPit = !allPits()[team]; // BB only for a team not already pit-scouted (by anyone)
@@ -2143,30 +2500,36 @@
         Cloud.pushPits();
         toast(`Pit data saved · Team ${team}`);
       }
+      pitSelected = "";
       renderPit(root);
     };
     // expose for loadPitIntoForm
     renderPit._setPhoto = (dataUrl) => { pitPhoto = dataUrl; showPhotoPreview(dataUrl); };
+    if (pitSelected) { $("#pTeam", root).value = pitSelected; syncTeam(); }
 
     function drawPitList() {
       const pits = allPits();
       const teamsArr = Object.values(pits).sort((a, b) => Number(a.team) - Number(b.team));
       const el = $("#pitList", root);
       if (!teamsArr.length) { el.innerHTML = `<div class="card">${emptyState("wrench", "No pit data yet", "Fill the form and save.")}</div>`; return; }
-      el.innerHTML = `<div class="grid auto">${teamsArr.map((p) => `
-        <div class="card team-card" data-open="${p.team}">
-          ${p.photo ? `<img class="pit-thumb" src="${p.photo}" alt="Team ${esc(p.team)} robot" />` : ""}
-          <div class="tc-top"><span class="tc-num">${esc(p.team)}</span></div>
-          <div class="tc-name">${esc(p.nickname || teamName(p.team) || "")}</div>
-          <div class="tc-meta">
-            ${p.drivetrain ? `<span class="badge cyan">${esc(p.drivetrain)}</span>` : ""}
-            ${p.maxClimb && p.maxClimb !== "None" ? `<span class="badge yellow">climb ${esc(p.maxClimb)}</span>` : ""}
-            ${p.shotblocker ? `<span class="badge green">shotblocker</span>` : ""}
+      el.innerHTML = `<div class="pl-grid">${teamsArr.map((p, i) => `
+        <article class="pl-card" data-open="${esc(p.team)}" data-tfill="${esc(p.team)}" style="animation-delay:${Math.min(i, 20) * 20}ms">
+          <div class="pl-photo">${p.photo ? `<img src="${p.photo}" alt="Team ${esc(p.team)} robot" />` : icon("image")}</div>
+          <div class="pl-body">
+            <div class="pl-id"><img class="team-avatar" data-avatar="${esc(p.team)}" alt="" /><b>${esc(p.team)}</b><span>${esc(p.nickname || nameFor(p.team) || "")}</span></div>
+            <div class="pl-tags">
+              ${p.drivetrain ? `<span class="sr-chip">${esc(p.drivetrain)}</span>` : ""}
+              ${p.shooterType && p.shooterType !== "No shooter" ? `<span class="sr-chip">${esc(p.shooterType)}</span>` : ""}
+              ${p.canClimb ? `<span class="sr-chip">Climbs</span>` : ""}
+              ${p.shotblocker ? `<span class="sr-chip">Shotblocker</span>` : ""}
+            </div>
+            <div class="pl-foot"><span class="hint">${p.scout ? "by " + esc(p.scout) : ""}</span>
+              <span class="row" style="gap:6px"><button class="btn sm ghost" data-load="${esc(p.team)}">${icon("edit")} Edit</button>
+              <button class="icon-btn" data-del="${esc(p.team)}" aria-label="Delete">${icon("trash")}</button></span></div>
           </div>
-          <div class="row between" style="margin-top:8px">
-            <button class="btn sm ghost" data-load="${p.team}">${icon("edit")} Edit</button>
-            <button class="icon-btn" data-del="${p.team}" aria-label="Delete">${icon("trash")}</button>
-          </div></div>`).join("")}</div>`;
+        </article>`).join("")}</div>`;
+      const ts = teamsArr.map((p) => String(p.team));
+      paintAvatars(el, ts); paintTeamFills(el, ts);
       $$("[data-open]", el).forEach((c) => c.onclick = (e) => { if (e.target.closest("button")) return; openTeam(c.dataset.open); });
       $$("[data-load]", el).forEach((b) => b.onclick = () => loadPitIntoForm(b.dataset.load, root));
       $$("[data-del]", el).forEach((b) => b.onclick = () =>
@@ -2177,7 +2540,7 @@
     const p = allPits()[team]; if (!p) return;
     $("#pTeam", root).value = team;
     pitFields().forEach((f) => {
-      const wrap = $(`#pitForm .card:nth-of-type(2) [data-key="${f.key}"]`, root);
+      const wrap = $(`#pitFieldsCard [data-key="${f.key}"]`, root);
       if (!wrap) return; const v = p[f.key];
       if (f.type === "bool") wrap.querySelector("input").checked = !!v;
       else if (f.type === "select") wrap.querySelector("select").value = v || wrap.querySelector("select").value;
@@ -2187,10 +2550,11 @@
       else if (f.type === "rating") { const rr = wrap.querySelector(".rating"); rr.dataset.val = v || 0; rr.querySelectorAll(".star").forEach((sx) => sx.classList.toggle("on", Number(sx.dataset.idx) <= (v || 0))); }
     });
     if (renderPit._setPhoto) renderPit._setPhoto(p.photo || null);
+    $("#pTeam", root).dispatchEvent(new Event("change"));
     window.scrollTo({ top: 0, behavior: "smooth" });
     toast("Editing pit data — Save to update");
   }
-  function prefillPitTeam(team) { const t = $("#pTeam"); if (t) t.value = team; }
+  function prefillPitTeam(team) { const t = $("#pTeam"); if (t) { t.value = team; t.dispatchEvent(new Event("change")); } }
 
   // Active pit-scouting fields: admin-defined custom schema, or the season default.
   function pitFields() { return (Cloud.enabled() && Cloud.getPitForm()) || Store.getPitSchema() || GAME.pitFields; }
@@ -2208,61 +2572,49 @@
     colD: [[3759, 4276], [4415, 4079], [3501, 4201], [4470, 4123], [3476, 4141]],
   };
   function isSocalShowdown(s) { return /socal\s*showdown/.test((s.eventName || "").toLowerCase()); }
-  function socalPitMapCard(pits) {
-    const flat = [].concat.apply([], [].concat.apply([], Object.values(SOCAL_PITMAP)));
-    const done = flat.filter((t) => pits[t]).length;
-    const cell = (t) => `<button type="button" class="pit-cell socal ${pits[t] ? "done" : "todo"}" data-team="${t}"><span class="pc-team">${t}</span></button>`;
-    const col = (rows, wide) => `<div class="socal-col${wide ? " wide" : ""}">${rows.map((r) => `<div class="socal-row">${r.map(cell).join("")}</div>`).join("")}</div>`;
-    return `<div class="card" style="margin-bottom:16px">
-      <div class="section-head">
-        <div class="row" style="gap:10px">${icon("wrench")}<h3 style="margin:0">Pit map · SoCal Showdown · ${done}/${flat.length} scouted</h3></div>
-        <div class="row" style="gap:12px"><span class="badge cyan dot">Scouted</span><span class="badge red dot">Not yet</span></div>
-      </div>
-      <div class="socal-map-scroll"><div class="socal-map">
-        <div class="socal-side">${col(SOCAL_PITMAP.colA, true)}${col(SOCAL_PITMAP.colB, false)}</div>
-        <div class="socal-field"><span>FIELD</span></div>
-        <div class="socal-side">${col(SOCAL_PITMAP.colC, false)}${col(SOCAL_PITMAP.colD, true)}</div>
-      </div></div>
-    </div>`;
-  }
 
-  // Pit map: shows a pasted map image (Settings → Pit map) plus a green/red
-  // team-status grid (green = pit-scouted, red = not). Toggle off in Settings.
-  // For SoCal Showdown it renders the hand-laid venue layout instead.
+  // Pit map: every team at the event as a tile — scouted pits in the team's colors
+  // with a check, open pits dashed. Filter chips + a progress bar; tap a pit to
+  // start scouting it. SoCal Showdown uses its hand-laid venue layout.
+  let pmFilter = "all", pitSelected = "";
   function loadPitMap(root) {
     const container = $("#pitMap", root);
     if (!container) return;
     const s = Store.getSettings();
-    if (isSocalShowdown(s)) {
-      container.innerHTML = socalPitMapCard(allPits());
-      $$(".pit-cell", container).forEach((b) => b.onclick = () => {
-        prefillPitTeam(b.dataset.team);
-        const fm = $("#pitForm", root); if (fm) fm.scrollIntoView({ behavior: "smooth", block: "start" });
-      });
-      return;
-    }
-    const url = (s.pitMapUrl || "").trim();
-    const teams = eventTeams().slice().sort((a, b) => a.team_number - b.team_number);
-    if (!s.pitMapEnabled || (!url && !teams.length)) { container.innerHTML = ""; return; }
     const pits = allPits();
-    const doneN = teams.filter((t) => pits[t.team_number]).length;
+    const socal = isSocalShowdown(s);
+    const teamNums = socal
+      ? [].concat(...[].concat(...Object.values(SOCAL_PITMAP))).map(String)
+      : eventTeams().map((t) => String(t.team_number)).sort((a, b) => a - b);
+    if (!teamNums.length) { container.innerHTML = ""; return; }
+    const done = teamNums.filter((t) => pits[t]);
+    const shown = (t) => pmFilter === "all" || (pmFilter === "done" ? !!pits[t] : !pits[t]);
+    const cell = (t) => `<button type="button" class="pm-cell ${pits[t] ? "done" : "todo"}${t === pitSelected ? " sel" : ""}${shown(t) ? "" : " out"}"
+        data-team="${t}" ${pits[t] ? `data-tfill="${t}"` : ""} title="${esc(t + " " + nameFor(t))}">
+        <img class="team-avatar" data-avatar="${t}" alt="" /><span class="pm-num">${t}</span>${pits[t] ? `<span class="pm-check">${icon("check")}</span>` : ""}</button>`;
+    const col = (rows, wide) => `<div class="socal-col${wide ? " wide" : ""}">${rows.map((r) => `<div class="socal-row">${r.map((t) => cell(String(t))).join("")}</div>`).join("")}</div>`;
+    const pct = Math.round(done.length / teamNums.length * 100);
     container.innerHTML = `
-      <div class="card" style="margin-bottom:16px">
-        <div class="section-head">
-          <div class="row" style="gap:10px">${icon("wrench")}<h3 style="margin:0">Pit map${teams.length ? ` · ${doneN}/${teams.length} scouted` : ""}</h3></div>
-          <div class="row" style="gap:12px"><span class="badge cyan dot">Scouted</span><span class="badge red dot">Not yet</span></div>
+      <section class="card pm-card">
+        <div class="sr-head">
+          <h3>${icon("map-pin")} Pit map${socal ? " · SoCal Showdown" : ""}</h3>
+          <div class="pm-filters" role="tablist">
+            ${[["all", "All", teamNums.length], ["todo", "To do", teamNums.length - done.length], ["done", "Done", done.length]].map(([k, l, n]) =>
+              `<button type="button" data-pm="${k}" class="${pmFilter === k ? "on" : ""}">${l} <b>${n}</b></button>`).join("")}
+          </div>
         </div>
-        ${url ? `<img class="pit-map-img" src="${esc(url)}" alt="Pit map"
-            onerror="this.style.display='none';var n=this.nextElementSibling;if(n)n.hidden=false;" />
-          <p class="hint" hidden>Couldn't load the map image — check the link in Settings → Pit map.</p>` : ""}
-        ${teams.length ? `<div class="pit-map-grid" style="margin-top:${url ? "14px" : "4px"}">${teams.map((t) => {
-          const done = !!pits[t.team_number];
-          return `<button type="button" class="pit-cell ${done ? "done" : "todo"}" data-team="${t.team_number}">
-            <span class="pc-team">${t.team_number}</span></button>`;
-        }).join("")}</div>`
-        : `<p class="hint" style="margin:10px 0 0">Select an event to see per-team scouting status here.</p>`}
-      </div>`;
-    $$(".pit-cell", container).forEach((b) => b.onclick = () => {
+        <div class="pm-progress"><span class="pm-bar"><i style="width:${pct}%"></i></span><b>${pct}%</b></div>
+        ${socal ? `<div class="socal-map-scroll"><div class="socal-map pm">
+            <div class="socal-side">${col(SOCAL_PITMAP.colA, true)}${col(SOCAL_PITMAP.colB, false)}</div>
+            <div class="socal-field"><span>FIELD</span></div>
+            <div class="socal-side">${col(SOCAL_PITMAP.colC, false)}${col(SOCAL_PITMAP.colD, true)}</div>
+          </div></div>`
+          : `<div class="pm-grid">${teamNums.map(cell).join("")}</div>`}
+      </section>`;
+    paintAvatars(container, teamNums);
+    paintTeamFills(container, done);
+    $$("[data-pm]", container).forEach((b) => b.onclick = () => { pmFilter = b.dataset.pm; loadPitMap(root); });
+    $$(".pm-cell", container).forEach((b) => b.onclick = () => {
       prefillPitTeam(b.dataset.team);
       const f = $("#pitForm", root); if (f) f.scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -2595,9 +2947,12 @@
   function renderPicklist(root) {
     const teams = eventTeams();
     const sub = picklistSub();
-    const tabs = [["alliance", "Alliance selection"], ["tierlist", "Tierlist"], ["scouters", "Scouters lists"]];
-    const bar = `<div class="subtabs" id="pickTabs">
-      ${tabs.map(([k, l]) => `<a href="#/picklist/${k}" class="${sub === k ? "on" : ""}">${esc(l)}</a>`).join("")}</div>`;
+    const tabs = [["alliance", "Alliance selection", "chess"], ["tierlist", "Tier list", "list"], ["scouters", "Scouters' lists", "teams"]];
+    const ev = Store.getSettings().eventName;
+    const bar = pageHero({ ic: "list", eyebrow: "Pick list", title: ev ? esc(ev) : "No event selected",
+        sub: ev ? "Your alliance board and tier list are saved for this event. Switch events and you get a fresh set; switch back and they return." : "Pick an event in the sidebar to start building lists." }) +
+      `<div class="subtabs" id="pickTabs">
+      ${tabs.map(([k, l, ic]) => `<a href="#/picklist/${k}" class="${sub === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}</div>`;
 
     if (!teams.length && sub !== "scouters") {
       root.innerHTML = bar + `<div class="card">${emptyState("list", "No event teams",
@@ -2653,7 +3008,7 @@
             <div class="pool-filters">
               <input type="search" id="poolSearch" placeholder="Search team…" value="${esc(poolSearch)}" />
               <details class="filter-multi" id="traitFilter">
-                <summary>${icon("search")} Traits${activeCount ? ` <span class="badge cyan">${activeCount}</span>` : ""}</summary>
+                <summary>${icon("search")} Filter${activeCount ? ` <span class="badge cyan">${activeCount}</span>` : ""}</summary>
                 <div class="fm-panel">
                   ${traitOpts.map((o) => `<label class="fm-opt"><input type="checkbox" data-token="${esc(o.token)}" ${poolTraits.includes(o.token) ? "checked" : ""} /> ${esc(o.label)}</label>`).join("")}
                 </div>
@@ -2680,12 +3035,13 @@
       abBody.innerHTML = bb.grid.map((row, a) => `<tr>
         <td class="ab-num">${a + 1}</td>
         ${row.map((t, c) => t
-          ? `<td class="ab-slot filled" data-a="${a}" data-c="${c}" data-team="${t}" draggable="true">
+          ? `<td class="ab-slot filled" data-a="${a}" data-c="${c}" data-team="${t}" data-tfill="${t}" draggable="true">
               <img class="team-avatar" data-avatar="${t}" alt="" /><span class="ab-team">${t}</span>
               <button class="slot-x" data-clear="${a}-${c}" aria-label="Clear">${icon("x")}</button></td>`
           : `<td class="ab-slot empty ${pickSelected ? "target" : ""}" data-a="${a}" data-c="${c}">${pickSelected ? "+" : "·"}</td>`).join("")}
       </tr>`).join("");
       paintAvatars(abBody, bb.grid.flat().filter(Boolean));
+      paintTeamFills(abBody, bb.grid.flat().filter(Boolean));
       wireBoard();
     }
     function placeTeam(team, a, c) {
@@ -2743,7 +3099,7 @@
       pool.sort((a, z) => (epaOf(z) ?? -1e9) - (epaOf(a) ?? -1e9));
       $("#poolCount", root).textContent = pool.length + " teams";
       poolList.innerHTML = pool.length ? pool.map((t) => `
-        <div class="pool-team ${pickSelected === t ? "sel" : ""}" draggable="true" data-team="${t}">
+        <div class="pool-team ${pickSelected === t ? "sel" : ""}" draggable="true" data-team="${t}" data-tfill="${t}">
           <button class="pt-add" data-add="${t}" title="Add to an alliance slot" aria-label="Add ${t} to an alliance slot">${icon("plus")}</button>
           <button class="pt-main" data-stats="${t}">
             <img class="team-avatar" data-avatar="${t}" alt="" />
@@ -2753,6 +3109,7 @@
           <button class="pt-dnp" data-dnp="${t}" title="Do Not Pick" aria-label="Do Not Pick">${icon("x")}</button>
         </div>`).join("") : `<p class="muted" style="padding:10px">No teams match these filters.</p>`;
       paintAvatars(poolList, pool);
+      paintTeamFills(poolList, pool);
       $$(".pool-team", poolList).forEach((el) => {
         el.addEventListener("dragstart", () => { dragTeam = el.dataset.team; el.classList.add("dragging"); });
         el.addEventListener("dragend", () => { dragTeam = null; el.classList.remove("dragging"); });
@@ -2774,10 +3131,10 @@
     function drawDnp() {
       const bb = getBoard();
       dnpZone.innerHTML = bb.dnp.length ? bb.dnp.map((t) => `
-        <div class="dnp-item" data-team="${t}"><img class="team-avatar" data-avatar="${t}" alt="" /><span>${t}</span>
+        <div class="dnp-item" data-team="${t}" data-tfill="${t}"><img class="team-avatar" data-avatar="${t}" alt="" /><span>${t}</span>
           <button class="icon-btn sm" data-undnp="${t}" aria-label="Remove">${icon("x")}</button></div>`).join("")
         : `<p class="muted" style="padding:8px">Drag or tap-✕ teams here to exclude.</p>`;
-      paintAvatars(dnpZone, bb.dnp);
+      paintAvatars(dnpZone, bb.dnp); paintTeamFills(dnpZone, bb.dnp);
       $$("[data-undnp]", dnpZone).forEach((x) => x.onclick = () => { unmarkDNP(x.dataset.undnp); drawDnp(); drawPool(); });
       $$(".dnp-item", dnpZone).forEach((el) => el.onclick = (e) => { if (e.target.closest("button")) return; openTeam(el.dataset.team); });
     }
@@ -2848,7 +3205,7 @@
     let dragTeam = null;
 
     const teamCard = (t, ph) => `
-      <div class="tier-team ${tierSelected === t ? "sel" : ""}" draggable="true" data-team="${t}">
+      <div class="tier-team ${tierSelected === t ? "sel" : ""}" draggable="true" data-team="${t}" data-tfill="${t}">
         ${ph ? `<button class="tt-add" data-add="${t}" title="Add to a tier" aria-label="Add ${t} to a tier">${icon("plus")}</button>` : ""}
         <button class="tt-main" data-stats="${t}"><img class="team-avatar" data-avatar="${t}" alt="" /><span class="tt-num">${t}</span></button>
         ${ph ? `` : `<button class="tt-x" data-remove="${t}" aria-label="Remove">${icon("x")}</button>`}
@@ -2865,8 +3222,8 @@
       const pool = allTeams.filter((t) => !placed.has(t)).sort((a, z) => (epaOf(z) ?? -1e9) - (epaOf(a) ?? -1e9));
       $("#tierPoolCount", root).textContent = pool.length + " teams";
       poolEl.innerHTML = pool.length ? pool.map((t) => teamCard(t, true)).join("") : `<p class="muted" style="padding:8px">Every team is ranked.</p>`;
-      paintAvatars(board, [...placed]);
-      paintAvatars(poolEl, pool);
+      paintAvatars(board, [...placed]); paintTeamFills(board, [...placed]);
+      paintAvatars(poolEl, pool); paintTeamFills(poolEl, pool);
       wire();
     }
     function placeInTier(team, tier) {
@@ -2928,8 +3285,9 @@
     const me = Store.getMe(), out = [];
     const myB = getBoard();
     if (myB.submitted) out.push({ scouterId: me.id, name: scouterName(me), cols: myB.cols, grid: myB.grid, submittedAt: myB.submittedAt });
+    const ek = Store.getSettings().eventKey;
     (Cloud.getSharedBoards() || []).forEach((b) => {
-      if (b.scouterId === me.id) return;
+      if (b.scouterId === me.id || (b.event && b.event !== ek)) return; // only this event's boards
       // Cloud stores the grid as row maps ({cells}); rebuild the 2D grid for display.
       const grid = b.grid || (b.rows || []).map((r) => (r && r.cells) || []);
       out.push({ ...b, grid });
@@ -2939,8 +3297,9 @@
   function sharedTierlists() {
     const me = Store.getMe(), out = [];
     const myT = Store.getTierlist();
-    if (myT.submitted) out.push({ scouterId: me.id, name: scouterName(me), tiers: myT.tiers, submittedAt: myT.submittedAt });
-    (Cloud.getSharedTierlists() || []).forEach((t) => { if (t.scouterId !== me.id) out.push(t); });
+    if (myT && myT.submitted) out.push({ scouterId: me.id, name: scouterName(me), tiers: myT.tiers, submittedAt: myT.submittedAt });
+    const ek = Store.getSettings().eventKey;
+    (Cloud.getSharedTierlists() || []).forEach((t) => { if (t.scouterId !== me.id && (!t.event || t.event === ek)) out.push(t); });
     return out.sort((a, z) => (z.submittedAt || 0) - (a.submittedAt || 0));
   }
   function renderScoutersLists(root) {
@@ -2965,7 +3324,7 @@
       </div>`;
 
     root.innerHTML = `
-      <h2 style="margin-top:0">Scouters lists</h2>
+      <p class="hint" style="margin-top:0">Lists other scouts submitted for this event.</p>
       ${Cloud.enabled() ? "" : `<div class="card cloud-note">${icon("globe")}<span>Cloud sync is off, so this shows only your own submitted lists. Enable it in <b>js/config.js</b> to see everyone's.</span></div>`}
       <div class="section">
         <div class="section-head"><h3 style="margin:0">${icon("chess")} Alliance predictions</h3><span class="hint">${boards.length} submitted</span></div>
@@ -3030,7 +3389,7 @@
      #/data/search/team/<num>      one team's scouting report
      #/data/search/scouter/<id>    everything one scouter recorded
      #/data/spreadsheet            the full sortable tables + CSV export     */
-  let dsQuery = "", dsMode = "teams", lastDataSig = "";
+  let dsQuery = "", lastDataSig = "";
   function dataRoute() {
     const p = location.hash.replace(/^#\/?/, "").split("/");
     return { sub: p[1] === "spreadsheet" ? "spreadsheet" : "search", kind: p[2] || "", id: decodeURIComponent(p[3] || "") };
@@ -3052,7 +3411,7 @@
     const body = $("#dataBody", root);
     if (r.sub === "spreadsheet") renderDataSheet(body);
     else if (r.kind === "team" && r.id) renderDataTeam(body, r.id);
-    else if (r.kind === "scouter" && r.id) renderDataScouter(body, r.id);
+    else if (r.kind === "scouter" && r.id) { location.replace("#/members/scouters/" + encodeURIComponent(r.id)); return; } // moved to Members
     else renderDataSearch(body);
   }
 
@@ -3096,73 +3455,40 @@
     const scouted = allScoutedTeams();
     const mCount = {}; ms.forEach((m) => { const t = String(m.team); mCount[t] = (mCount[t] || 0) + 1; });
     const evOnly = eventTeams().map((t) => String(t.team_number)).filter((t) => !scouted.includes(t));
-    const scouters = allScouters().map((sc) => ({ sc, m: matchCountOf(sc), p: pitCountOf(sc) }))
-      .filter((x) => x.m || x.p).sort((a, b) => (b.m + b.p) - (a.m + a.p));
     body.innerHTML = `
       <div class="card ds-top">
         <label class="ds-search" for="dsInput">${icon("search")}
-          <input id="dsInput" type="search" autocomplete="off" placeholder="Search a team number or name, or a scouter's name…" value="${esc(dsQuery)}" />
+          <input id="dsInput" type="search" autocomplete="off" placeholder="Search a team number or name…" value="${esc(dsQuery)}" />
         </label>
-        <div class="ds-modes" role="tablist">
-          <button data-mode="teams" class="${dsMode === "teams" ? "on" : ""}" role="tab">${icon("bagel")} Teams <b>${scouted.length}</b></button>
-          <button data-mode="scouters" class="${dsMode === "scouters" ? "on" : ""}" role="tab">${icon("user")} Scouters <b>${scouters.length}</b></button>
-        </div>
+        <span class="hint">${scouted.length} teams scouted · scouters are in <a href="#/members/scouters">Members → Scouters</a></span>
       </div>
       <div id="dsResults"></div>`;
     const res = $("#dsResults", body), input = $("#dsInput", body);
-    const teamTile = (t, dim) => {
+    const meta = (t, dim) => {
       const n = mCount[t] || 0, p = !!pits[t];
-      return `<button class="ds-team${dim ? " dim" : ""}" data-dteam="${esc(t)}" data-tfill="${esc(t)}">
-        <img class="team-avatar" data-avatar="${esc(t)}" alt="" />
-        <span class="ds-num">${esc(t)}</span>
-        <span class="ds-name">${esc(nameFor(t)) || "&nbsp;"}</span>
-        <span class="ds-meta">${dim ? "No data yet" : `${n} match${n === 1 ? "" : "es"}${p ? ` · ${icon("check")} pit` : ""}`}</span>
-      </button>`;
+      return dim ? "No data yet" : `${n} match${n === 1 ? "" : "es"}${p ? ` · ${icon("check")} pit` : ""}`;
     };
-    const scouterTile = (x) => `<button class="ds-scouter" data-dscouter="${esc(x.sc.id)}">
-        ${scouterAvatar(x.sc, "sc-avatar")}
-        <span class="ds-sname">${esc(scouterName(x.sc))}</span>
-        <span class="ds-meta"><b>${x.m}</b> matches · <b>${x.p}</b> pits</span>
-      </button>`;
     const draw = () => {
       const q = dsQuery.trim().toLowerCase();
       const tMatch = (t) => !q || t.includes(q) || nameFor(t).toLowerCase().includes(q);
-      const sMatch = (x) => !q || scouterName(x.sc).toLowerCase().includes(q);
       const tList = scouted.filter(tMatch), eList = evOnly.filter(tMatch);
-      const sList = q
-        ? allScouters().filter((sc) => scouterName(sc).toLowerCase().includes(q)).map((sc) => ({ sc, m: matchCountOf(sc), p: pitCountOf(sc) }))
-        : scouters;
-      const teamsBlock = (tList.length || eList.length) ? `
+      const html = (tList.length || eList.length) ? `
         ${tList.length ? `<div class="ds-section"><h3>${icon("bagel")} ${q ? "Teams" : "Scouted teams"} <span class="muted">${tList.length}</span></h3>
-          <div class="ds-grid">${tList.map((t) => teamTile(t)).join("")}</div></div>` : ""}
+          <div class="ds-grid">${tList.map((t, i) => teamTileHTML(t, meta(t), { style: `animation-delay:${Math.min(i, 24) * 18}ms` })).join("")}</div></div>` : ""}
         ${eList.length ? `<div class="ds-section"><h3>${icon("calendar")} At this event, no data yet <span class="muted">${eList.length}</span></h3>
-          <div class="ds-grid">${eList.map((t) => teamTile(t, true)).join("")}</div></div>` : ""}` : "";
-      const scoutersBlock = sList.length ? `<div class="ds-section"><h3>${icon("user")} Scouters <span class="muted">${sList.length}</span></h3>
-          <div class="ds-sgrid">${sList.map(scouterTile).join("")}</div></div>` : "";
-      let html;
-      if (q) html = teamsBlock + scoutersBlock;
-      else html = dsMode === "scouters" ? scoutersBlock : teamsBlock;
+          <div class="ds-grid">${eList.map((t) => teamTileHTML(t, meta(t, true), { dim: true })).join("")}</div></div>` : ""}` : "";
       res.innerHTML = html || `<div class="card">${emptyState("search", q ? "No matches" : "Nothing scouted yet",
-        q ? `Nothing matches “${dsQuery.trim()}”. Try a team number or a scouter's name.` : "Teams and scouters appear here as soon as scouting data comes in.")}</div>`;
-      $$("[data-dteam]", res).forEach((b) => b.onclick = () => { location.hash = "#/data/search/team/" + b.dataset.dteam; });
-      $$("[data-dscouter]", res).forEach((b) => b.onclick = () => { location.hash = "#/data/search/scouter/" + encodeURIComponent(b.dataset.dscouter); });
-      const shown = [...tList, ...eList];
-      paintAvatars(res, shown);
-      paintTeamFills(res, shown);
+        q ? `Nothing matches “${dsQuery.trim()}”. Try a team number or name.` : "Teams appear here as soon as scouting data comes in.")}</div>`;
+      wireTeamTiles(res, (t) => { location.hash = "#/data/search/team/" + t; });
     };
     input.oninput = () => { dsQuery = input.value; draw(); };
     input.onkeydown = (e) => {
       if (e.key !== "Enter") return;
       const q = dsQuery.trim();
-      const tiles = $$("[data-dteam], [data-dscouter]", res);
+      const tiles = $$("[data-tteam]", res);
       if (/^\d+$/.test(q) && scouted.concat(evOnly).includes(q)) location.hash = "#/data/search/team/" + q;
       else if (tiles.length === 1) tiles[0].click();
     };
-    $$("[data-mode]", body).forEach((b) => b.onclick = () => {
-      dsMode = b.dataset.mode;
-      $$("[data-mode]", body).forEach((x) => x.classList.toggle("on", x === b));
-      draw();
-    });
     draw();
     // After the router's own view.focus(), put the cursor in the search box (desktop only).
     if (!(window.matchMedia && matchMedia("(pointer: coarse)").matches)) setTimeout(() => {
@@ -3207,7 +3533,8 @@
     paintTeamFills(body, [team]);
   }
 
-  function renderDataScouter(body, id) {
+  // One scouter's full record (Members → Scouters → a scouter). backHash = where "Back" goes.
+  function renderScouterReport(body, id, backHash) {
     const sc = allScouters().find((s) => String(s.id) === String(id));
     if (!sc) { body.innerHTML = `<div class="card">${emptyState("user", "Scouter not found", "They may have been removed.")}</div>`; return; }
     const nm = scouterName(sc).toLowerCase();
@@ -3216,7 +3543,8 @@
     const ps = Object.values(allPits()).filter(mine).sort((a, b) => (b.ts || 0) - (a.ts || 0));
     const teams = [...new Set([...ms.map((m) => String(m.team)), ...ps.map((p) => String(p.team))])].sort((a, b) => a - b);
     body.innerHTML = `
-      <div class="ds-crumbs"><button class="btn ghost sm" id="dsBack">${icon("chevron-left")} All scouters</button></div>
+      <div class="ds-crumbs"><button class="btn ghost sm" id="dsBack">${icon("chevron-left")} All scouters</button>
+        <a class="btn ghost sm" href="#/members/profile/${encodeURIComponent(sc.id)}">${icon("user")} Profile</a></div>
       <div class="card ds-shero">
         ${scouterAvatar(sc, "ph-avatar")}
         <div class="ds-shero-id">
@@ -3224,10 +3552,10 @@
           <span class="ds-shero-sub">${sc.lastSeen ? "Last seen " + esc(timeAgo(sc.lastSeen)) : "Scouter"}</span>
         </div>
         <div class="ds-shero-stats">
-          <div><b>${ms.length}</b><span>matches</span></div>
-          <div><b>${ps.length}</b><span>pits</span></div>
-          <div><b>${teams.length}</b><span>teams</span></div>
-          <div><b>${sc.bb || 0}</b><span>${BB}</span></div>
+          <div><b data-count="${ms.length}">${ms.length}</b><span>matches</span></div>
+          <div><b data-count="${ps.length}">${ps.length}</b><span>pits</span></div>
+          <div><b data-count="${teams.length}">${teams.length}</b><span>teams</span></div>
+          <div><b data-count="${sc.bb || 0}">${sc.bb || 0}</b><span>${BB}</span></div>
         </div>
       </div>
       ${teams.length ? `<div class="ds-section"><h3>${icon("bagel")} Teams they scouted <span class="muted">${teams.length}</span></h3>
@@ -3257,10 +3585,11 @@
             </button>`).join("")}</div>` : `<p class="muted">No pit entries this season.</p>`}
         </div>
       </div>`;
-    $("#dsBack", body).onclick = () => { dsMode = "scouters"; location.hash = "#/data/search"; };
+    $("#dsBack", body).onclick = () => { location.hash = backHash || "#/members/scouters"; };
     $$("[data-dteam]", body).forEach((b) => b.onclick = () => { location.hash = "#/data/search/team/" + b.dataset.dteam; });
     paintAvatars(body, teams);
     paintTeamFills(body, teams);
+    countUp(body);
   }
 
   /* ---- Team scouting report (Data → Search team view, team profile) ----------
@@ -4610,38 +4939,30 @@
      ======================================================================== */
   function renderSettings(root) {
     const s = Store.getSettings();
-    const year = GAME.season;
+    const u = Auth.currentUser();
     root.innerHTML = `
-      <div class="grid cols-2">
-        <div class="card"><h2>The Blue Alliance</h2>
-          <div>${API.hasKey()
-            ? `<span class="badge green dot">Connected</span> <span class="hint">Built-in team key — scouts don't need to enter anything.</span>`
-            : `<span class="badge red dot">No key set</span> <span class="hint">Paste your key in <code>js/config.js</code>, or add one below for just this device.</span>`}</div>
-          <div class="btn-row" style="margin-top:12px">
-            <button class="btn ghost sm" id="testKey">${icon("check")} Test connection</button>
-            <span id="keyStatus" class="hint"></span>
+      ${pageHero({ ic: "settings", eyebrow: "Settings", title: "Make it yours", sub: "Theme, season and data connections for this device." })}
+      <div class="st-grid">
+        <section class="card st-card">
+          <div class="sr-head"><h3>${icon("sun")} Appearance</h3></div>
+          <div class="st-theme" id="setTheme">
+            <button data-v="dark" class="st-theme-opt dark${s.theme !== "light" ? " on" : ""}"><span class="st-swatch"></span><b>Dark</b><span>Easy on the eyes in the stands</span></button>
+            <button data-v="light" class="st-theme-opt light${s.theme === "light" ? " on" : ""}"><span class="st-swatch"></span><b>Light</b><span>Bright pits &amp; outdoors</span></button>
           </div>
-          <details style="margin-top:14px">
-            <summary class="hint" style="cursor:pointer">Advanced: use my own key on this device</summary>
-            <p class="hint" style="margin-top:8px">Overrides the built-in key, stored only in this browser. Get one at
-              <a href="https://www.thebluealliance.com/account" target="_blank" rel="noopener">thebluealliance.com/account</a>.</p>
-            <div class="field"><input type="password" id="setKey" value="${esc(s.tbaKey || "")}" placeholder="Paste a Read API key" autocomplete="off" /></div>
-            <button class="btn primary sm" id="saveKey">${icon("check")} Save override</button>
-          </details>
-        </div>
-        <div class="card"><h2>Preferences</h2>
-          <div class="field"><label>Theme</label>
-            <div class="pill-toggle" id="setTheme">
-              <button data-v="dark" class="${s.theme !== "light" ? "on" : ""}">Dark</button>
-              <button data-v="light" class="${s.theme === "light" ? "on" : ""}">Light</button></div></div>
-        </div>
+        </section>
+        <section class="card st-card">
+          <div class="sr-head"><h3>${icon("user")} Account</h3></div>
+          <div class="st-acct">
+            ${scouterAvatar(Store.getMe(), "sc-avatar")}
+            <div><b>${esc(u ? u.first + " " + u.last : "Guest")}</b><span class="hint">Signed in on this device</span></div>
+            <a class="btn ghost sm" href="#/members/profile">${icon("user")} Profile</a>
+          </div>
+          <button class="btn danger sm" id="stLogout" style="margin-top:12px">${icon("logout")} Log out</button>
+        </section>
       </div>
 
-      <div class="card" style="margin-top:16px">
-        <div class="section-head">
-          <div class="row" style="gap:10px">${icon("clock")}<h2 style="margin:0">Season</h2></div>
-          <span class="badge yellow">Viewing ${esc(GAME.seasonLabel)}</span>
-        </div>
+      <section class="card st-card" style="margin-top:16px">
+        <div class="sr-head"><h3>${icon("clock")} Season</h3><span class="badge yellow">Viewing ${esc(GAME.seasonLabel)}</span></div>
         <p class="hint" style="margin-top:0">Each year's scouting, pit data, forms, stats, EPA and pick lists are kept completely separate, and switching never deletes anything.
           Accounts and Bagel Bucks are shared by every year. This only changes the year on <b>this device</b>.</p>
         <div class="season-tiles">
@@ -4652,102 +4973,50 @@
               <span class="st-state">${g.season === GAME.season ? `${icon("check")} Viewing` : "Switch to this year"}</span>
             </button>`).join("")}
         </div>
-      </div>
+      </section>
 
-      <div class="card" style="margin-top:16px"><h2>${icon("calendar")} Event</h2>
-        <p class="hint">Load an event to pull its full team list & match schedule. Do this at home with wifi — it's cached for offline use at the venue.</p>
-        <div class="row" style="margin-bottom:12px">
-          <button class="btn ghost sm" id="loadEvents">${icon("search")} Load ${year} events</button>
-          ${s.eventName ? `<span class="badge yellow dot">Current: ${esc(s.eventName)}</span>` : ""}
+      <section class="card st-card" style="margin-top:16px">
+        <div class="sr-head"><h3>${icon("globe")} The Blue Alliance</h3>
+          ${API.hasKey() ? `<span class="badge green dot">Connected</span>` : `<span class="badge red dot">No key set</span>`}</div>
+        <p class="hint" style="margin-top:0">${API.hasKey() ? "Built-in team key. Scouts don't need to enter anything." : "Paste your key in <code>js/config.js</code>, or add one below for just this device."}
+          Events are chosen from the event chip in the sidebar.</p>
+        <div class="btn-row">
+          <button class="btn ghost sm" id="testKey">${icon("check")} Test connection</button>
+          <span id="keyStatus" class="hint"></span>
         </div>
-        <div class="field" style="max-width:520px"><input type="search" id="evFilter" placeholder="Filter events by name / city…" /></div>
-        <div id="eventList"></div>
-      </div>
+        <details style="margin-top:14px">
+          <summary class="hint" style="cursor:pointer">Advanced: use my own key on this device</summary>
+          <p class="hint" style="margin-top:8px">Overrides the built-in key, stored only in this browser. Get one at
+            <a href="https://www.thebluealliance.com/account" target="_blank" rel="noopener">thebluealliance.com/account</a>.</p>
+          <div class="field"><input type="password" id="setKey" value="${esc(s.tbaKey || "")}" placeholder="Paste a Read API key" autocomplete="off" /></div>
+          <button class="btn primary sm" id="saveKey">${icon("check")} Save override</button>
+        </details>
+      </section>`;
 
-      <div class="card" style="margin-top:16px"><h2>${icon("wrench")} Pit map</h2>
-        <p class="hint">Paste a link to your event's pit-map image (e.g. from Nexus, the event page, or a photo you host).
-          The Pit Scouting page shows it above a team grid that turns green as pits get scouted.</p>
-        <div class="field inline"><div><label>Show pit map</label><span class="help">Turn off for events with no map.</span></div>
-          <label class="switch"><input type="checkbox" id="setPitMapOn" ${s.pitMapEnabled ? "checked" : ""}><span class="slider"></span></label></div>
-        <div class="field"><label>Pit map image URL</label>
-          <input type="text" id="setPitMapUrl" value="${esc(s.pitMapUrl || "")}" placeholder="https://…/pit-map.png" /></div>
-        <button class="btn primary sm" id="savePitMap">${icon("check")} Save pit map</button>
-      </div>`;
-
-    const testKeyBtn = $("#testKey", root);
-    if (testKeyBtn) testKeyBtn.onclick = async () => {
+    $("#testKey", root).onclick = async () => {
       const st = $("#keyStatus", root);
       if (!API.hasKey()) { st.innerHTML = `<span style="color:var(--danger)">No key set — see js/config.js</span>`; return; }
       st.textContent = "Testing…";
       try { await API.verifyKey(); st.innerHTML = `<span style="color:var(--success)">✓ Connection OK</span>`; toast("The Blue Alliance connected"); }
       catch (e) { st.innerHTML = `<span style="color:var(--danger)">✗ ${e.message === "BAD_KEY" ? "Invalid key" : "Couldn't connect (offline?)"}</span>`; }
     };
-    const saveKeyBtn = $("#saveKey", root);
-    if (saveKeyBtn) saveKeyBtn.onclick = async () => {
+    $("#saveKey", root).onclick = () => {
       const key = $("#setKey", root).value.trim();
       Store.setSettings({ tbaKey: key });
       toast(key ? "Personal key saved" : "Override cleared — using built-in key");
       renderSettings(root);
     };
-    $("#savePitMap", root).onclick = () => {
-      Store.setSettings({ pitMapUrl: $("#setPitMapUrl", root).value.trim(), pitMapEnabled: $("#setPitMapOn", root).checked });
-      toast("Pit map saved");
-    };
-    $$("#setTheme button", root).forEach((b) => b.onclick = () => {
-      $$("#setTheme button", root).forEach((x) => x.classList.toggle("on", x === b));
+    $$("#setTheme [data-v]", root).forEach((b) => b.onclick = () => {
+      $$("#setTheme [data-v]", root).forEach((x) => x.classList.toggle("on", x === b));
       applyTheme(b.dataset.v); Store.setSettings({ theme: b.dataset.v }); refreshChrome();
     });
+    $("#stLogout", root).onclick = () => confirmDialog("Log out of the scouting app?", () => Auth.logout());
     $$("[data-season]", root).forEach((b) => b.onclick = () => {
       const y = Number(b.dataset.season);
       if (y === GAME.season) return;
       confirmDialog(`Switch this device to the ${y} season? You'll see ${y}'s data only. ${GAME.season}'s data stays saved and comes back when you switch again. The app will reload.`,
         () => Store.setSeason(y));
     });
-
-    let eventsCache = [];
-    const drawEvents = (filter = "") => {
-      const el = $("#eventList", root);
-      const f = filter.toLowerCase();
-      const list = eventsCache.filter((e) => !f || (e.name || "").toLowerCase().includes(f) ||
-        (e.city || "").toLowerCase().includes(f) || (e.key || "").toLowerCase().includes(f)).slice(0, 60);
-      if (!list.length) { el.innerHTML = `<p class="muted">${eventsCache.length ? "No matches." : "Click “Load events” above."}</p>`; return; }
-      el.innerHTML = `<div class="table-wrap" style="max-height:420px;overflow:auto"><table>
-        <thead><tr><th>Event</th><th>Location</th><th>Dates</th><th></th></tr></thead>
-        <tbody>${list.map((e) => `<tr>
-          <td><b>${esc(e.name || e.key)}</b></td>
-          <td class="muted">${esc([e.city, e.state_prov, e.country].filter(Boolean).join(", "))}</td>
-          <td class="muted">${esc(e.start_date || "")}</td>
-          <td><button class="btn primary sm" data-ev="${esc(e.key)}" data-name="${esc(e.name || e.key)}">Select</button></td>
-        </tr>`).join("")}</tbody></table></div>`;
-      $$("[data-ev]", el).forEach((b) => b.onclick = () => selectEvent(b.dataset.ev, b.dataset.name));
-    };
-
-    $("#loadEvents", root).onclick = async () => {
-      if (!API.hasKey()) { toast("No TBA key set — paste one in js/config.js", "err"); return; }
-      const el = $("#eventList", root); el.innerHTML = `<p class="muted">Loading ${year} events…</p>`;
-      try {
-        const { events, fromCache } = await API.getEvents(year);
-        eventsCache = events; drawEvents($("#evFilter", root).value);
-        if (fromCache) toast("Loaded events from cache (offline)");
-      } catch (e) {
-        el.innerHTML = `<p style="color:var(--danger)">${e.message === "NO_KEY" ? "Add your TBA key first." :
-          e.message === "BAD_KEY" ? "That TBA key is invalid." : "Couldn't load events (offline & no cache)."}</p>`;
-      }
-    };
-    $("#evFilter", root).oninput = (e) => drawEvents(e.target.value);
-
-    async function selectEvent(key, name) {
-      Store.setSettings({ eventKey: key, eventName: name });
-      refreshChrome();
-      toast("Loading team list & schedule…");
-      try {
-        await API.getEventTeams(key);
-        await API.getEventMatches(key);
-        // warm the color cache for the roster
-        API.getTeamColors(eventTeams().map((t) => t.team_number));
-        toast(`Event set: ${name}`);
-      } catch (e) { toast("Event set, but team list needs wifi to load", "err"); }
-    }
   }
 
   /* ===========================================================================

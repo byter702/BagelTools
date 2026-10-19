@@ -192,15 +192,26 @@ const Store = (() => {
     idbDel(team);
   }
 
-  // ---- Pick list ----------------------------------------------------------
-  // picklist: { ranked: [teamNum, ...], dnp: [teamNum, ...], notes: {team: str} }
-  function getPicklist() { return read("picklist", { ranked: [], dnp: [], notes: {} }); }
-  function setPicklist(pl) { write("picklist", pl); }
-
-  // ---- Tier list (S–F) ----------------------------------------------------
-  // tierlist: { tiers: { S:[team,...], A:[], ... F:[] }, submitted, submittedAt }
-  function getTierlist() { return read("tierlist", { tiers: {}, submitted: false, submittedAt: null }); }
-  function setTierlist(tl) { write("tierlist", tl); }
+  // ---- Pick list + tier list: saved PER EVENT ------------------------------
+  // picklists: { [eventKey]: { cols, grid, dnp, submitted, submittedAt } }
+  // tierlists: { [eventKey]: { tiers: { S:[team,...], … F:[] }, submitted, submittedAt } }
+  // Switching events shows that event's lists (blank for a new event); switching
+  // back brings them back. The old single "picklist"/"tierlist" is moved onto the
+  // event selected the first time this runs.
+  const evKey = () => getSettings().eventKey || "_none";
+  function listMap(name) { const a = read(name, null); return a && typeof a === "object" && !Array.isArray(a) ? a : {}; }
+  function migrateList(legacy, mapName) {
+    const old = read(legacy, null);
+    if (old == null) return;
+    const all = listMap(mapName);
+    if (!all[evKey()]) all[evKey()] = old;
+    write(mapName, all);
+    try { localStorage.removeItem(k(legacy)); } catch (e) {}
+  }
+  function getPicklist() { migrateList("picklist", "picklists"); return listMap("picklists")[evKey()] || { dnp: [] }; }
+  function setPicklist(pl) { const all = listMap("picklists"); all[evKey()] = pl; write("picklists", all); }
+  function getTierlist() { migrateList("tierlist", "tierlists"); return listMap("tierlists")[evKey()] || { tiers: {}, submitted: false, submittedAt: null }; }
+  function setTierlist(tl) { const all = listMap("tierlists"); all[evKey()] = tl; write("tierlists", all); }
 
   // ---- Bagel Bucks: admin event approval ----------------------------------
   // Only events the admin has approved (AND that are live) let scouts earn BB.
@@ -418,8 +429,8 @@ const Store = (() => {
     if (mode === "replace") {
       write("matches", obj.matches || []);
       write("pits", obj.pits || {}); stashInlinePhotos();
-      write("picklist", obj.picklist || { ranked: [], dnp: [], notes: {} });
-      if (obj.tierlist) write("tierlist", obj.tierlist);
+      setPicklist(obj.picklist || { dnp: [] });
+      if (obj.tierlist) setTierlist(obj.tierlist);
       write("strategy", obj.strategy || {});
       write("members", obj.members || {});
       write("requests", obj.requests || {});
@@ -447,13 +458,9 @@ const Store = (() => {
       // custom forms: adopt an incoming one only if we don't have our own
       if (obj.pitSchema && !getPitSchema()) write("pitSchema", obj.pitSchema);
       if (obj.matchSchema && !getMatchSchema()) write("matchSchema", obj.matchSchema);
-      // picklist: only import if we currently have none
-      const cur = getPicklist();
-      if (!cur.ranked.length && obj.picklist) write("picklist", obj.picklist);
-      // tier list: adopt an incoming one only if we don't have our own
-      const curTl = getTierlist();
-      const hasTl = curTl && curTl.tiers && Object.values(curTl.tiers).some((a) => Array.isArray(a) && a.length);
-      if (!hasTl && obj.tierlist) write("tierlist", obj.tierlist);
+      // pick list / tier list: adopt incoming ones only if this event has none yet
+      if (obj.picklist && !listMap("picklists")[evKey()]) setPicklist(obj.picklist);
+      if (obj.tierlist && !listMap("tierlists")[evKey()]) setTierlist(obj.tierlist);
       // BB-approved events: union across devices
       if (Array.isArray(obj.bbApproved)) write("bbApproved", [...new Set([...getBBApproved(), ...obj.bbApproved])]);
       // scouter accounts: merge by name so the lead device aggregates everyone's
