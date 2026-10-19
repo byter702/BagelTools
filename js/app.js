@@ -595,9 +595,9 @@
     const u = Auth.currentUser();
     $("#scoutTag").innerHTML = u ? `Signed in: <b>${esc(u.first)} ${esc(u.last)}</b>`
       : (s.scoutName ? `Scout: <b>${esc(s.scoutName)}</b>` : "");
-    $("#eventChip").innerHTML = s.eventName
-      ? `Event<br><b>${esc(s.eventName)}</b>`
-      : `No event selected`;
+    const altSeason = GAME.season !== (Number(window.CONFIG && CONFIG.defaultSeason) || 2026);
+    $("#eventChip").innerHTML = `<span class="ec-season${altSeason ? " alt" : ""}">${esc(GAME.seasonLabel)}</span>` +
+      (s.eventName ? `<b>${esc(s.eventName)}</b>` : `No event selected`);
     const themeBtn = $("#themeToggle");
     const dark = document.documentElement.getAttribute("data-theme") !== "light";
     themeBtn.querySelector("use").setAttribute("href", dark ? "#ic-moon" : "#ic-sun");
@@ -841,6 +841,8 @@
   function emptyState(ic, title, sub) {
     return `<div class="empty">${icon(ic, "ico")}<h3>${esc(title)}</h3><p class="muted">${esc(sub)}</p></div>`;
   }
+  // True before a season's competitions begin (no official matches → no EPA yet).
+  const seasonUpcoming = () => Date.now() < Date.UTC(GAME.season, 2, 1);
   function recentMatchesTable(list) {
     if (!list.length) return emptyState("clipboard", "Nothing yet", "New match records show up here.");
     return `<div class="table-wrap"><table>
@@ -877,15 +879,19 @@
   // Counts are derived from the SHARED cloud data (by scouterId) so they're the
   // same on every device; fall back to the stored per-device count only if there
   // are no cloud records tagged with this scouter (e.g. older data).
+  // The stored per-device counters/lists predate seasons (they're 2026 numbers), so
+  // they're only a fallback while viewing 2026 — other years start from zero.
+  const baseSeason = () => Store.season === Store.BASE_SEASON;
   const matchCountOf = (sc) => {
     const id = sc && sc.id;
     const n = id ? allMatches().filter((m) => String(m.scouterId) === String(id)).length : 0;
-    return n || (sc && sc.matchCount) || 0;
+    return n || (baseSeason() && sc && sc.matchCount) || 0;
   };
   const pitCountOf = (sc) => {
     const id = sc && sc.id;
     const n = id ? Object.values(allPits()).filter((p) => String(p.scouterId) === String(id)).length : 0;
-    return n || (sc && sc.pitScoutedTeams || []).length || (sc && sc.pitCount) || 0;
+    if (n || !baseSeason()) return n;
+    return (sc && sc.pitScoutedTeams || []).length || (sc && sc.pitCount) || 0;
   };
   // "Last teams" lists, also derived from the SHARED cloud records (by scouterId)
   // so they show every team this account scouted across all its devices, newest
@@ -906,12 +912,12 @@
   const lastMatchTeamsOf = (sc) => {
     const id = sc && sc.id;
     const list = id ? lastTeamsFrom(allMatches(), id) : [];
-    return list.length ? list : (sc && sc.lastMatchTeams) || [];
+    return list.length || !baseSeason() ? list : (sc && sc.lastMatchTeams) || [];
   };
   const lastPitTeamsOf = (sc) => {
     const id = sc && sc.id;
     const list = id ? lastTeamsFrom(Object.values(allPits()), id) : [];
-    return list.length ? list : (sc && sc.lastPitTeams) || [];
+    return list.length || !baseSeason() ? list : (sc && sc.lastPitTeams) || [];
   };
 
   function renderMembers(root) {
@@ -2943,6 +2949,11 @@
       const res = await API.sbYearLeaderboard(GAME.season);
       lb = res.rows; fromCache = res.fromCache;
     } catch (e) {
+      if (!lb && seasonUpcoming()) {
+        body.innerHTML = `<div class="card">${emptyState("clock", `No ${GAME.season} EPA yet`,
+          `Statbotics publishes ${GAME.season} EPA once the season's matches start. Check back after the first events in March.`)}</div>`;
+        return;
+      }
       if (!lb) {
         body.innerHTML = `<div class="card">${emptyState("globe", "Statbotics is unavailable",
           "The world/state leaderboards come from Statbotics' API, which isn't responding right now. Cached data will appear here once it loads successfully.")}
@@ -3837,6 +3848,23 @@
         </div>
       </div>
 
+      <div class="card" style="margin-top:16px">
+        <div class="section-head">
+          <div class="row" style="gap:10px">${icon("clock")}<h2 style="margin:0">Season</h2></div>
+          <span class="badge yellow">Viewing ${esc(GAME.seasonLabel)}</span>
+        </div>
+        <p class="hint" style="margin-top:0">Each year's scouting, pit data, forms, stats, EPA and pick lists are kept completely separate, and switching never deletes anything.
+          Accounts and Bagel Bucks are shared by every year. This only changes the year on <b>this device</b>.</p>
+        <div class="season-tiles">
+          ${(window.SEASONS || [GAME]).map((g) => `
+            <button class="season-tile${g.season === GAME.season ? " on" : ""}" data-season="${g.season}" ${g.season === GAME.season ? 'aria-current="true"' : ""}>
+              <span class="st-year">${g.season}</span>
+              <span class="st-name">${esc(g.name)}</span>
+              <span class="st-state">${g.season === GAME.season ? `${icon("check")} Viewing` : "Switch to this year"}</span>
+            </button>`).join("")}
+        </div>
+      </div>
+
       <div class="card" style="margin-top:16px"><h2>${icon("calendar")} Event</h2>
         <p class="hint">Load an event to pull its full team list & match schedule. Do this at home with wifi — it's cached for offline use at the venue.</p>
         <div class="row" style="margin-bottom:12px">
@@ -3879,6 +3907,12 @@
     $$("#setTheme button", root).forEach((b) => b.onclick = () => {
       $$("#setTheme button", root).forEach((x) => x.classList.toggle("on", x === b));
       applyTheme(b.dataset.v); Store.setSettings({ theme: b.dataset.v }); refreshChrome();
+    });
+    $$("[data-season]", root).forEach((b) => b.onclick = () => {
+      const y = Number(b.dataset.season);
+      if (y === GAME.season) return;
+      confirmDialog(`Switch this device to the ${y} season? You'll see ${y}'s data only. ${GAME.season}'s data stays saved and comes back when you switch again. The app will reload.`,
+        () => Store.setSeason(y));
     });
 
     let eventsCache = [];

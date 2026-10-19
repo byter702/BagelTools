@@ -19,6 +19,12 @@
   "use strict";
 
   var CFG = (window.CONFIG && window.CONFIG.firebaseConfig) || {};
+  // Seasons are stored separately: 2026 uses the original collection/doc names,
+  // other years get a "_<year>" suffix (matches_2027, config/matchForm_2027, …).
+  // scouters (accounts + Bagel Bucks), creds and config/roster are shared by all years.
+  var SEASON = (window.GAME && window.GAME.season) || 2026;
+  function col(name) { return SEASON === 2026 ? name : name + "_" + SEASON; }
+  function cfgId(name) { return SEASON === 2026 ? name : name + "_" + SEASON; }
   var configured = !!(CFG && CFG.apiKey && CFG.projectId &&
     typeof firebase !== "undefined" && firebase.initializeApp);
 
@@ -48,35 +54,35 @@
       fire();
     }, function (e) { log("scouters listen failed", e); });
 
-    db.collection("boards").onSnapshot(function (snap) {
+    db.collection(col("boards")).onSnapshot(function (snap) {
       cache.boards = snap.docs.map(function (d) { return d.data(); });
       fire();
     }, function (e) { log("boards listen failed", e); });
 
-    db.collection("tierlists").onSnapshot(function (snap) {
+    db.collection(col("tierlists")).onSnapshot(function (snap) {
       cache.tierlists = snap.docs.map(function (d) { return d.data(); });
       fire();
     }, function (e) { log("tierlists listen failed", e); });
 
-    db.collection("matches").onSnapshot(function (snap) {
+    db.collection(col("matches")).onSnapshot(function (snap) {
       cache.matches = snap.docs.map(function (d) { return d.data(); });
       fire();
     }, function (e) { log("matches listen failed", e); });
 
-    db.collection("pits").onSnapshot(function (snap) {
+    db.collection(col("pits")).onSnapshot(function (snap) {
       cache.pits = snap.docs.map(function (d) { return d.data(); });
       fire();
     }, function (e) { log("pits listen failed", e); });
 
     // Match claims: which team in which match is already being scouted (live lock).
-    db.collection("claims").onSnapshot(function (snap) {
+    db.collection(col("claims")).onSnapshot(function (snap) {
       cache.claims = snap.docs.map(function (d) { return d.data(); });
       fire();
     }, function (e) { log("claims listen failed", e); });
 
     // Activity feed: drives the global "someone just scouted" popup. The first
     // snapshot is a seed (don't pop up on page load); later additions notify.
-    db.collection("activity").orderBy("ts", "desc").limit(20).onSnapshot(function (snap) {
+    db.collection(col("activity")).orderBy("ts", "desc").limit(20).onSnapshot(function (snap) {
       cache.activity = snap.docs.map(function (d) { return d.data(); });
       if (!activitySeeded) { activitySeeded = true; return; }
       snap.docChanges().forEach(function (ch) {
@@ -98,7 +104,7 @@
         if (r && window.Store && Store.mergeRoster) Store.mergeRoster(r.members, r.requests);
         // Fold the shared Bagel Bucks approved-event list into local so every
         // device knows which events earn BB (admin approval is team-wide).
-        var bb = cache.config.bbApproved;
+        var bb = cache.config[cfgId("bbApproved")];
         if (bb && window.Store && Store.setBBApprovedList) Store.setBBApprovedList(bb.events || []);
       } catch (e) {}
       // First time: if the cloud has no shared form/roster yet but this device
@@ -106,13 +112,13 @@
       if (!cfgBootstrapped) {
         cfgBootstrapped = true;
         try {
-          if (!cache.config.matchForm && window.Store && Store.getMatchSchema && Store.getMatchSchema())
+          if (!cache.config[cfgId("matchForm")] && window.Store && Store.getMatchSchema && Store.getMatchSchema())
             Cloud.pushMatchForm(Store.getMatchSchema());
-          if (!cache.config.pitForm && window.Store && Store.getPitSchema && Store.getPitSchema())
+          if (!cache.config[cfgId("pitForm")] && window.Store && Store.getPitSchema && Store.getPitSchema())
             Cloud.pushPitForm(Store.getPitSchema());
           if (!cache.config.roster && window.Store && Store.getMembers)
             Cloud.pushRoster();
-          if (!cache.config.bbApproved && window.Store && Store.getBBApproved && Store.getBBApproved().length)
+          if (!cache.config[cfgId("bbApproved")] && window.Store && Store.getBBApproved && Store.getBBApproved().length)
             Cloud.pushBBApproved(Store.getBBApproved());
         } catch (e) {}
       }
@@ -193,7 +199,7 @@
         if (!rec || !rec.id) return;
         var doc = clean(rec);
         doc.scouterId = m ? m.id : (rec.scouterId || "");
-        batch.set(db.collection("matches").doc(String(rec.id)), doc, { merge: true });
+        batch.set(db.collection(col("matches")).doc(String(rec.id)), doc, { merge: true });
       });
       batch.commit().catch(function (e) { log("pushMatches failed", e); });
     },
@@ -208,7 +214,7 @@
         var doc = clean(pits[team]);
         doc.team = String(team);
         doc.scouterId = m ? m.id : (doc.scouterId || "");
-        batch.set(db.collection("pits").doc(String(team)), doc, { merge: true });
+        batch.set(db.collection(col("pits")).doc(String(team)), doc, { merge: true });
       });
       batch.commit().catch(function (e) { log("pushPits failed", e); });
     },
@@ -225,7 +231,7 @@
         event: eventKey(),
         submittedAt: b.submittedAt || Date.now(),
       });
-      db.collection("boards").doc(m.id).set(doc, { merge: true })
+      db.collection(col("boards")).doc(m.id).set(doc, { merge: true })
         .catch(function (e) { log("pushPicklist failed", e); });
     },
 
@@ -238,33 +244,33 @@
         tiers: t.tiers || {}, event: eventKey(),
         submittedAt: t.submittedAt || Date.now(),
       });
-      db.collection("tierlists").doc(m.id).set(doc, { merge: true })
+      db.collection(col("tierlists")).doc(m.id).set(doc, { merge: true })
         .catch(function (e) { log("pushTierlist failed", e); });
     },
 
     // ---- Admin config: shared form schemas + roster ----
     pushMatchForm: function (schema) {
       if (!this.enabled()) return;
-      db.collection("config").doc("matchForm")
+      db.collection("config").doc(cfgId("matchForm"))
         .set({ schema: clean(schema || []), updatedAt: Date.now() })
         .catch(function (e) { log("pushMatchForm failed", e); });
     },
     pushPitForm: function (schema) {
       if (!this.enabled()) return;
-      db.collection("config").doc("pitForm")
+      db.collection("config").doc(cfgId("pitForm"))
         .set({ schema: clean(schema || []), updatedAt: Date.now() })
         .catch(function (e) { log("pushPitForm failed", e); });
     },
     clearMatchForm: function () {
       if (!this.enabled()) return;
-      cache.config.matchForm = null;
-      db.collection("config").doc("matchForm").delete()
+      cache.config[cfgId("matchForm")] = null;
+      db.collection("config").doc(cfgId("matchForm")).delete()
         .catch(function (e) { log("clearMatchForm failed", e); });
     },
     clearPitForm: function () {
       if (!this.enabled()) return;
-      cache.config.pitForm = null;
-      db.collection("config").doc("pitForm").delete()
+      cache.config[cfgId("pitForm")] = null;
+      db.collection("config").doc(cfgId("pitForm")).delete()
         .catch(function (e) { log("clearPitForm failed", e); });
     },
 
@@ -274,7 +280,7 @@
     // the same matches deterministically from applyTestTime(currentQual).
     pushTestEvent: function (payload) {
       if (!this.enabled()) return;
-      db.collection("config").doc("testEvent")
+      db.collection("config").doc(cfgId("testEvent"))
         .set(clean({
           teams: (payload && payload.teams) || [],
           template: (payload && payload.template) || [],
@@ -290,16 +296,16 @@
       if (!this.enabled()) return;
       var patch = { currentQual: n, updatedAt: Date.now() };
       if (total != null) patch.total = total;
-      db.collection("config").doc("testEvent").set(patch, { merge: true })
+      db.collection("config").doc(cfgId("testEvent")).set(patch, { merge: true })
         .catch(function (e) { log("pushTestQual failed", e); });
     },
     clearTestEvent: function () {
       if (!this.enabled()) return;
-      cache.config.testEvent = null;
-      db.collection("config").doc("testEvent").delete()
+      cache.config[cfgId("testEvent")] = null;
+      db.collection("config").doc(cfgId("testEvent")).delete()
         .catch(function (e) { log("clearTestEvent failed", e); });
     },
-    getTestEvent: function () { return cache.config.testEvent || null; },
+    getTestEvent: function () { return cache.config[cfgId("testEvent")] || null; },
     pushRoster: function () {
       if (!this.enabled() || !window.Store) return;
       var members = (Store.getMembers && Store.getMembers()) || {};
@@ -311,7 +317,7 @@
     // Team-wide Bagel Bucks approval: which events earn BB (shared by the admin).
     pushBBApproved: function (events) {
       if (!this.enabled()) return;
-      db.collection("config").doc("bbApproved")
+      db.collection("config").doc(cfgId("bbApproved"))
         .set({ events: clean(events || []), updatedAt: Date.now() })
         .catch(function (e) { log("pushBBApproved failed", e); });
     },
@@ -330,7 +336,7 @@
     // Config docs (roster + form schemas) are intentionally left untouched.
     clearAllScoutingData: function () {
       if (!this.enabled()) return Promise.reject(new Error("cloud off"));
-      var cols = ["matches", "pits", "boards", "tierlists"];
+      var cols = ["matches", "pits", "boards", "tierlists"].map(col); // this season only
       return Promise.all(cols.map(function (c) {
         return db.collection(c).get().then(function (snap) {
           if (snap.empty) return null;
@@ -352,8 +358,8 @@
       if (!id) return Promise.reject(new Error("no id"));
       var batch = db.batch();
       batch.delete(db.collection("scouters").doc(id));
-      batch.delete(db.collection("boards").doc(id));
-      batch.delete(db.collection("tierlists").doc(id));
+      batch.delete(db.collection(col("boards")).doc(id));
+      batch.delete(db.collection(col("tierlists")).doc(id));
       return batch.commit().then(function () {
         cache.scouters = (cache.scouters || []).filter(function (s) { return s && s.id !== id; });
         cache.boards = (cache.boards || []).filter(function (b) { return b && b.scouterId !== id; });
@@ -372,12 +378,12 @@
         scouterId: m ? m.id : "", scouterName: m ? ((m.first || "") + " " + (m.last || "")).trim() : "Someone",
         ts: Date.now(),
       });
-      db.collection("claims").doc(this.claimId(ev, matchNumber, team)).set(doc)
+      db.collection(col("claims")).doc(this.claimId(ev, matchNumber, team)).set(doc)
         .catch(function (e) { log("pushClaim failed", e); });
     },
     releaseClaim: function (ev, matchNumber, team) {
       if (!this.enabled() || !ev || !matchNumber || !team) return;
-      db.collection("claims").doc(this.claimId(ev, matchNumber, team)).delete()
+      db.collection(col("claims")).doc(this.claimId(ev, matchNumber, team)).delete()
         .catch(function () {});
     },
     // Drop every claim this scout owns — called on load so a refresh clears a stale
@@ -385,7 +391,7 @@
     releaseMyClaims: function () {
       if (!this.enabled()) return;
       var m = me(); if (!m || !m.id) return;
-      db.collection("claims").where("scouterId", "==", m.id).get().then(function (snap) {
+      db.collection(col("claims")).where("scouterId", "==", m.id).get().then(function (snap) {
         if (snap.empty) return;
         var batch = db.batch();
         snap.docs.forEach(function (d) { batch.delete(d.ref); });
@@ -404,7 +410,7 @@
         bb: (entry && entry.bb) || 0, matchNumber: entry ? String(entry.matchNumber || "") : "",
         ts: Date.now(),
       });
-      db.collection("activity").add(doc).catch(function (e) { log("pushActivity failed", e); });
+      db.collection(col("activity")).add(doc).catch(function (e) { log("pushActivity failed", e); });
     },
     onActivity: function (cb) { if (typeof cb === "function") activityCbs.push(cb); },
 
@@ -442,8 +448,8 @@
         .then(function (snap) { return snap.docs.map(function (d) { return d.id; }); });
     },
 
-    getMatchForm: function () { return cache.config.matchForm ? cache.config.matchForm.schema : null; },
-    getPitForm: function () { return cache.config.pitForm ? cache.config.pitForm.schema : null; },
+    getMatchForm: function () { return cache.config[cfgId("matchForm")] ? cache.config[cfgId("matchForm")].schema : null; },
+    getPitForm: function () { return cache.config[cfgId("pitForm")] ? cache.config[cfgId("pitForm")].schema : null; },
     getRoster: function () { return cache.config.roster || null; },
 
     getScouters: function () { return cache.scouters; },

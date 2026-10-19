@@ -1,17 +1,21 @@
 /* =============================================================================
-   game-config.js  —  FRC 2026 "REBUILT" game definition
+   game-config.js  —  per-season game definitions
    -----------------------------------------------------------------------------
-   Everything season-specific lives here. To adapt for a future season, edit
-   this file only: the match-scouting fields and pit-scouting fields. The rest
-   of the app reads from GAME.* and renders generically.
+   Everything season-specific lives here: the default match-scouting and
+   pit-scouting fields for each year. The rest of the app reads from GAME.* and
+   renders generically.
 
-   The match form is organized around the game's periods:
+   GAME is the definition for the season this device is viewing: the per-device
+   choice from Settings (localStorage "bb702.season"), else CONFIG.defaultSeason.
+   Each season's scouting data is stored completely separately (see store.js).
+
+   The 2026 match form is organized around the game's periods:
      Auto → Active → Inactive → Endgame → Post-match.
    "Full cycles" counters in Auto / Active / Endgame add up to a robot's total
    cycles per match (shown on the team profile).
    ========================================================================== */
 
-const GAME = {
+const GAME_2026 = {
   season: 2026,
   name: "REBUILT",
   seasonLabel: "2026 REBUILT",
@@ -125,4 +129,37 @@ const GAME = {
   ],
 };
 
+// 2027 "BIOCORE" (revealed at Kickoff, Jan 9 2027). Until then the defaults are a
+// near-blank generic form; admins build the real one in Admin → Match/Pit form.
+const GAME_2027 = {
+  season: 2027,
+  name: "BIOCORE",
+  seasonLabel: "2027 BIOCORE",
+  matchPhases: [
+    { id: "auto", label: "Autonomous" },
+    { id: "teleop", label: "Teleop" },
+    { id: "endgame", label: "Endgame" },
+    { id: "post", label: "Post-Match" },
+  ],
+  matchFields: [
+    { key: "driverSkill", label: "Driver skill", type: "rating", max: 5, phase: "post" },
+    { key: "diedOrTipped", label: "Died / tipped / disabled", type: "bool", phase: "post" },
+    { key: "notes", label: "Notes", type: "text", phase: "post", placeholder: "Anything strategy needs to know…" },
+  ],
+  pitFields: [
+    { key: "drivetrain", label: "Drivetrain", type: "select", options: ["Swerve", "Tank / West Coast", "Mecanum", "Other / Unknown"] },
+    { key: "weight", label: "Robot weight (lbs)", type: "number", min: 0 },
+    { key: "pitNotes", label: "Comments", type: "text", placeholder: "Team demeanor, reliability, anything useful…" },
+  ],
+};
+
+const SEASONS = [GAME_2026, GAME_2027];
+const GAME = (() => {
+  let want = 0;
+  try { want = Number(localStorage.getItem("bb702.season")) || 0; } catch (e) {}
+  if (!want) want = Number(window.CONFIG && window.CONFIG.defaultSeason) || 2026;
+  return SEASONS.find((g) => g.season === want) || GAME_2026;
+})();
+
 window.GAME = GAME;
+window.SEASONS = SEASONS;

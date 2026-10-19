@@ -241,6 +241,22 @@ button { font-family: var(--font-ui); }
 .event-chip { font-size: .8rem; color: var(--text-dim); padding: 8px 10px; margin-bottom: 10px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .event-chip b { color: var(--secondary); font-family: var(--font-display); }
+.event-chip .ec-season { display: block; font-size: .66rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--text-mut); }
+.event-chip .ec-season.alt { color: var(--primary); }
+
+/* Settings → Season tiles */
+.season-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-top: 12px; }
+.season-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 16px 18px; min-height: 112px;
+  border-radius: var(--radius); border: 1.5px solid var(--border-strong); background: var(--surface-2); color: var(--text);
+  cursor: pointer; text-align: left; font: inherit; transition: border-color .2s ease, transform .15s ease, background .2s ease; }
+.season-tile:hover { border-color: var(--primary); transform: translateY(-2px); }
+.season-tile .st-year { font-family: var(--font-display); font-weight: 900; font-size: 2rem; line-height: 1; }
+.season-tile .st-name { font-family: var(--font-display); font-weight: 700; font-size: .85rem; letter-spacing: .14em; color: var(--text-dim); }
+.season-tile .st-state { margin-top: auto; padding-top: 10px; display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: .85rem; color: var(--text-mut); }
+.season-tile .st-state .ico { width: 16px; height: 16px; }
+.season-tile.on { border-color: var(--secondary); background: color-mix(in srgb, var(--secondary) 10%, var(--surface-2)); cursor: default; transform: none; }
+.season-tile.on .st-year { color: var(--secondary); }
+.season-tile.on .st-state { color: var(--secondary); }
 
 /* ---- Main / topbar -------------------------------------------------------- */
 .main { min-width: 0; display: flex; flex-direction: column; }

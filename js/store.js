@@ -8,7 +8,13 @@
 
 const Store = (() => {
   const NS = "bb702"; // key namespace
-  const k = (name) => `${NS}.${name}`;
+  // Each season's data is stored separately. 2026 keeps the original un-prefixed
+  // keys (existing data is never moved); other years live under bb702.y<year>.*.
+  // Accounts, the roster, sessions and app-wide settings are shared by every season.
+  const BASE_SEASON = 2026;
+  const SEASON = (window.GAME && GAME.season) || BASE_SEASON;
+  const GLOBAL_KEYS = new Set(["settings", "session", "members", "requests", "meAccounts", "credCache", "me"]);
+  const k = (name) => (SEASON === BASE_SEASON || GLOBAL_KEYS.has(name)) ? `${NS}.${name}` : `${NS}.y${SEASON}.${name}`;
 
   function read(name, fallback) {
     try {
@@ -28,7 +34,7 @@ const Store = (() => {
       // evict the API caches to free space and retry. Caches simply re-fetch.
       if (!name.startsWith("cache.")) {
         try {
-          Object.keys(localStorage).filter((x) => x.startsWith(NS + ".cache.")).forEach((x) => localStorage.removeItem(x));
+          Object.keys(localStorage).filter((x) => x.startsWith(NS + ".") && x.includes(".cache.")).forEach((x) => localStorage.removeItem(x));
           localStorage.setItem(k(name), JSON.stringify(value));
           return true;
         } catch (e2) { console.warn("Store.write failed after cache evict", name, e2); return false; }
@@ -57,8 +63,10 @@ const Store = (() => {
       } catch (e) { resolve(null); }
     });
   }
-  function idbPut(team, dataUrl) { idbOpen().then((db) => { if (!db) return; try { db.transaction("photos", "readwrite").objectStore("photos").put(dataUrl, String(team)); } catch (e) {} }); }
-  function idbDel(team) { idbOpen().then((db) => { if (!db) return; try { db.transaction("photos", "readwrite").objectStore("photos").delete(String(team)); } catch (e) {} }); }
+  // Photo keys: plain team number for 2026 (as before), "y<year>:<team>" for other seasons.
+  const photoKey = (team) => SEASON === BASE_SEASON ? String(team) : `y${SEASON}:${team}`;
+  function idbPut(team, dataUrl) { idbOpen().then((db) => { if (!db) return; try { db.transaction("photos", "readwrite").objectStore("photos").put(dataUrl, photoKey(team)); } catch (e) {} }); }
+  function idbDel(team) { idbOpen().then((db) => { if (!db) return; try { db.transaction("photos", "readwrite").objectStore("photos").delete(photoKey(team)); } catch (e) {} }); }
   function idbGetAll() {
     return new Promise((resolve) => {
       idbOpen().then((db) => {
@@ -87,7 +95,11 @@ const Store = (() => {
   async function hydratePhotos() {
     await idbOpen();
     const all = await idbGetAll();
-    Object.keys(all).forEach((t) => { photoMem[t] = all[t]; });
+    const pre = `y${SEASON}:`;
+    Object.keys(all).forEach((key) => {
+      if (SEASON === BASE_SEASON) { if (!key.includes(":")) photoMem[key] = all[key]; }
+      else if (key.startsWith(pre)) photoMem[key.slice(pre.length)] = all[key];
+    });
     stashInlinePhotos();
     return true;
   }
@@ -104,8 +116,28 @@ const Store = (() => {
     pinnedEvents: [],    // event keys pinned to the top of the event picker
     matchListStat: "",   // extra summary column on the match list: "", "estPoints", or a field key
   };
-  function getSettings() { return { ...defaultSettings, ...read("settings", {}) }; }
-  function setSettings(patch) { write("settings", { ...getSettings(), ...patch }); }
+  // Event-related settings belong to a season (a 2026 event key means nothing in
+  // 2027). For 2026 they stay in "settings" as before; other years keep their own copy.
+  const SEASON_SETTINGS = ["eventKey", "eventName", "pinnedEvents", "pitMapUrl", "pitMapEnabled", "matchListStat"];
+  function getSettings() {
+    const s = { ...defaultSettings, ...read("settings", {}) };
+    if (SEASON !== BASE_SEASON) {
+      const per = read("seasonSettings", {});
+      SEASON_SETTINGS.forEach((f) => { s[f] = f in per ? per[f] : defaultSettings[f]; });
+    }
+    return s;
+  }
+  function setSettings(patch) {
+    if (SEASON === BASE_SEASON) { write("settings", { ...getSettings(), ...patch }); return; }
+    const glob = { ...read("settings", {}) }, per = { ...read("seasonSettings", {}) };
+    Object.keys(patch).forEach((f) => { (SEASON_SETTINGS.includes(f) ? per : glob)[f] = patch[f]; });
+    write("settings", glob); write("seasonSettings", per);
+  }
+  // Switch the season this device views (reloads to rebuild everything for that year).
+  function setSeason(year) {
+    try { localStorage.setItem(NS + ".season", String(year)); } catch (e) {}
+    location.reload();
+  }
 
   // ---- Match scouting -----------------------------------------------------
   // entries: [{ id, ts, event, scout, matchNumber, team, alliance, ...fields }]
@@ -365,7 +397,7 @@ const Store = (() => {
   // ---- Full backup export / import ---------------------------------------
   function exportAll() {
     return {
-      meta: { app: "Bagel Bytes Scouting", exported: new Date().toISOString(), version: 1 },
+      meta: { app: "Bagel Bytes Scouting", exported: new Date().toISOString(), version: 1, season: SEASON },
       settings: (() => { const s = getSettings(); return { ...s, tbaKey: "" }; })(), // never export the key
       matches: getMatches(),
       pits: getPits(),
@@ -445,6 +477,7 @@ const Store = (() => {
   }
 
   return {
+    season: SEASON, BASE_SEASON, setSeason,
     getSettings, setSettings,
     getMatches, saveMatch, deleteMatch,
     getPits, savePit, deletePit, hydratePhotos,

@@ -61,10 +61,19 @@ window.CONFIG = {
   owner: "Samuel Wright",
   approvedMembers: ["Samuel Wright"],
 
-  /* --- Dashboard countdown ---------------------------------------------------
-     Set { label, date: "YYYY-MM-DD" } to show a countdown card on the Dashboard;
-     leave it as {} to hide it. */
-  countdown: {},
+  /* --- Season ----------------------------------------------------------------
+     The season every device opens on. Anyone can switch years for themselves in
+     Settings → Season; each year's scouting data is kept completely separate. */
+  defaultSeason: 2026,
+
+  /* --- Dashboard countdowns ---------------------------------------------------
+     Shown as one card on the Dashboard with ‹ › arrows to flip between them.
+     `at` is an ISO time with its UTC offset; past ones hide automatically. */
+  countdowns: [
+    { label: "2027 Kickoff", sub: "BIOCORE game reveal", where: "Livestream · 9:00 AM PT", at: "2027-01-09T09:00:00-08:00" },
+    { label: "Los Angeles Event", sub: "CA District Los Angeles Event", where: "El Segundo, CA", at: "2027-03-19T08:00:00-07:00", eventKey: "2027calas" },
+    { label: "San Gabriel Valley Event", sub: "CA District San Gabriel Valley Event", where: "Rosemead, CA", at: "2027-04-02T08:00:00-07:00", eventKey: "2027casgv" },
+  ],
 
   /* --- Firebase (optional cloud sync) ----------------------------------------
      Leave this EMPTY ({}) to run fully offline / local-only — everything works,
