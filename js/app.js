@@ -1765,9 +1765,24 @@
      Statbotics ranks/EPA, the EPA trend, and our own scouting report.
      ======================================================================== */
   let teamPageTab = "events", tpResize = null;
+  // TBA award types that earn a blue banner: Impact/Chairman's (0), Winner (1), Engineering Inspiration (9).
+  const BANNER_TYPES = [0, 1, 9];
+  const FIRST_MARK = `<svg class="bb-logo" viewBox="0 0 66 22" aria-hidden="true"><polygon points="2,20 12,2 22,20" fill="#ed1c24"/><circle cx="33" cy="11" r="9" fill="#fff"/><rect x="45" y="2" width="18" height="18" fill="#0066b3" stroke="#fff" stroke-width="2"/></svg>`;
+  const bannerName = (a) => a.award_type === 1
+    ? (/division/i.test(a.name) ? "Division Winner" : /(championship|einstein)/i.test(a.name) && !/(regional|district|state)/i.test(a.name) ? "World Champion" : "Event Winner")
+    : a.award_type === 0 ? (/impact/i.test(a.name) ? "Impact Award" : "Chairman's Award") : "Engineering Inspiration";
+  const shortEventName = (n) => String(n || "").replace(/\s+presented by.*$/i, "").replace(/^FIRST\s+/i, "").replace(/\s+sponsored by.*$/i, "");
+  const FRC_GAMES = { 2027: "BIOCORE", 2026: "REBUILT", 2025: "REEFSCAPE", 2024: "CRESCENDO", 2023: "CHARGED UP", 2022: "RAPID REACT",
+    2021: "INFINITE RECHARGE", 2020: "INFINITE RECHARGE", 2019: "DESTINATION: DEEP SPACE", 2018: "FIRST POWER UP", 2017: "FIRST STEAMWORKS",
+    2016: "FIRST STRONGHOLD", 2015: "RECYCLE RUSH", 2014: "AERIAL ASSIST", 2013: "ULTIMATE ASCENT", 2012: "REBOUND RUMBLE", 2011: "LOGO MOTION",
+    2010: "BREAKAWAY", 2009: "LUNACY", 2008: "FIRST OVERDRIVE", 2007: "RACK 'N' ROLL", 2006: "AIM HIGH", 2005: "TRIPLE PLAY",
+    2004: "FIRST FRENZY", 2003: "STACK ATTACK", 2002: "ZONE ZEAL", 2001: "DIABOLICAL DILEMMA", 2000: "CO-OPERTITION FIRST",
+    1999: "DOUBLE TROUBLE", 1998: "LADDER LOGIC", 1997: "TOROID TERROR", 1996: "HEXAGON HYSTERIA", 1995: "RAMP 'N ROLL", 1994: "TOWER POWER",
+    1993: "RUG RAGE", 1992: "MAIZE CRAZE" };
   function teamRoute() {
     const p = location.hash.replace(/^#\/?/, "").split("/");
-    return { team: String(p[1] || "").replace(/\D/g, ""), year: Number(p[2]) || GAME.season };
+    const history = p[2] === "history";
+    return { team: String(p[1] || "").replace(/\D/g, ""), year: history ? GAME.season : (Number(p[2]) || GAME.season), history };
   }
   const COMP_NAME = { qm: "Qualifications", ef: "Eighth-finals", qf: "Quarterfinals", sf: "Semifinals", f: "Finals" };
   const playoffText = (p, dbl) => {
@@ -1809,7 +1824,8 @@
   }
 
   function renderTeamPage(root) {
-    const { team, year } = teamRoute();
+    const { team, year, history } = teamRoute();
+    if (history) teamPageTab = "history";
     if (!team) { root.innerHTML = `<div class="card">${emptyState("search", "No team", "Open a team from Events, BagelStats or Data.")}</div>`; return; }
     $("#pageTitle").textContent = "Team " + team;
     const pit = Store.season === year || GAME.season === year ? allPits()[team] : null;
@@ -1844,12 +1860,14 @@
 
         <div class="tp-tiles" id="tpTiles">${Array.from({ length: 6 }, () => `<div class="tp-tile skel"></div>`).join("")}</div>
         <div class="card tp-epa" id="tpEpa" hidden></div>
+        <section class="card tp-banners" id="tpBanners" hidden></section>
 
         <div class="tp-tabbar" role="tablist" id="tpTabs">
           <button data-tp="events" role="tab">${icon("calendar")} Events <b id="tpEvCount"></b></button>
           <button data-tp="scouting" role="tab">${icon("binoculars")} Our scouting</button>
           <button data-tp="trend" role="tab">${icon("linegraph")} EPA trend</button>
           <button data-tp="awards" role="tab">${icon("trophy")} Awards <b id="tpAwCount"></b></button>
+          <button data-tp="history" role="tab">${icon("clock")} History</button>
           <span class="tp-ink" aria-hidden="true"></span>
         </div>
         <div id="tpPanel" class="tp-panel"></div>
@@ -1883,7 +1901,7 @@
       ink.style.width = on.offsetWidth + "px";
       ink.style.transform = `translateX(${on.offsetLeft}px)`;
     };
-    const order = ["events", "scouting", "trend", "awards"];
+    const order = ["events", "scouting", "trend", "awards", "history"];
     const showTab = (name, dir) => {
       teamPageTab = name;
       $$("[data-tp]", tabs).forEach((b) => { const on = b.dataset.tp === name; b.classList.toggle("on", on); b.setAttribute("aria-selected", on); });
@@ -1909,6 +1927,7 @@
       }
       if (teamPageTab === "trend") return drawTrend();
       if (teamPageTab === "awards") return drawAwards();
+      if (teamPageTab === "history") return drawHistory();
       return drawEvents();
     }
 
@@ -1986,6 +2005,111 @@
       $$("[data-goteam]", panel).forEach((b) => b.onclick = () => { location.hash = "#/team/" + b.dataset.goteam + (year !== GAME.season ? "/" + year : ""); });
     }
 
+    // ---- Blue banners (event wins, Impact/Chairman's, Engineering Inspiration) ----
+    function drawBanners() {
+      const el = $("#tpBanners", root), h = state.hist;
+      if (!el || !h) return;
+      const ban = h.awards.filter((a) => BANNER_TYPES.includes(a.award_type)).sort((a, b) => a.year - b.year);
+      if (!ban.length) { el.hidden = true; return; }
+      const evName = {}; h.events.forEach((e) => { evName[e.key] = e.name; });
+      el.hidden = false;
+      el.innerHTML = `<div class="sr-head"><h3>${icon("flag")} Blue banners <span class="muted">${ban.length}</span></h3>
+          <span class="hint">event wins, Impact / Chairman's &amp; Engineering Inspiration</span></div>
+        <div class="bb-strip">${ban.map((a, i) => `
+          <a class="bb-banner" href="#/team/${esc(team)}/${a.year}" style="--i:${i}" title="${esc(a.name)} · ${esc(evName[a.event_key] || a.event_key)}">
+            ${FIRST_MARK}
+            <b>${esc(bannerName(a))}</b>
+            <span class="bb-year">${a.year}</span>
+            <small>${esc(shortEventName(evName[a.event_key] || a.event_key))}</small>
+          </a>`).join("")}</div>`;
+      $$(".bb-banner", el).forEach((a) => a.addEventListener("click", () => { teamPageTab = "events"; }));
+    }
+
+    // ---- History tab: every season, all-time totals, normalized EPA by year ----
+    function loadHistory() {
+      if (state.histLoading || state.histYears) return;
+      state.histLoading = true;
+      API.sbTeamHistory(team).then((ys) => { state.histYears = ys; })
+        .catch(() => { state.histYears = []; })
+        .finally(() => { state.histLoading = false; if (root.isConnected && teamPageTab === "history") drawPanel(); });
+    }
+    function drawHistory() {
+      if (!state.histYears || !state.hist) { panel.innerHTML = loading("team history"); loadHistory(); return; }
+      const ys = state.histYears, h = state.hist;
+      const by = {};
+      const slot = (y) => (by[y] = by[y] || { events: [], awards: [] });
+      h.events.forEach((e) => slot(e.year).events.push(e));
+      h.awards.forEach((a) => slot(a.year).awards.push(a));
+      ys.forEach((y) => slot(y.year));
+      const years = Object.keys(by).map(Number).sort((a, b) => b - a);
+      if (!years.length) { panel.innerHTML = `<div class="card">${emptyState("clock", "No history found", "The Blue Alliance and Statbotics have nothing for this team yet.")}</div>`; return; }
+      const sb = {}; ys.forEach((y) => { sb[y.year] = y; });
+      const rec = ys.reduce((t, y) => ({ w: t.w + y.record.w, l: t.l + y.record.l, t: t.t + y.record.t }), { w: 0, l: 0, t: 0 });
+      const games = rec.w + rec.l + rec.t;
+      const banners = h.awards.filter((a) => BANNER_TYPES.includes(a.award_type));
+      const withNorm = ys.filter((y) => y.norm != null);
+      const best = withNorm.slice().sort((a, b) => b.norm - a.norm)[0];
+      const rookie = (state.info && state.info.rookie_year) || years[years.length - 1];
+      const tile = (l, v, s2, hl) => `<div class="tp-tile${hl ? " hl" : ""}"><span class="tp-tile-l">${l}</span><b class="tp-tile-v">${v}</b><span class="tp-tile-s">${s2 || "&nbsp;"}</span></div>`;
+
+      // Normalized-EPA bar chart (1500 ≈ an average team in any year).
+      let chart = "";
+      if (withNorm.length) {
+        const pts = withNorm, n = pts.length, W = Math.max(560, n * 34), H = 210, pad = { l: 40, r: 10, t: 16, b: 30 };
+        const lo = Math.min(1400, ...pts.map((y) => y.norm)) - 40, hi = Math.max(1650, ...pts.map((y) => y.norm)) + 20;
+        const Y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
+        const bw = (W - pad.l - pad.r) / n;
+        const banYears = new Set(banners.map((a) => a.year));
+        chart = `<svg class="th-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Normalized EPA by season">
+          <line x1="${pad.l}" x2="${W - pad.r}" y1="${Y(1500).toFixed(1)}" y2="${Y(1500).toFixed(1)}" class="th-avg"/>
+          <text x="${pad.l - 6}" y="${(Y(1500) + 4).toFixed(1)}" class="th-axis" text-anchor="end">1500</text>
+          <text x="${W - pad.r}" y="${(Y(1500) - 5).toFixed(1)}" class="th-axis" text-anchor="end">average team</text>
+          ${pts.map((y, i) => {
+            const x = pad.l + i * bw + bw * 0.16, w = bw * 0.68, top = Y(y.norm), base = H - pad.b;
+            return `<g class="th-bar${best && y.year === best.year ? " best" : ""}${y.year === year ? " cur" : ""}" data-hyear="${y.year}" style="--i:${i}">
+              <title>${y.year} · normalized EPA ${Math.round(y.norm)}${y.epa != null ? ` (${fmt(y.epa)} pts)` : ""}</title>
+              <rect x="${x.toFixed(1)}" y="${top.toFixed(1)}" width="${w.toFixed(1)}" height="${Math.max(2, base - top).toFixed(1)}" rx="4"/>
+              ${banYears.has(y.year) ? `<path class="th-flag" d="M${(x + w / 2 - 5).toFixed(1)} ${(top - 14).toFixed(1)}h10v9l-5-3-5 3z"/>` : ""}
+              <text x="${(x + w / 2).toFixed(1)}" y="${H - 10}" class="th-axis" text-anchor="middle">'${String(y.year).slice(2)}</text>
+            </g>`;
+          }).join("")}
+        </svg>`;
+      }
+      panel.innerHTML = `
+        <div class="tp-tiles th-tiles">
+          ${tile("Rookie year", rookie || "–", rookie ? `${new Date().getFullYear() - rookie} years ago` : "")}
+          ${tile("Seasons", years.length, `${years[years.length - 1]}–${years[0]}`)}
+          ${tile("All-time record", games ? `${rec.w}-${rec.l}-${rec.t}` : "–", games ? `${Math.round(rec.w / games * 100)}% win rate` : "")}
+          ${tile("Events", h.events.length, "competed at")}
+          ${tile("Awards", h.awards.length, `${banners.length} blue banner${banners.length === 1 ? "" : "s"}`, banners.length > 0)}
+          ${tile("Best season", best ? best.year : "–", best ? `${Math.round(best.norm)} normalized EPA` : "")}
+        </div>
+        ${chart ? `<section class="card th-chart-card"><div class="sr-head"><h3>${icon("chart")} Strength by season</h3>
+            <span class="hint">normalized EPA, so different games compare fairly · ${icon("flag")} = blue banner · tap a bar</span></div>
+            <div class="th-chart-wrap">${chart}</div></section>` : ""}
+        <div class="th-list">${years.map((y, i) => {
+          const d = by[y], st = sb[y], g = st ? st.record.w + st.record.l + st.record.t : 0;
+          const bans = d.awards.filter((a) => BANNER_TYPES.includes(a.award_type));
+          return `<a class="th-year${y === year ? " cur" : ""}" href="#/team/${esc(team)}/${y}" style="animation-delay:${Math.min(i, 20) * 25}ms">
+            <div class="th-y"><b>${y}</b><span>${esc(FRC_GAMES[y] || "")}</span></div>
+            <div class="th-mid">
+              ${d.events.length ? `<div class="th-evs">${d.events.sort((a, b) => (a.start_date || "").localeCompare(b.start_date || "")).map((e) =>
+                `<span class="th-ev">${esc(shortEventName(e.name))}</span>`).join("")}</div>` : `<span class="hint">No events listed</span>`}
+              ${d.awards.length ? `<div class="th-aws">${d.awards.map((a) => `<span class="tp-award${BANNER_TYPES.includes(a.award_type) ? " blue" : ""}">${icon(BANNER_TYPES.includes(a.award_type) ? "flag" : "trophy")} ${esc(a.name)}</span>`).join("")}</div>` : ""}
+            </div>
+            <div class="th-stats">
+              ${st && st.norm != null ? `<div><b>${Math.round(st.norm)}</b><span>norm EPA</span></div>` : ""}
+              ${g ? `<div><b>${st.record.w}-${st.record.l}-${st.record.t}</b><span>${Math.round(st.record.w / g * 100)}% wins</span></div>` : ""}
+              ${st && st.pct != null ? `<div><b>${Math.max(1, Math.round((1 - st.pct) * 100))}%</b><span>top of world</span></div>` : ""}
+              ${bans.length ? `<div class="bn"><b>${bans.length}</b><span>banner${bans.length === 1 ? "" : "s"}</span></div>` : ""}
+            </div>
+            ${icon("chevron-right")}
+          </a>`;
+        }).join("")}</div>`;
+      $$("[data-hyear]", panel).forEach((g) => g.onclick = () => { teamPageTab = "events"; location.hash = "#/team/" + team + "/" + g.dataset.hyear; });
+      $$(".th-year", panel).forEach((a) => a.addEventListener("click", () => { teamPageTab = "events"; }));
+    }
+
     function drawAwards() {
       const s = state.season;
       if (!s) { panel.innerHTML = loading("awards"); return; }
@@ -2054,8 +2178,12 @@
 
     // ---- Load everything (each piece fills in as it arrives) ----
     showTab(teamPageTab, 0);
+    API.getTeamHistory(team).then((h) => { state.hist = h; })
+      .catch(() => { state.hist = { awards: [], events: [] }; })
+      .finally(() => { if (!root.isConnected) return; drawBanners(); if (teamPageTab === "history") drawPanel(); });
     API.getTeamInfo(team).then((info) => {
       if (!info || !root.isConnected) return;
+      state.info = info;
       const nm = info.nickname || nameFor(team);
       $("#tpName", root).textContent = nm || " ";
       $("#pageTitle").textContent = `Team ${team}${nm ? " · " + nm : ""}`;
@@ -2757,185 +2885,199 @@
   let matchupWeek = 99;   // global slider (big = latest)
   let matchupQual = 999;  // event slider (big = latest)
   let matchupLbLoading = false;
-  const matchupSeries = {}; // global: team# -> sbTeamMatches rows (in-memory cache)
+  const matchupSeries = {}; // global: "year:team" -> sbTeamMatches rows (in-memory cache)
+  let matchupYear = 0;      // global season (0 = the app's season)
+  let muFocusNext = false;  // after picking a team, focus the next empty slot
 
   function matchupSub() { const p = (location.hash.replace(/^#\/?/, "") || "").split("/"); return p[1] === "event" ? "event" : "global"; }
 
   function renderMatchup(root) {
     const sub = matchupSub();
     const s = Store.getSettings();
+    const year = sub === "event" ? GAME.season : (matchupYear || GAME.season);
     const teams = eventTeams();
-    // Team display name: event teams know their own; global teams come from the
-    // Statbotics season leaderboard (loaded in the background below if needed).
-    const lbRows = API.sbCachedLeaderboard(GAME.season) || [];
+    // Names: event roster for Event; that season's Statbotics leaderboard for Global.
+    const lbRows = API.sbCachedLeaderboard(year) || [];
     const lbName = {}; lbRows.forEach((r) => { lbName[String(r.team)] = r.name; });
-    const nameOf = (t) => (sub === "event" ? teamName(t) : (lbName[String(t)] || teamName(t) || ""));
-    const picker = (col, i) => {
-      const arr = col === "red" ? matchupRed : matchupBlue;
-      const t = arr[i];
+    const nameOf = (t) => (sub === "event" ? teamName(t) : (lbName[String(t)] || (year === GAME.season ? nameFor(t) : "")));
+    const key = (t) => year + ":" + t;
+    const years = []; for (let y = GAME.season; y >= 2002; y--) years.push(y);
+
+    const slot = (col, i) => {
+      const t = (col === "red" ? matchupRed : matchupBlue)[i];
+      if (t) return `<div class="mu-slot filled" data-tfill="${esc(t)}" style="animation-delay:${i * 60}ms">
+          <img class="team-avatar" data-avatar="${esc(t)}" data-ally="${col}" alt="" />
+          <button class="mu-slot-id" data-team="${esc(t)}"><b>${esc(t)}</b><span>${esc(nameOf(t)) || "&nbsp;"}</span></button>
+          <span class="mu-slot-epa" id="muEpa-${col}-${i}">–</span>
+          <button class="mu-slot-x" data-clear="${col}-${i}" aria-label="Remove ${esc(t)}">${icon("x")}</button>
+        </div>`;
       const ctrl = sub === "event"
-        ? `<select class="mu-team" data-col="${col}" data-i="${i}">
-            <option value="">Team ${i + 1}…</option>
-            ${teams.map((tm) => `<option value="${tm.team_number}" ${t === String(tm.team_number) ? "selected" : ""}>${tm.team_number} · ${esc(tm.nickname || "")}</option>`).join("")}
+        ? `<select class="mu-team" data-col="${col}" data-i="${i}" aria-label="${col} team ${i + 1}">
+            <option value="">Pick team ${i + 1}…</option>
+            ${teams.map((tm) => `<option value="${tm.team_number}">${tm.team_number} · ${esc(tm.nickname || "")}</option>`).join("")}
           </select>`
-        : `<input type="number" class="mu-team" data-col="${col}" data-i="${i}" placeholder="Team ${i + 1}" value="${esc(t)}" inputmode="numeric" />`;
-      return `<div class="mu-pick ${col}">
-        <span class="mu-pick-av">${t ? `<img class="team-avatar" data-avatar="${esc(t)}" data-tring="${esc(t)}" data-ally="${col}" alt="" />` : `<span class="mu-pick-ph">${i + 1}</span>`}</span>
-        ${ctrl}
-        <span class="mu-pick-name" data-tcolor="${esc(t)}">${t ? (esc(nameOf(t)) || "&nbsp;") : `<span class="muted">empty</span>`}</span>
-      </div>`;
+        : `<input type="number" class="mu-team" data-col="${col}" data-i="${i}" placeholder="Team # then Enter" inputmode="numeric" aria-label="${col} team ${i + 1}" />`;
+      return `<div class="mu-slot empty"><span class="mu-slot-n">${col === "red" ? "R" : "B"}${i + 1}</span>${ctrl}</div>`;
     };
+    const side = (col) => `<div class="mu-side ${col}">
+        <div class="mu-side-head"><span class="alliance-dot alliance-${col}"></span>${col} alliance
+          <span class="mu-side-total" id="muTot-${col}"></span></div>
+        ${[0, 1, 2].map((i) => slot(col, i)).join("")}
+      </div>`;
     root.innerHTML = `
-      <div class="mu-head">
-        <div class="subtabs" id="muTabs">
-          <a href="#/matchup/global" class="${sub === "global" ? "on" : ""}">Global</a>
-          <a href="#/matchup/event" class="${sub === "event" ? "on" : ""}">Event</a>
-        </div>
-        <span class="hint mu-head-hint">${sub === "event"
-          ? `This event's on-device EPA · slider rewinds by qualification`
-          : `Season EPA from Statbotics · slider rewinds by week`}</span>
+      ${pageHero({ ic: "compare", eyebrow: sub === "event" ? `Matchup · ${esc(s.eventName || "event")}` : `Matchup · ${year} ${FRC_GAMES[year] || ""}`,
+        title: "Predict any match",
+        sub: sub === "event" ? "This event's on-device EPA. Rewind to any qualification with the slider."
+          : "Statbotics EPA for any season. Pick a year, drop in six teams, and rewind by week.",
+        side: sub === "global" ? `<label class="bs-year">${icon("calendar")}<select id="muYear" aria-label="Season">${years.map((y) => `<option value="${y}" ${y === year ? "selected" : ""}>${y}</option>`).join("")}</select></label>` : "" })}
+      <div class="subtabs" id="muTabs">
+        <a href="#/matchup/global" class="${sub === "global" ? "on" : ""}">${icon("globe")} Global</a>
+        <a href="#/matchup/event" class="${sub === "event" ? "on" : ""}">${icon("calendar")} Event</a>
+        ${[...matchupRed, ...matchupBlue].some(Boolean) ? `<button id="muSwap" title="Swap alliances">${icon("compare")} Swap</button><button id="muReset">${icon("x")} Clear</button>` : ""}
       </div>
       ${sub === "event" && !teams.length
-        ? `<div class="card">${emptyState("calendar", "No event selected", "Choose your event on the Dashboard to pick its teams.")}</div>`
-        : `<div class="mu-pickers">
-          ${["red", "blue"].map((col) => `<div class="card mu-ally ${col}">
-            <div class="mu-ally-head"><span class="alliance-dot alliance-${col}"></span>${col} alliance</div>
-            ${[0, 1, 2].map((i) => picker(col, i)).join("")}</div>`).join("")}
-        </div>
+        ? `<div class="card">${emptyState("calendar", "No event selected", "Choose your event in the sidebar to pick its teams.")}</div>`
+        : `<section class="mu-arena">${side("red")}<div class="mu-center" id="muCenter"></div>${side("blue")}</section>
         <div class="card mu-time" id="muTime"></div>
         <div id="muResults"></div>`}`;
-    if (sub === "event" && !teams.length) { const g = $("[data-go]", root); if (g) g.onclick = () => go("dashboard"); return; }
-    paintAvatars(root, [...matchupRed, ...matchupBlue].filter(Boolean));
-    paintTeamColors(root, [...new Set([...matchupRed, ...matchupBlue].filter(Boolean))]);
+    const ySel = $("#muYear", root);
+    if (ySel) ySel.onchange = () => { matchupYear = Number(ySel.value); matchupWeek = 99; renderMatchup(root); };
+    const sw = $("#muSwap", root); if (sw) sw.onclick = () => { [matchupRed, matchupBlue] = [matchupBlue, matchupRed]; renderMatchup(root); };
+    const rs = $("#muReset", root); if (rs) rs.onclick = () => { matchupRed = ["", "", ""]; matchupBlue = ["", "", ""]; renderMatchup(root); };
+    if (sub === "event" && !teams.length) return;
+    const picked = [...matchupRed, ...matchupBlue].filter(Boolean);
+    paintAvatars(root, picked);
+    paintTeamFills(root, picked);
 
     // ---- EPA lookups ------------------------------------------------------
-    // Event: recompute on-device EPA using only quals up to N. Returns {total,auto,teleop,endgame}|null.
     const eventLookup = (qual) => {
       const cache = s.eventKey ? Store.getCache("matches." + s.eventKey, null) : null;
       const all = (cache ? cache.data : []) || [];
-      const upto = all.filter((m) => m.comp_level === "qm" && (Number(m.match_number) || 0) <= qual);
-      const ev = EPA.computeEvent(upto);
+      const ev = EPA.computeEvent(all.filter((m) => m.comp_level === "qm" && (Number(m.match_number) || 0) <= qual));
       return (t) => { const r = ev.byTeam[t]; if (!r) return null; const b = r.breakdown || {}; return { total: r.epa, auto: b.auto, teleop: b.teleop, endgame: b.endgame }; };
     };
-    // Global: a team's EPA at week W (last match with week<=W). Returns {total,auto,teleop,endgame}|null.
     const globalLookup = (week) => (t) => {
-      const rows = matchupSeries[String(t)];
+      const rows = matchupSeries[key(t)];
       if (!rows || !rows.length) return null;
       let best = null; rows.forEach((r) => { if (r.week != null && r.week <= week) best = r; });
-      if (!best) { best = rows.filter((r) => r.week == null).slice(-1)[0] || null; } // fall back to offseason/latest
+      if (!best) best = rows.filter((r) => r.week == null).slice(-1)[0] || null;
       if (!best) return null;
       return { total: best.epa, auto: best.auto, teleop: best.teleop, endgame: best.endgame };
     };
-
-    const selected = () => [...matchupRed, ...matchupBlue].filter(Boolean);
     const maxQual = () => {
       const cache = s.eventKey ? Store.getCache("matches." + s.eventKey, null) : null;
-      const all = (cache ? cache.data : []) || [];
-      return all.filter((m) => m.comp_level === "qm").reduce((mx, m) => Math.max(mx, Number(m.match_number) || 0), 0);
+      return ((cache ? cache.data : []) || []).filter((m) => m.comp_level === "qm").reduce((mx, m) => Math.max(mx, Number(m.match_number) || 0), 0);
     };
-    const maxWeek = () => selected().reduce((mx, t) => {
-      const rows = matchupSeries[String(t)] || [];
-      return rows.reduce((m2, r) => (r.week != null ? Math.max(m2, r.week) : m2), mx);
-    }, 0);
+    const maxWeek = () => picked.reduce((mx, t) => (matchupSeries[key(t)] || []).reduce((m2, r) => (r.week != null ? Math.max(m2, r.week) : m2), mx), 0);
 
     function drawTime() {
       const el = $("#muTime", root); if (!el) return;
-      if (sub === "event") {
-        const mx = maxQual();
-        if (!mx) { el.innerHTML = `<p class="hint" style="margin:0">Load this event's matches (needs wifi) to use the qualification slider.</p>`; return; }
-        if (matchupQual > mx) matchupQual = mx;
-        el.innerHTML = `<div class="mu-time-head"><span class="mu-time-label">After qualification</span>
-          <span class="mu-time-val" id="muTimeVal">${matchupQual >= mx ? "Q" + mx + " · latest" : "Q" + matchupQual}</span></div>
-          <input type="range" id="muSlider" min="1" max="${mx}" value="${matchupQual}" />`;
-      } else {
-        const mx = maxWeek();
-        if (!mx) { el.innerHTML = `<p class="hint" style="margin:0">Enter teams above to load their season EPA, then rewind by week here.</p>`; return; }
-        if (matchupWeek > mx) matchupWeek = mx;
-        el.innerHTML = `<div class="mu-time-head"><span class="mu-time-label">Season week</span>
-          <span class="mu-time-val" id="muTimeVal">${matchupWeek >= mx ? "Week " + mx + " · latest" : "Week " + matchupWeek}</span></div>
-          <input type="range" id="muSlider" min="1" max="${mx}" value="${matchupWeek}" />`;
-      }
-      const sl = $("#muSlider", el);
-      if (sl) sl.oninput = (e) => { const v = Number(e.target.value); if (sub === "event") matchupQual = v; else matchupWeek = v; drawResults(); const tv = $("#muTimeVal", el); if (tv) { const mx = sub === "event" ? maxQual() : maxWeek(); tv.textContent = (sub === "event" ? (v >= mx ? "Q" + mx + " · latest" : "Q" + v) : (v >= mx ? "Week " + mx + " · latest" : "Week " + v)); } };
+      const mx = sub === "event" ? maxQual() : maxWeek();
+      if (!mx) { el.innerHTML = `<p class="hint" style="margin:0">${sub === "event" ? "Load this event's matches (needs wifi) to use the qualification slider." : "Add teams to load their season EPA, then rewind by week here."}</p>`; return; }
+      if (sub === "event" && matchupQual > mx) matchupQual = mx;
+      if (sub === "global" && matchupWeek > mx) matchupWeek = mx;
+      const v = sub === "event" ? matchupQual : matchupWeek;
+      const lbl = (x) => sub === "event" ? (x >= mx ? `Q${mx} · latest` : `After Q${x}`) : (x >= mx ? `Week ${mx} · latest` : `Week ${x}`);
+      el.innerHTML = `<div class="mu-time-head"><span class="mu-time-label">${icon("clock")} ${sub === "event" ? "Rewind by qualification" : "Rewind by week"}</span>
+          <span class="mu-time-val" id="muTimeVal">${lbl(v)}</span></div>
+        <input type="range" id="muSlider" min="1" max="${mx}" value="${v}" />
+        <div class="mu-ticks"><span>${sub === "event" ? "Q1" : "Week 1"}</span><span>${sub === "event" ? "Q" + mx : "Week " + mx}</span></div>`;
+      $("#muSlider", el).oninput = (e) => {
+        const x = Number(e.target.value);
+        if (sub === "event") matchupQual = x; else matchupWeek = x;
+        $("#muTimeVal", el).textContent = lbl(x);
+        drawResults(false);
+      };
     }
 
-    function drawResults() {
-      const el = $("#muResults", root); if (!el) return;
+    let lastScores = [0, 0];
+    function drawResults(animate = true) {
+      const el = $("#muResults", root), center = $("#muCenter", root); if (!el || !center) return;
       const getEpa = sub === "event" ? eventLookup(matchupQual) : globalLookup(matchupWeek);
-      const sideData = (arr) => arr.filter(Boolean).map((t) => ({ t, e: getEpa(t) }));
-      const red = sideData(matchupRed), blue = sideData(matchupBlue);
-      if (!red.length && !blue.length) { el.innerHTML = `<div class="card">${emptyState("compare", "Pick teams to simulate", "Add teams to the red and blue alliances above to see the predicted outcome.")}</div>`; return; }
+      const data = (arr, col) => arr.map((t, i) => t ? { t, i, col, e: getEpa(t) } : null).filter(Boolean);
+      const red = data(matchupRed, "red"), blue = data(matchupBlue, "blue");
+      [...red, ...blue].forEach((x) => { const n = $(`#muEpa-${x.col}-${x.i}`, root); if (n) n.innerHTML = x.e ? `<b>${fmt(x.e.total)}</b><small>EPA</small>` : `<small>no EPA</small>`; });
+      if (!red.length && !blue.length) {
+        center.innerHTML = `<span class="mu-vs">VS</span><span class="mu-pred">Add teams to predict</span>`;
+        el.innerHTML = "";
+        return;
+      }
       const sum = (side, k) => side.reduce((a, x) => a + (x.e && x.e[k] != null ? x.e[k] : 0), 0);
       const rT = sum(red, "total"), bT = sum(blue, "total");
       const pRed = Math.round(winProb(rT, bT) * 100);
-      const comps = [["auto", "Auto"], ["teleop", "Teleop"], ["endgame", "Endgame"]];
-      const maxTeamEpa = Math.max(1, ...[...red, ...blue].map((x) => (x.e ? x.e.total : 0)));
-      const teamRow = (x, col) => {
-        const e = x.e;
-        return `<div class="mu-trow" data-team="${esc(x.t)}">
-          <img class="team-avatar mu-tav" data-avatar="${esc(x.t)}" data-tring="${esc(x.t)}" data-ally="${col}" alt="" />
-          <span class="mu-tnum" data-tcolor="${esc(x.t)}">${esc(x.t)}</span>
-          <span class="mu-tname">${esc(nameOf(x.t))}</span>
-          <span class="mu-tbar"><span class="mu-tbar-fill ${col}" style="width:${e ? Math.round(e.total / maxTeamEpa * 100) : 0}%"></span></span>
-          <span class="mu-tepa ${col}">${e ? fmt(e.total, 1) : `<span class="muted">–</span>`}</span></div>`;
-      };
-      const avStrip = (arr, col) => `<div class="mu-av-strip">${arr.filter(Boolean).map((t) => `<img class="team-avatar" data-avatar="${esc(t)}" data-tring="${esc(t)}" data-ally="${col}" alt="" />`).join("")}</div>`;
+      $("#muTot-red", root).textContent = red.length ? fmt(rT) + " EPA" : "";
+      $("#muTot-blue", root).textContent = blue.length ? fmt(bT) + " EPA" : "";
+      center.innerHTML = `<span class="mu-vs">VS</span>
+        <div class="mu-scores"><b class="red" id="muSR">${Math.round(rT)}</b><span>–</span><b class="blue" id="muSB">${Math.round(bT)}</b></div>
+        <span class="mu-pred">predicted score</span>
+        <div class="mu-probbar"><i style="width:${pRed}%"></i></div>
+        <div class="mu-probtxt"><span class="red">${pRed}%</span><span>${rT === bT ? "Toss-up" : rT > bT ? "Red favored" : "Blue favored"}</span><span class="blue">${100 - pRed}%</span></div>`;
+      if (animate) {
+        // roll the scores from where they were
+        const from = lastScores.slice(), to = [Math.round(rT), Math.round(bT)], t0 = performance.now();
+        const step = (now) => {
+          const p = Math.min(1, (now - t0) / 600), k = 1 - Math.pow(1 - p, 3);
+          const a = $("#muSR", root), b = $("#muSB", root); if (!a || !b) return;
+          a.textContent = Math.round(from[0] + (to[0] - from[0]) * k); b.textContent = Math.round(from[1] + (to[1] - from[1]) * k);
+          if (p < 1) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+        setTimeout(() => { const a = $("#muSR", root), b = $("#muSB", root); if (a && b) { a.textContent = to[0]; b.textContent = to[1]; } }, 700);
+      }
+      lastScores = [Math.round(rT), Math.round(bT)];
+      const comps = [["auto", "Auto"], ["teleop", "Teleop"], ["endgame", "Endgame"], ["total", "Total"]];
+      const all = [...red, ...blue], maxT = Math.max(1, ...all.map((x) => (x.e ? x.e.total : 0)));
       el.innerHTML = `
-        <div class="card mu-score">
-          <div class="mu-score-row">
-            <div class="mu-score-side red"><span class="mu-sc-label">Red Alliance</span><span class="mu-sc-val">${Math.round(rT)}</span>${avStrip(matchupRed, "red")}</div>
-            <div class="mu-score-mid"><span>predicted</span><span>score</span></div>
-            <div class="mu-score-side blue"><span class="mu-sc-label">Blue Alliance</span><span class="mu-sc-val">${Math.round(bT)}</span>${avStrip(matchupBlue, "blue")}</div>
-          </div>
-          <div class="mu-prob">
-            <div class="md-prob-head"><span class="md-prob-red">${pRed}%</span>
-              <span class="md-prob-mid">${rT === bT ? "toss-up" : (rT > bT ? "Red favored" : "Blue favored")}</span>
-              <span class="md-prob-blue">${100 - pRed}%</span></div>
-            <div class="md-prob-bar"><span class="mpb-red" style="width:${pRed}%"></span><span class="mpb-blue" style="width:${100 - pRed}%"></span></div>
-          </div>
-          <table class="mu-breakdown">
-            <thead><tr><th>Phase</th><th class="red">Red</th><th class="blue">Blue</th><th>Edge</th></tr></thead>
-            <tbody>
-              ${comps.map(([k, lbl]) => { const r = sum(red, k), b = sum(blue, k); return `<tr>
-                <td>${lbl}</td><td class="red">${fmt(r, 1)}</td><td class="blue">${fmt(b, 1)}</td>
-                <td class="${r >= b ? "red" : "blue"}">${(r >= b ? "R +" : "B +") + fmt(Math.abs(r - b), 1)}</td></tr>`; }).join("")}
-              <tr class="mu-total"><td>Total EPA</td><td class="red">${fmt(rT, 1)}</td><td class="blue">${fmt(bT, 1)}</td>
-                <td class="${rT >= bT ? "red" : "blue"}">${(rT >= bT ? "R +" : "B +") + fmt(Math.abs(rT - bT), 1)}</td></tr>
-            </tbody>
-          </table>
-        </div>
+        <section class="card mu-phases">
+          <div class="sr-head"><h3>${icon("chart")} Phase by phase</h3><span class="hint">who wins each part of the match</span></div>
+          ${comps.map(([k, l]) => {
+            const r = sum(red, k), b = sum(blue, k), m = Math.max(1, r, b);
+            return `<div class="mu-ph${k === "total" ? " tot" : ""}">
+              <span class="mu-ph-val red${r >= b ? " win" : ""}">${fmt(r)}</span>
+              <span class="mu-ph-bar red"><i style="width:${r / m * 100}%"></i></span>
+              <span class="mu-ph-l">${l}</span>
+              <span class="mu-ph-bar blue"><i style="width:${b / m * 100}%"></i></span>
+              <span class="mu-ph-val blue${b >= r ? " win" : ""}">${fmt(b)}</span>
+            </div>`;
+          }).join("")}
+        </section>
         <div class="mu-pergrid">
-          <div class="card mu-teamcard red"><div class="mu-ally-head red"><span class="alliance-dot alliance-red"></span>Red teams</div>${red.length ? red.map((x) => teamRow(x, "red")).join("") : `<p class="muted">No red teams.</p>`}</div>
-          <div class="card mu-teamcard blue"><div class="mu-ally-head blue"><span class="alliance-dot alliance-blue"></span>Blue teams</div>${blue.length ? blue.map((x) => teamRow(x, "blue")).join("") : `<p class="muted">No blue teams.</p>`}</div>
+          ${[["red", red], ["blue", blue]].map(([col, list]) => `<section class="card mu-teamcard ${col}">
+            <div class="mu-side-head"><span class="alliance-dot alliance-${col}"></span>${col} contributions</div>
+            ${list.length ? list.map((x) => `<button class="mu-trow" data-team="${esc(x.t)}" data-tfill="${esc(x.t)}">
+                <img class="team-avatar mu-tav" data-avatar="${esc(x.t)}" data-ally="${col}" alt="" />
+                <span class="mu-tnum">${esc(x.t)}</span><span class="mu-tname">${esc(nameOf(x.t))}</span>
+                <span class="mu-tbar"><span class="mu-tbar-fill ${col}" style="width:${x.e ? Math.round(x.e.total / maxT * 100) : 0}%"></span></span>
+                <span class="mu-tepa ${col}">${x.e ? fmt(x.e.total) : `<span class="muted">–</span>`}</span></button>`).join("") : `<p class="muted">No ${col} teams yet.</p>`}
+          </section>`).join("")}
         </div>
-        <p class="hint" style="margin:8px 2px 0">${sub === "event"
-          ? "On-device event EPA (expected points) from played quals — an estimate, not an official prediction."
-          : "Season EPA from Statbotics. Predicted score ≈ each alliance's combined EPA."}</p>`;
-      paintAvatars(el, [...matchupRed, ...matchupBlue].filter(Boolean));
-      paintTeamColors(el, [...new Set([...matchupRed, ...matchupBlue].filter(Boolean))]);
-      $$("[data-team]", el).forEach((c) => c.onclick = () => openTeam(c.dataset.team));
+        <p class="hint" style="margin:8px 2px 0">${sub === "event" ? "On-device event EPA from played quals, an estimate rather than an official prediction."
+          : `Statbotics ${year} EPA. Predicted score ≈ each alliance's combined EPA.`}</p>`;
+      paintAvatars(el, all.map((x) => x.t)); paintTeamFills(el, all.map((x) => x.t));
+      $$("[data-team]", root).forEach((c) => c.onclick = () => (year === GAME.season ? openTeam(c.dataset.team) : (location.hash = "#/team/" + c.dataset.team + "/" + year)));
     }
 
     // ---- Wiring -----------------------------------------------------------
-    const refreshGlobalThen = (cb) => {
+    const loadSeries = (cb) => {
       if (sub !== "global") return cb();
-      const need = selected().filter((t) => !matchupSeries[String(t)]);
+      const need = picked.filter((t) => !matchupSeries[key(t)]);
       if (!need.length) return cb();
-      const wrap = $("#muResults", root); if (wrap) wrap.innerHTML = `<div class="card"><p class="muted" style="text-align:center;padding:14px 0">Loading season EPA…</p></div>`;
-      Promise.all(need.map((t) => API.sbTeamMatches(t, GAME.season).then((rows) => { matchupSeries[String(t)] = rows; }).catch(() => { matchupSeries[String(t)] = []; })))
-        .then(cb);
+      $("#muCenter", root).innerHTML = `<div class="tp-loading"><span class="tp-spin"></span>Loading ${year} EPA…</div>`;
+      Promise.all(need.map((t) => API.sbTeamMatches(t, year).then((rows) => { matchupSeries[key(t)] = rows; }).catch(() => { matchupSeries[key(t)] = []; })))
+        .then(() => { if (root.isConnected) cb(); });
     };
-    $$(".mu-team", root).forEach((ctrl) => ctrl.onchange = () => {
-      const col = ctrl.dataset.col, i = Number(ctrl.dataset.i), v = (ctrl.value || "").replace(/\D/g, "");
-      (col === "red" ? matchupRed : matchupBlue)[i] = v;
-      renderMatchup(root); // re-render so the picker's avatar + name update too
+    const setSlot = (col, i, v) => { (col === "red" ? matchupRed : matchupBlue)[i] = v; muFocusNext = !!v; renderMatchup(root); };
+    $$(".mu-team", root).forEach((ctrl) => {
+      const commit = () => { const v = (ctrl.value || "").replace(/\D/g, ""); if (v) setSlot(ctrl.dataset.col, Number(ctrl.dataset.i), v); };
+      if (ctrl.tagName === "SELECT") ctrl.onchange = commit;
+      else { ctrl.onkeydown = (e) => { if (e.key === "Enter") commit(); }; ctrl.onblur = commit; }
     });
-    // initial draw (load any already-selected global teams)
-    refreshGlobalThen(() => { drawTime(); drawResults(); });
-    // Global: load the season leaderboard once (for team names) if it isn't cached.
+    $$("[data-clear]", root).forEach((b) => b.onclick = () => { const [col, i] = b.dataset.clear.split("-"); setSlot(col, Number(i), ""); });
+    loadSeries(() => { drawTime(); drawResults(); });
+    if (muFocusNext) { muFocusNext = false; const nx = $(".mu-slot.empty .mu-team", root); if (nx) nx.focus(); } // keep entering teams
     if (sub === "global" && !lbRows.length && !matchupLbLoading) {
       matchupLbLoading = true;
-      API.sbYearLeaderboard(GAME.season).then(() => { matchupLbLoading = false; if (matchupSub() === "global" && current() === "matchup") renderMatchup(root); }).catch(() => { matchupLbLoading = false; });
+      API.sbYearLeaderboard(year).then(() => { matchupLbLoading = false; if (matchupSub() === "global" && current() === "matchup") renderMatchup(root); }).catch(() => { matchupLbLoading = false; });
     }
   }
 
@@ -3857,6 +3999,8 @@
   let bagelState = "CA";        // selected state for the State tab
   let bagelDistrict = "";       // selected district for the District tab
   let bagelSort = { col: "rank", dir: "asc" };  // leaderboard sort
+  let bagelYear = 0;            // 0 = the season the app is on; else a past season picked in BagelStats
+  let bagelShown = 50;          // rows shown before "Show 50 more"
 
   function applyBagelSort(rows, mode) {
     const rankKey = mode === "state" ? "stateRank" : mode === "district" ? "districtRank"
@@ -3866,6 +4010,7 @@
       if (col === "team") return Number(r.team);
       if (col === "epa") return r.epa ?? -1e9;
       if (col === "rp") return r.rp ?? -1e9;
+      if (col === "win") { const g = r.record ? r.record.w + r.record.l + r.record.t : 0; return g ? r.record.w / g : -1; }
       return (r.breakdown && r.breakdown[col]) ?? -1e9; // auto/teleop/endgame
     };
     const { col, dir } = bagelSort;
@@ -3996,221 +4141,208 @@
   }
 
   function renderBagelStats(root) {
+    const year = bagelYear || GAME.season;
+    const tabs = [["world", "World", "globe"], ["state", "State", "map-pin"], ["district", "District", "flag"], ["event", "Event", "calendar"]];
+    const years = []; for (let y = GAME.season; y >= 2002; y--) years.push(y);
+    const isEvent = bagelTab === "event";
     root.innerHTML = `
-      <div class="section-head">
-        <div class="pill-toggle" id="bagelTabs">
-          <button data-tab="world" class="${bagelTab === "world" ? "on" : ""}">World</button>
-          <button data-tab="state" class="${bagelTab === "state" ? "on" : ""}">State</button>
-          <button data-tab="district" class="${bagelTab === "district" ? "on" : ""}">District</button>
-          <button data-tab="event" class="${bagelTab === "event" ? "on" : ""}">Event</button>
-        </div>
-        <span class="badge cyan">EPA · ${GAME.seasonLabel}</span>
+      ${pageHero({ ic: "chart", eyebrow: `BagelStats · ${isEvent ? "live event" : year + " " + (FRC_GAMES[year] || "")}`, title: "EPA leaderboards",
+        sub: isEvent ? "On-device EPA from your event's played matches, with TBA ranks and ranking points."
+          : "Expected points added for every team, from Statbotics. Tap a team to dig in.",
+        side: `<label class="bs-year${isEvent ? " off" : ""}" title="${isEvent ? "The Event tab uses your selected event" : "Season"}">${icon("calendar")}
+          <select id="bsYear" aria-label="Season" ${isEvent ? "disabled" : ""}>${years.map((y) => `<option value="${y}" ${y === year ? "selected" : ""}>${y}</option>`).join("")}</select></label>` })}
+      <div class="subtabs" id="bagelTabs">
+        ${tabs.map(([k, l, ic]) => `<button data-tab="${k}" class="${bagelTab === k ? "on" : ""}">${icon(ic)} ${l}</button>`).join("")}
       </div>
-      <div id="bagelBody"><div class="empty">${icon("chart")}<p class="muted">Loading…</p></div></div>`;
-    $$("#bagelTabs button", root).forEach((b) => b.onclick = () => { bagelTab = b.dataset.tab; renderBagelStats(root); });
+      <div id="bagelBody"><div class="card tp-loading"><span class="tp-spin"></span>Loading ${isEvent ? "event EPA" : year + " leaderboard"}…</div></div>`;
+    $$("#bagelTabs button", root).forEach((b) => b.onclick = () => { bagelTab = b.dataset.tab; bagelShown = 50; renderBagelStats(root); });
+    $("#bsYear", root).onchange = (e) => { bagelYear = Number(e.target.value); bagelShown = 50; renderBagelStats(root); };
     const body = $("#bagelBody", root);
-    if (bagelTab === "event") renderBagelEvent(body);
-    else renderBagelWorld(body, bagelTab);
+    if (isEvent) renderBagelEvent(body);
+    else renderBagelWorld(body, bagelTab, year);
   }
 
-  // Shared leaderboard table. rows: [{team,name,epa,worldRank,stateRank,breakdown,state}]
-  // Headers are click-to-sort. Rank column label is "Rank" (event) or "#".
-  function leaderboardTable(rows, opts) {
-    const isEvent = opts.mode === "event";
-    const rankOf = (r) => isEvent ? r.tbaRank : opts.mode === "state" ? r.stateRank
-      : opts.mode === "district" ? r.districtRank : r.worldRank;
-    const arrow = (col) => bagelSort.col === col ? (bagelSort.dir === "asc" ? " ▲" : " ▼") : "";
-    const th = (col, label, extra = "") => `<th class="sortable ${extra}" data-sort="${col}">${label}${arrow(col)}</th>`;
-    return `<div class="table-wrap"><table class="lb">
-      <thead><tr>
-        ${th("rank", isEvent ? "Rank" : "#")}
-        ${th("team", "Team")}
-        ${th("epa", "EPA", "num")}
-        ${th("auto", "Auto", "num hide-sm")}
-        ${th("teleop", "Teleop", "num hide-sm")}
-        ${th("endgame", "End", "num hide-sm")}
-        ${isEvent ? th("rp", "RP", "num") + `<th class="num hide-sm">W-L-T</th>` : ""}
-      </tr></thead>
-      <tbody>${rows.map((r) => `<tr data-team="${r.team}">
-          <td class="num rank-cell">${rankOf(r) || "–"}</td>
-          <td><span class="lb-team"><img class="team-avatar" data-avatar="${r.team}" alt="" /><span class="team-chip">${r.team}</span></span>
-              <span class="muted lb-name">${esc(r.name || teamName(r.team))}</span></td>
-          <td class="num epa-cell">${fmt(r.epa)}</td>
-          <td class="num hide-sm muted">${fmt(r.breakdown && r.breakdown.auto)}</td>
-          <td class="num hide-sm muted">${fmt(r.breakdown && r.breakdown.teleop)}</td>
-          <td class="num hide-sm muted">${fmt(r.breakdown && r.breakdown.endgame)}</td>
-          ${isEvent ? `<td class="num">${r.rp != null ? fmt(r.rp, 2) : "–"}</td>
-            <td class="num hide-sm muted">${r.record ? `${r.record.w}-${r.record.l}-${r.record.t}` : "–"}</td>` : ""}
-        </tr>`).join("")}</tbody></table></div>`;
+  // One leaderboard row. Bar = auto/teleop/endgame stacked, scaled to the list's top EPA.
+  function bagelRowHTML(r, mode, maxEpa, i) {
+    const rank = mode === "event" ? r.tbaRank : mode === "state" ? r.stateRank : mode === "district" ? r.districtRank : r.worldRank;
+    const b = r.breakdown || {}, seg = (v) => Math.max(0, (v || 0) / maxEpa * 100).toFixed(1);
+    const g = r.record ? r.record.w + r.record.l + r.record.t : 0;
+    return `<button class="bs-row${r.team === OUR_TEAM ? " ours" : ""}" data-bteam="${esc(r.team)}" data-tfill="${esc(r.team)}" style="animation-delay:${Math.min(i, 20) * 14}ms">
+      <span class="bs-rank">${rank || "–"}</span>
+      <img class="team-avatar" data-avatar="${esc(r.team)}" alt="" />
+      <span class="bs-id"><b>${esc(r.team)}</b><span>${esc(r.name || nameFor(r.team))}</span></span>
+      <span class="bs-bar" title="Auto ${fmt(b.auto)} · Teleop ${fmt(b.teleop)} · Endgame ${fmt(b.endgame)}">${b.auto != null || b.teleop != null
+        ? `<i class="a" style="width:${seg(b.auto)}%"></i><i class="t" style="width:${seg(b.teleop)}%"></i><i class="e" style="width:${seg(b.endgame)}%"></i>`
+        : `<i class="t" style="width:${seg(r.epa)}%"></i>`}</span>
+      <span class="bs-epa"><b>${fmt(r.epa)}</b><small>EPA</small></span>
+      <span class="bs-rec">${mode === "event"
+        ? `${r.rp != null ? fmt(r.rp, 2) : "–"}<small>${r.record ? `${r.record.w}-${r.record.l}-${r.record.t}` : "RP"}</small>`
+        : g ? `${r.record.w}-${r.record.l}-${r.record.t}<small>${Math.round(r.record.w / g * 100)}% wins</small>` : `–<small>record</small>`}</span>
+    </button>`;
   }
-
-  // redraw() is called after a header-sort click to re-render with the new order.
-  function wireLeaderboard(container, redraw) {
-    $$("tr[data-team]", container).forEach((tr) => tr.onclick = () => openTeam(tr.dataset.team));
-    $$("th.sortable", container).forEach((th) => th.onclick = () => {
-      const col = th.dataset.sort;
-      if (bagelSort.col === col) bagelSort.dir = bagelSort.dir === "asc" ? "desc" : "asc";
-      else { bagelSort.col = col; bagelSort.dir = (col === "rank" || col === "team") ? "asc" : "desc"; }
-      if (redraw) redraw();
-    });
-    if (bagelFocusTeam) {
-      const row = container.querySelector(`tr[data-team="${bagelFocusTeam}"]`);
-      if (row) { row.classList.add("focus-row"); row.scrollIntoView({ block: "center", behavior: "smooth" }); }
-      bagelFocusTeam = null;
+  function bagelPodiumHTML(top, mode) {
+    const medal = ["gold", "silver", "bronze"];
+    return `<section class="bs-podium">${[1, 0, 2].filter((i) => top[i]).map((i) => {
+      const r = top[i];
+      return `<button class="bs-pod ${medal[i]}" data-bteam="${esc(r.team)}" data-tfill="${esc(r.team)}" style="animation-delay:${[1, 0, 2].indexOf(i) * 90}ms">
+        <span class="bs-pod-medal">${i + 1}</span>
+        <img class="team-avatar" data-avatar="${esc(r.team)}" alt="" />
+        <b class="bs-pod-num">${esc(r.team)}</b>
+        <span class="bs-pod-name">${esc(r.name || nameFor(r.team))}</span>
+        <span class="bs-pod-epa"><b>${fmt(r.epa)}</b> EPA${mode === "event" && r.rp != null ? ` · ${fmt(r.rp, 2)} RP` : ""}</span>
+      </button>`;
+    }).join("")}</section>`;
+  }
+  // Shared list renderer for world/state/district/event: toolbar, podium, rows, "show more".
+  function drawBagelList(body, rows, mode, year, extraTool) {
+    const sorts = [["rank", "Rank"], ["epa", "EPA"], ["auto", "Auto"], ["teleop", "Teleop"], ["endgame", "Endgame"], [mode === "event" ? "rp" : "win", mode === "event" ? "RP" : "Win %"]];
+    body.innerHTML = `
+      <div class="card ev-toolbar">
+        ${extraTool || ""}
+        <label class="ds-search" for="lbSearch">${icon("search")}<input type="search" id="lbSearch" placeholder="Search team # or name…" /></label>
+        <div class="seg wrap" id="bsSort">${sorts.map(([k, l]) => `<button data-s="${k}" class="${bagelSort.col === k ? "on" : ""}">${l}${bagelSort.col === k ? (bagelSort.dir === "asc" ? " ↑" : " ↓") : ""}</button>`).join("")}</div>
+        <button class="btn ghost sm" id="bsFind">${icon("search")} Find ${OUR_TEAM}</button>
+      </div>
+      <div id="bsPodium"></div>
+      <div class="card bs-card"><div class="bs-list" id="lbList"></div>
+        <div class="bs-more" id="bsMore"></div></div>`;
+    const listEl = $("#lbList", body), moreEl = $("#bsMore", body), podEl = $("#bsPodium", body);
+    const open = (t) => (year === GAME.season ? openTeam(t) : (location.hash = "#/team/" + t + "/" + year));
+    let flash = null;
+    function draw() {
+      const f = $("#lbSearch", body).value.trim().toLowerCase();
+      let r = f ? rows.filter((x) => x.team.includes(f) || (x.name || "").toLowerCase().includes(f)) : rows;
+      r = applyBagelSort(r, mode);
+      if (bagelFocusTeam) {
+        const idx = r.findIndex((x) => x.team === bagelFocusTeam);
+        if (idx >= 0) { bagelShown = Math.max(bagelShown, idx + 10); flash = bagelFocusTeam; }
+        bagelFocusTeam = null;
+      }
+      const showPod = !f && r.length >= 3 && ((bagelSort.col === "rank" && bagelSort.dir === "asc") || (bagelSort.col === "epa" && bagelSort.dir === "desc"));
+      podEl.innerHTML = showPod ? bagelPodiumHTML(r.slice(0, 3), mode) : "";
+      const maxEpa = Math.max(1, ...r.map((x) => x.epa || 0));
+      const shown = r.slice(0, bagelShown);
+      listEl.innerHTML = shown.length ? shown.map((x, i) => bagelRowHTML(x, mode, maxEpa, i)).join("")
+        : emptyState("search", "No teams", "Try another search.");
+      moreEl.innerHTML = r.length > shown.length
+        ? `<span class="hint">Showing ${shown.length} of ${r.length.toLocaleString()} teams</span><button class="btn ghost sm" id="bsMoreBtn">${icon("plus")} Show 50 more</button>`
+        : `<span class="hint">${r.length.toLocaleString()} teams</span>`;
+      const mb = $("#bsMoreBtn", moreEl); if (mb) mb.onclick = () => { bagelShown += 50; draw(); };
+      const ts = [...shown.map((x) => x.team), ...(showPod ? r.slice(0, 3).map((x) => x.team) : [])];
+      paintAvatars(body, ts); paintTeamFills(body, ts);
+      $$("[data-bteam]", body).forEach((b) => b.onclick = () => open(b.dataset.bteam));
+      if (flash) {
+        const row = listEl.querySelector(`[data-bteam="${flash}"]`);
+        if (row) { row.classList.add("flash"); row.scrollIntoView({ block: "center", behavior: "smooth" }); }
+        flash = null;
+      }
     }
+    $("#lbSearch", body).oninput = () => { bagelShown = 50; draw(); };
+    $$("#bsSort button", body).forEach((b) => b.onclick = () => {
+      const col = b.dataset.s;
+      if (bagelSort.col === col) bagelSort.dir = bagelSort.dir === "asc" ? "desc" : "asc";
+      else { bagelSort.col = col; bagelSort.dir = col === "rank" ? "asc" : "desc"; }
+      $$("#bsSort button", body).forEach((x) => { const on = x.dataset.s === bagelSort.col; x.classList.toggle("on", on);
+        x.textContent = sorts.find((s2) => s2[0] === x.dataset.s)[1] + (on ? (bagelSort.dir === "asc" ? " ↑" : " ↓") : ""); });
+      bagelShown = 50; draw();
+    });
+    $("#bsFind", body).onclick = () => {
+      $("#lbSearch", body).value = "";
+      if (!rows.some((x) => x.team === OUR_TEAM)) { toast(`${OUR_TEAM} isn't in this list`, "err"); return; }
+      bagelFocusTeam = OUR_TEAM; draw();
+    };
+    draw();
   }
 
-  async function renderBagelWorld(body, mode) {
-    let lb = API.sbCachedLeaderboard(GAME.season);
-    let fromCache = !!lb, downMsg = "";
+  async function renderBagelWorld(body, mode, year) {
+    let lb = API.sbCachedLeaderboard(year);
+    let note = lb ? "cached" : "";
     try {
-      const res = await API.sbYearLeaderboard(GAME.season);
-      lb = res.rows; fromCache = res.fromCache;
+      const res = await API.sbYearLeaderboard(year, 15 * 60000);
+      lb = res.rows; note = res.fromCache ? "cached" : "live";
     } catch (e) {
-      if (!lb && seasonUpcoming()) {
-        body.innerHTML = `<div class="card">${emptyState("clock", `No ${GAME.season} EPA yet`,
-          `Statbotics publishes ${GAME.season} EPA once the season's matches start. Check back after the first events in March.`)}</div>`;
+      if (!lb && year === GAME.season && seasonUpcoming()) {
+        body.innerHTML = `<div class="card">${emptyState("clock", `No ${year} EPA yet`,
+          `Statbotics publishes ${year} EPA once the season's matches start. Check back after the first events in March, or pick an earlier year above.`)}</div>`;
         return;
       }
       if (!lb) {
         body.innerHTML = `<div class="card">${emptyState("globe", "Statbotics is unavailable",
-          "The world/state leaderboards come from Statbotics' API, which isn't responding right now. Cached data will appear here once it loads successfully.")}
-          ${Store.getSettings().eventKey ? `<div class="row" style="justify-content:center"><button class="btn secondary" id="toEvent">${icon("chart")} View live Event EPA instead</button></div>` : ""}</div>`;
-        const te = $("#toEvent", body); if (te) te.onclick = () => { bagelTab = "event"; renderBagelStats($("#view")); };
+          "The world, state and district leaderboards come from Statbotics, which isn't responding right now. Try again in a bit.")}</div>`;
         return;
       }
-      downMsg = "Statbotics offline — showing last cached data.";
+      note = "offline · cached";
     }
-
-    let selectControl = "";
+    if (!body.isConnected) return;
+    if (!lb.length) { body.innerHTML = `<div class="card">${emptyState("chart", `No ${year} data`, "Statbotics has no teams for this season.")}</div>`; return; }
+    let tool = "";
+    let list = lb;
     if (mode === "state") {
       const states = [...new Set(lb.map((r) => r.state).filter(Boolean))].sort();
       if (!states.includes(bagelState)) bagelState = states.includes("CA") ? "CA" : (states[0] || "");
-      selectControl = `<div class="row" style="gap:8px"><label class="hint">State:</label>
-        <select id="regionSel" style="width:auto;min-width:90px">${states.map((s) =>
-          `<option ${s === bagelState ? "selected" : ""}>${esc(s)}</option>`).join("")}</select></div>`;
+      tool = `<label class="bs-region">${icon("map-pin")}<select id="regionSel" aria-label="State">${states.map((s2) => `<option ${s2 === bagelState ? "selected" : ""}>${esc(s2)}</option>`).join("")}</select></label>`;
+      list = lb.filter((r) => r.state === bagelState);
     } else if (mode === "district") {
       const dists = [...new Set(lb.map((r) => r.district).filter(Boolean))].sort();
-      if (!dists.includes(bagelDistrict)) bagelDistrict = dists.includes("ca") ? "ca" : (dists[0] || "");
-      selectControl = `<div class="row" style="gap:8px"><label class="hint">District:</label>
-        <select id="regionSel" style="width:auto;min-width:90px">${dists.map((d) =>
-          `<option value="${esc(d)}" ${d === bagelDistrict ? "selected" : ""}>${esc(d.toUpperCase())}</option>`).join("")}</select></div>`;
+      if (!dists.length) { body.innerHTML = `<div class="card">${emptyState("flag", "No districts", `No district data for ${year}.`)}</div>`; return; }
+      if (!dists.includes(bagelDistrict)) bagelDistrict = dists.includes("ca") ? "ca" : dists[0];
+      tool = `<label class="bs-region">${icon("flag")}<select id="regionSel" aria-label="District">${dists.map((d) => `<option value="${esc(d)}" ${d === bagelDistrict ? "selected" : ""}>${esc(d.toUpperCase())}</option>`).join("")}</select></label>`;
+      list = lb.filter((r) => r.district === bagelDistrict);
     }
-
-    let list = mode === "state" ? lb.filter((r) => r.state === bagelState)
-      : mode === "district" ? lb.filter((r) => r.district === bagelDistrict) : lb;
-
-    body.innerHTML = `
-      <div class="section-head" style="margin-top:4px">
-        <div class="row" style="gap:12px">${selectControl}
-          <input type="search" id="lbSearch" placeholder="Search team # or name…" style="min-width:190px" /></div>
-        <span class="hint">${fromCache ? (downMsg || "cached") : "live"} · ${list.length} teams</span>
-      </div>
-      <div id="lbList"></div>
-      <div class="row between" id="lbPager" style="margin-top:14px"></div>`;
-
-    const listEl = $("#lbList", body), pagerEl = $("#lbPager", body);
-    const PAGE = 25; let pageIdx = 0;
-    function draw(filter = "") {
-      const f = filter.trim().toLowerCase();
-      let rows = list;
-      if (f) rows = list.filter((r) => r.team.includes(f) || (r.name || "").toLowerCase().includes(f));
-      rows = applyBagelSort(rows, mode);
-      const pages = Math.max(1, Math.ceil(rows.length / PAGE));
-      if (pageIdx >= pages) pageIdx = 0;
-      const slice = rows.slice(pageIdx * PAGE, pageIdx * PAGE + PAGE);
-      listEl.innerHTML = slice.length ? leaderboardTable(slice, { mode }) : emptyState("search", "No teams", "Try another search.");
-      wireLeaderboard(listEl, () => { pageIdx = 0; draw($("#lbSearch", body).value); });
-      paintAvatars(listEl, slice.map((r) => r.team));
-      pagerEl.innerHTML = rows.length > PAGE ? `
-        <button class="btn ghost sm" id="prevPg" ${pageIdx === 0 ? "disabled" : ""}>← Prev</button>
-        <span class="hint">Page ${pageIdx + 1} of ${pages} · ${rows.length} teams</span>
-        <button class="btn ghost sm" id="nextPg" ${pageIdx >= pages - 1 ? "disabled" : ""}>Next →</button>` : "";
-      const pv = $("#prevPg", pagerEl); if (pv) pv.onclick = () => { pageIdx--; draw($("#lbSearch", body).value); };
-      const nx = $("#nextPg", pagerEl); if (nx) nx.onclick = () => { pageIdx++; draw($("#lbSearch", body).value); };
-    }
-    draw();
-    $("#lbSearch", body).oninput = (e) => { pageIdx = 0; draw(e.target.value); };
+    if (bagelSort.col === "rp") bagelSort = { col: "rank", dir: "asc" };
+    drawBagelList(body, list, mode, year, tool + `<span class="badge ${note === "live" ? "green" : ""} dot">${esc(note)}</span>`);
     const rs = $("#regionSel", body);
-    if (rs) rs.onchange = () => { if (mode === "state") bagelState = rs.value; else bagelDistrict = rs.value; renderBagelStats($("#view")); };
+    if (rs) rs.onchange = () => { if (mode === "state") bagelState = rs.value; else bagelDistrict = rs.value; bagelShown = 50; renderBagelWorld(body, mode, year); };
   }
 
   async function renderBagelEvent(body) {
     const s = Store.getSettings();
-    // No event selected yet
     if (!s.eventKey) {
-      body.innerHTML = `<div class="card">${emptyState("calendar", "No event selected",
-        "Choose your event on the Dashboard (or the event name at the bottom-left) to see live event EPA, ranks & RP.")}
+      body.innerHTML = `<div class="card">${emptyState("calendar", "No event selected", "Pick your event from the sidebar to see live event EPA, ranks and RP.")}
         <div class="row" style="justify-content:center"><button class="btn primary" id="pickEv">${icon("calendar")} Choose event</button></div></div>`;
-      const pe = $("#pickEv", body); if (pe) pe.onclick = openEventPicker;
+      $("#pickEv", body).onclick = openEventPicker;
       return;
     }
-    body.innerHTML = `<div class="empty">${icon("chart")}<p class="muted">Loading ${esc(s.eventName || s.eventKey)} matches…</p></div>`;
     let fetchErr = null;
     try { await API.getEventMatches(s.eventKey); } catch (e) { fetchErr = e.message; }
+    if (!body.isConnected) return;
     const epa = currentEventEpa();
     if (!epa || !epa.ranked.length) {
-      let title = "No match data yet", msg, showRetry = true;
-      if (fetchErr === "NO_KEY") { title = "No Blue Alliance key";
-        msg = "The event EPA is built from TBA match results, which need a key. Paste yours in js/config.js (defaultTbaKey) or Settings → The Blue Alliance → Advanced, then Retry."; }
-      else if (fetchErr === "BAD_KEY") { title = "Blue Alliance key rejected";
-        msg = "Your TBA key was rejected. Check it in js/config.js / Settings → The Blue Alliance, then Retry."; }
-      else if (fetchErr) { title = "Couldn't reach The Blue Alliance";
-        msg = "Offline or TBA is unreachable. Connect to wifi and tap Retry — during a live event, data updates as matches are scored."; }
-      else { msg = "No qualification matches have been scored yet for this event. They'll appear automatically as results post — tap Retry to refresh."; }
+      const title = fetchErr === "NO_KEY" ? "No Blue Alliance key" : fetchErr === "BAD_KEY" ? "Blue Alliance key rejected" : fetchErr ? "Couldn't reach The Blue Alliance" : "No match data yet";
+      const msg = fetchErr ? "Event EPA is built from TBA match results. Check your connection or key, then retry."
+        : "No qualification matches have been scored yet. Results appear here as they post.";
       body.innerHTML = `<div class="card">${emptyState("chart", title, msg)}
-        <div class="row" style="justify-content:center">${showRetry ? `<button class="btn primary" id="retryEv">${icon("search")} Retry now</button>` : ""}</div></div>`;
-      const rt = $("#retryEv", body); if (rt) rt.onclick = () => renderBagelEvent(body);
+        <div class="row" style="justify-content:center"><button class="btn primary" id="retryEv">${icon("search")} Retry now</button></div></div>`;
+      $("#retryEv", body).onclick = () => renderBagelEvent(body);
       return;
     }
-    // TBA rankings → rank / ranking score (RP) / W-L-T
     let rankMap = {};
     try {
       const { rankings } = await API.getEventRankings(s.eventKey);
       rankings.forEach((r) => {
-        const t = r.team_key.replace("frc", "");
-        rankMap[t] = { rank: r.rank, rp: (r.sort_orders && r.sort_orders.length ? r.sort_orders[0] : null),
+        rankMap[r.team_key.replace("frc", "")] = { rank: r.rank, rp: (r.sort_orders && r.sort_orders.length ? r.sort_orders[0] : null),
           record: r.record ? { w: r.record.wins, l: r.record.losses, t: r.record.ties } : null };
       });
     } catch (e) { /* rankings optional */ }
-    const haveRanks = Object.keys(rankMap).length > 0;
-
+    if (!body.isConnected) return;
     const rows = epa.ranked.map((r) => {
       const tr = rankMap[r.team] || {};
-      return { team: r.team, name: teamName(r.team), epa: r.epa, breakdown: r.breakdown,
-        tbaRank: tr.rank ?? null, rp: tr.rp ?? null, record: tr.record ?? null };
+      return { team: r.team, name: teamName(r.team), epa: r.epa, breakdown: r.breakdown, tbaRank: tr.rank ?? r.rank ?? null, rp: tr.rp ?? null, record: tr.record ?? null };
     });
-    // Default to TBA rank order on the Event tab
-    if (haveRanks) bagelSort = { col: "rank", dir: "asc" };
-    body.innerHTML = `
-      <div class="section-head" style="margin-top:4px">
-        <div><h3 style="margin:0">${esc(s.eventName || s.eventKey)}</h3>
-          <span class="hint">EPA on-device from ${epa.played} matches · ${haveRanks ? "ranks & RP from TBA" : "TBA ranks unavailable"} · ${rows.length} teams</span></div>
-        <input type="search" id="lbSearch" placeholder="Search team…" style="min-width:200px;flex:none" />
-      </div>
-      <div id="lbList"></div>`;
-    const listEl = $("#lbList", body);
-    function draw(filter = "") {
-      const f = filter.trim().toLowerCase();
-      let r = f ? rows.filter((x) => x.team.includes(f) || (x.name || "").toLowerCase().includes(f)) : rows;
-      r = applyBagelSort(r, "event");
-      listEl.innerHTML = r.length ? leaderboardTable(r, { mode: "event" }) : emptyState("search", "No teams", "Try another search.");
-      wireLeaderboard(listEl, () => draw($("#lbSearch", body).value));
-      paintAvatars(listEl, r.map((x) => x.team));
-    }
-    draw();
-    $("#lbSearch", body).oninput = (e) => draw(e.target.value);
+    if (bagelSort.col === "win") bagelSort = { col: "rank", dir: "asc" };
+    drawBagelList(body, rows, "event", GAME.season,
+      `<span class="badge green dot">${esc(s.eventName || s.eventKey)} · ${epa.played} matches</span>`);
   }
 
   function gotoBagel(tab, team) {
-    bagelTab = tab; bagelFocusTeam = team || null;
+    bagelTab = tab; bagelFocusTeam = team || null; bagelYear = 0;
     if (current() === "bagelstats") renderBagelStats($("#view")); else go("bagelstats");
   }
 
   /* ===========================================================================
      VIEW: COMPARE  (overlay multiple teams' EPA graphs + stat comparison)
      ======================================================================== */
-  let compareTab = "global";     // global | event
+  let compareTab = "global";     // global | event | charts
   let compareTeams = [];         // team numbers being compared
 
   function addToCompare(team) {
@@ -4298,127 +4430,265 @@
 
   function renderCompare(root) {
     const s = Store.getSettings();
+    const tabs = [["global", "Global", "globe"], ["event", "Event", "calendar"], ["charts", "Charts", "chart"]];
     root.innerHTML = `
-      <div class="section-head">
-        <div class="pill-toggle" id="cmpTabs">
-          <button data-t="global" class="${compareTab === "global" ? "on" : ""}">Global</button>
-          <button data-t="event" class="${compareTab === "event" ? "on" : ""}">Event</button>
-        </div>
-        <span class="badge cyan">EPA · ${GAME.seasonLabel}</span>
-      </div>
-      <div class="card" style="margin-bottom:16px">
-        <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
-          <div class="field" style="margin:0"><label>Add a team to compare</label>
-            ${compareTab === "event" && eventTeams().length
-              ? `<select id="cmpAdd" style="min-width:200px"><option value="">Select team…</option>${
-                  eventTeams().filter((t) => !compareTeams.includes(String(t.team_number)))
-                    .map((t) => `<option value="${t.team_number}">${t.team_number} · ${esc(t.nickname || "")}</option>`).join("")}</select>`
-              : `<input type="number" id="cmpAdd" placeholder="Team #" inputmode="numeric" style="max-width:160px" />`}</div>
-          <button class="btn primary" id="cmpAddBtn">${icon("plus")} Add</button>
-          <button class="btn ghost" id="cmpTop5">${icon("trophy")} Top 5 by EPA</button>
-          ${compareTab === "event" && !eventTeams().length ? `<span class="hint">Pick an event on the Dashboard to get a team dropdown.</span>` : ""}
-        </div>
-        <div id="cmpChips" class="row" style="gap:8px;margin-top:12px;flex-wrap:wrap"></div>
-      </div>
-      <div class="card" style="margin-bottom:16px">
-        <h3>${icon("chart")} EPA over time</h3>
-        <div id="cmpChart"><p class="muted" style="text-align:center;padding:14px 0">Add teams above to overlay their EPA graphs.</p></div>
-      </div>
-      <div class="card"><h3>Stat comparison</h3><div id="cmpStats"></div></div>`;
-
+      ${pageHero({ ic: "linegraph", eyebrow: `Compare · ${esc(GAME.seasonLabel)}`, title: compareTab === "charts" ? "Charts" : "Head to head",
+        sub: compareTab === "charts" ? "Every team this season on one chart. Hover a bubble for the team and its EPA."
+          : "Stack up to 6 teams: EPA over time, where their points come from, and every stat side by side." })}
+      <div class="subtabs" id="cmpTabs">${tabs.map(([k, l, ic]) => `<button data-t="${k}" class="${compareTab === k ? "on" : ""}">${icon(ic)} ${l}</button>`).join("")}</div>
+      <div id="cmpBody"></div>`;
     $$("#cmpTabs button", root).forEach((b) => b.onclick = () => { compareTab = b.dataset.t; renderCompare(root); });
-    const addBtn = $("#cmpAddBtn", root), addInput = $("#cmpAdd", root);
+    const body = $("#cmpBody", root);
+    if (compareTab === "charts") return renderCompareCharts(body);
+
+    body.innerHTML = `
+      <div class="card ev-toolbar cmp-add">
+        ${compareTab === "event" && eventTeams().length
+          ? `<label class="bs-region grow">${icon("plus")}<select id="cmpAdd" aria-label="Add a team"><option value="">Add a team from this event…</option>${
+              eventTeams().filter((t) => !compareTeams.includes(String(t.team_number)))
+                .map((t) => `<option value="${t.team_number}">${t.team_number} · ${esc(t.nickname || "")}</option>`).join("")}</select></label>`
+          : `<label class="ds-search" for="cmpAdd">${icon("plus")}<input type="number" id="cmpAdd" placeholder="Add a team #" inputmode="numeric" /></label>
+             <button class="btn primary sm" id="cmpAddBtn">${icon("plus")} Add</button>`}
+        <button class="btn ghost sm" id="cmpTop5">${icon("trophy")} Top 5 by EPA</button>
+        ${compareTeams.length ? `<button class="btn ghost sm" id="cmpClear">${icon("x")} Clear</button>` : ""}
+      </div>
+      <div id="cmpChips" class="cmp-tiles"></div>
+      <section class="card cmp-card"><div class="sr-head"><h3>${icon("linegraph")} EPA over time</h3><span class="hint">hover to read every team at once</span></div>
+        <div id="cmpChart"></div></section>
+      <div class="grid cols-2 cmp-split">
+        <section class="card cmp-card"><div class="sr-head"><h3>${icon("chart")} Where the points come from</h3><span class="hint">auto · teleop · endgame</span></div><div id="cmpBreak"></div></section>
+        <section class="card cmp-card"><div class="sr-head"><h3>${icon("list")} Stat by stat</h3><span class="hint">best in each row is highlighted</span></div><div id="cmpStats"></div></section>
+      </div>`;
+
+    const addInput = $("#cmpAdd", body);
     const add = () => {
       const t = (addInput.value || "").replace(/\D/g, "");
       if (!t) return;
       if (!compareTeams.includes(t)) { if (compareTeams.length >= 6) { toast("Up to 6 teams", "err"); return; } compareTeams.push(t); }
-      addInput.value = ""; draw();
+      addInput.value = ""; renderCompare(root);
     };
-    addBtn.onclick = add;
+    if ($("#cmpAddBtn", body)) $("#cmpAddBtn", body).onclick = add;
     addInput.onkeydown = (e) => { if (e.key === "Enter") add(); };
-    // Fill the compare list with the 5 highest-EPA teams for the current tab.
-    $("#cmpTop5", root).onclick = () => {
+    if (addInput.tagName === "SELECT") addInput.onchange = add;
+    const clr = $("#cmpClear", body); if (clr) clr.onclick = () => { compareTeams = []; renderCompare(root); };
+    $("#cmpTop5", body).onclick = () => {
       let ranked;
       if (compareTab === "event") {
         const ev = currentEventEpa();
-        const pool = eventTeams().map((t) => String(t.team_number)).filter((t) => ev && ev.byTeam[t]);
-        ranked = pool.sort((a, b) => ev.byTeam[b].epa - ev.byTeam[a].epa);
+        ranked = eventTeams().map((t) => String(t.team_number)).filter((t) => ev && ev.byTeam[t]).sort((a, b) => ev.byTeam[b].epa - ev.byTeam[a].epa);
         if (!ranked.length) { toast("No event EPA yet — load the event's matches (needs wifi) first", "err"); return; }
       } else {
-        const epaMap = buildSeasonEpa();
-        const evTeams = eventTeams().map((t) => String(t.team_number));
-        if (evTeams.length) ranked = evTeams.filter((t) => epaMap[t] != null).sort((a, b) => epaMap[b] - epaMap[a]);
-        else ranked = (API.sbCachedLeaderboard(GAME.season) || []).map((r) => String(r.team)); // world top 5
+        const epaMap = buildSeasonEpa(), evTeams = eventTeams().map((t) => String(t.team_number));
+        ranked = evTeams.length ? evTeams.filter((t) => epaMap[t] != null).sort((a, b) => epaMap[b] - epaMap[a])
+          : (API.sbCachedLeaderboard(GAME.season) || []).map((r) => String(r.team));
         if (!ranked.length) { toast("Load World EPA first (BagelStats → World)", "err"); return; }
       }
       compareTeams = ranked.slice(0, 5);
-      draw();
+      renderCompare(root);
       toast("Added the top 5 teams by EPA");
     };
 
-    async function draw() {
-      // chips
-      const chipsEl = $("#cmpChips", root);
-      chipsEl.innerHTML = compareTeams.length
-        ? compareTeams.map((t, i) => `<span class="cmp-chip" style="border-color:${CMP_PALETTE[i % CMP_PALETTE.length]}">
-            <i style="background:${CMP_PALETTE[i % CMP_PALETTE.length]}"></i>${t}
-            <button data-rm="${t}" aria-label="Remove">${icon("x")}</button></span>`).join("")
-        : `<span class="hint">No teams added yet.</span>`;
-      $$("[data-rm]", chipsEl).forEach((b) => b.onclick = () => { compareTeams = compareTeams.filter((x) => x !== b.dataset.rm); draw(); });
+    const colorOf = (i) => CMP_PALETTE[i % CMP_PALETTE.length];
+    const chipsEl = $("#cmpChips", body);
+    chipsEl.innerHTML = compareTeams.length ? compareTeams.map((t, i) => `
+      <div class="cmp-tile" style="--line:${colorOf(i)}">
+        ${teamTileHTML(t, `<span class="cmp-line"></span>line ${i + 1}`, { mini: true })}
+        <button class="cmp-x" data-rm="${t}" aria-label="Remove ${t}">${icon("x")}</button>
+      </div>`).join("")
+      : `<div class="mb-empty">${icon("compare")}<span>Add teams above (or tap <b>Compare</b> on any team) to stack them up.</span></div>`;
+    wireTeamTiles(chipsEl);
+    $$("[data-rm]", chipsEl).forEach((b) => b.onclick = () => { compareTeams = compareTeams.filter((x) => x !== b.dataset.rm); renderCompare(root); });
 
-      const chartEl = $("#cmpChart", root), statsEl = $("#cmpStats", root);
-      if (!compareTeams.length) {
-        chartEl.innerHTML = `<p class="muted" style="text-align:center;padding:14px 0">Add teams above to overlay their EPA graphs.</p>`;
-        statsEl.innerHTML = ""; return;
-      }
-      // distinct palette colors (match the chips) so lines are easy to tell apart
-      const colorOf = (t, i) => CMP_PALETTE[i % CMP_PALETTE.length];
+    const chartEl = $("#cmpChart", body), statsEl = $("#cmpStats", body), breakEl = $("#cmpBreak", body);
+    if (!compareTeams.length) {
+      chartEl.innerHTML = `<p class="muted" style="text-align:center;padding:14px 0">Add teams to overlay their EPA graphs.</p>`;
+      statsEl.innerHTML = breakEl.innerHTML = `<p class="muted">Nothing to compare yet.</p>`;
+      return;
+    }
+    // ---- stats + breakdown (instant) ----
+    const lbMap = {}; (API.sbCachedLeaderboard(GAME.season) || []).forEach((r) => { lbMap[r.team] = r; });
+    const ev = currentEventEpa();
+    const src = (t) => compareTab === "event" ? (ev && ev.byTeam[t] ? { epa: ev.byTeam[t].epa, breakdown: ev.byTeam[t].breakdown } : null) : lbMap[t] || null;
+    const num = (v) => (v == null || isNaN(v)) ? null : Number(v);
+    const rows = compareTab === "event" ? [
+      ["Event EPA", (t) => num(src(t) && src(t).epa), 1],
+      ["Auto EPA", (t) => num(src(t) && src(t).breakdown && src(t).breakdown.auto), 1],
+      ["Teleop EPA", (t) => num(src(t) && src(t).breakdown && src(t).breakdown.teleop), 1],
+      ["Endgame EPA", (t) => num(src(t) && src(t).breakdown && src(t).breakdown.endgame), 1],
+      ["Event rank", (t) => num(ev && ev.byTeam[t] && ev.byTeam[t].rank), -1, "#"],
+      ["Matches scouted", (t) => computeStats(t).matches, 1],
+      ["Avg cycles (scouted)", (t) => num(computeStats(t).avgCycles) || null, 1],
+    ] : [
+      ["Season EPA", (t) => num(lbMap[t] && lbMap[t].epa), 1],
+      ["Auto EPA", (t) => num(lbMap[t] && lbMap[t].breakdown && lbMap[t].breakdown.auto), 1],
+      ["Teleop EPA", (t) => num(lbMap[t] && lbMap[t].breakdown && lbMap[t].breakdown.teleop), 1],
+      ["Endgame EPA", (t) => num(lbMap[t] && lbMap[t].breakdown && lbMap[t].breakdown.endgame), 1],
+      ["World rank", (t) => num(lbMap[t] && lbMap[t].worldRank), -1, "#"],
+      ["State rank", (t) => num(lbMap[t] && lbMap[t].stateRank), -1, "#"],
+      ["Win rate", (t) => { const r = lbMap[t] && lbMap[t].record; const g = r ? r.w + r.l + r.t : 0; return g ? Math.round(r.w / g * 100) : null; }, 1, "", "%"],
+    ];
+    statsEl.innerHTML = `<div class="table-wrap"><table class="cmp-table">
+      <thead><tr><th>Stat</th>${compareTeams.map((t, i) => `<th class="num"><span class="cmp-th"><i style="background:${colorOf(i)}"></i>${t}</span></th>`).join("")}</tr></thead>
+      <tbody>${rows.map(([label, fn, dir, pre = "", post = ""]) => {
+        const vals = compareTeams.map(fn), real = vals.filter((v) => v != null);
+        const best = real.length > 1 ? (dir > 0 ? Math.max(...real) : Math.min(...real)) : null;
+        return `<tr><td class="muted">${label}</td>${vals.map((v) => `<td class="num${v != null && v === best ? " best" : ""}">${v == null ? "–" : pre + (Number.isInteger(v) ? v : fmt(v)) + post}</td>`).join("")}</tr>`;
+      }).join("")}</tbody></table></div>`;
+    const parts = [["auto", "Auto", "a"], ["teleop", "Teleop", "t"], ["endgame", "Endgame", "e"]];
+    const maxTot = Math.max(1, ...compareTeams.map((t) => { const x = src(t); return x ? x.epa || 0 : 0; }));
+    breakEl.innerHTML = `<div class="cmp-break">${compareTeams.map((t, i) => {
+      const x = src(t), b = (x && x.breakdown) || {};
+      return `<div class="cmp-brow"><span class="cmp-bteam"><i style="background:${colorOf(i)}"></i>${t}</span>
+        <span class="tp-stack cmp-stack">${x ? parts.map(([k, l, c]) => `<span class="tp-seg ${c}" style="width:${Math.max(0, (b[k] || 0) / maxTot * 100)}%" title="${l} ${fmt(b[k])}"></span>`).join("") : ""}</span>
+        <b>${x ? fmt(x.epa) : "–"}</b></div>`;
+    }).join("")}</div>
+      <div class="cmp-legend">${parts.map(([, l, c]) => `<span class="cmp-leg"><i class="tp-key ${c}"></i>${l}</span>`).join("")}</div>`;
 
-      // ---- EPA graph (per-team match series) ----
-      chartEl.innerHTML = `<p class="muted" style="text-align:center;padding:14px 0">Loading EPA graphs…</p>`;
-      const ek = s.eventKey;
-      const seriesList = [];
-      for (let i = 0; i < compareTeams.length; i++) {
-        const t = compareTeams[i];
-        let pts = [];
-        try {
-          const rows = await API.sbTeamMatches(t, GAME.season);
-          pts = (compareTab === "event" ? rows.filter((m) => m.event === ek) : rows).map((m) => ({ epa: m.epa }));
-        } catch (e) {}
-        seriesList.push({ team: t, color: colorOf(t, i), points: pts });
-      }
-      renderMultiLineChart(chartEl, seriesList);
+    // ---- EPA over time (async) ----
+    chartEl.innerHTML = `<div class="tp-loading"><span class="tp-spin"></span>Loading EPA graphs…</div>`;
+    Promise.all(compareTeams.map((t) => API.sbTeamMatches(t, GAME.season).catch(() => [])))
+      .then((all) => {
+        if (!chartEl.isConnected) return;
+        renderMultiLineChart(chartEl, compareTeams.map((t, i) => ({ team: t, color: colorOf(i),
+          points: (compareTab === "event" ? all[i].filter((m) => m.event === s.eventKey) : all[i]).map((m) => ({ epa: m.epa })) })));
+      });
+  }
 
-      // ---- Stat comparison table ----
-      const lb = API.sbCachedLeaderboard(GAME.season) || [];
-      const lbMap = {}; lb.forEach((r) => { lbMap[r.team] = r; });
-      const ev = currentEventEpa();
-      let rows;
-      if (compareTab === "event") {
-        rows = [
-          ["Event EPA", (t) => ev && ev.byTeam[t] ? fmt(ev.byTeam[t].epa) : "–"],
-          ["Auto EPA", (t) => ev && ev.byTeam[t] && ev.byTeam[t].breakdown ? fmt(ev.byTeam[t].breakdown.auto) : "–"],
-          ["Teleop EPA", (t) => ev && ev.byTeam[t] && ev.byTeam[t].breakdown ? fmt(ev.byTeam[t].breakdown.teleop) : "–"],
-          ["Endgame EPA", (t) => ev && ev.byTeam[t] && ev.byTeam[t].breakdown ? fmt(ev.byTeam[t].breakdown.endgame) : "–"],
-          ["Event rank", (t) => ev && ev.byTeam[t] ? "#" + ev.byTeam[t].rank : "–"],
-        ];
-      } else {
-        rows = [
-          ["Season EPA", (t) => lbMap[t] ? fmt(lbMap[t].epa) : "–"],
-          ["Auto EPA", (t) => lbMap[t] && lbMap[t].breakdown ? fmt(lbMap[t].breakdown.auto) : "–"],
-          ["Teleop EPA", (t) => lbMap[t] && lbMap[t].breakdown ? fmt(lbMap[t].breakdown.teleop) : "–"],
-          ["Endgame EPA", (t) => lbMap[t] && lbMap[t].breakdown ? fmt(lbMap[t].breakdown.endgame) : "–"],
-          ["World rank", (t) => lbMap[t] ? "#" + lbMap[t].worldRank : "–"],
-          ["State rank", (t) => lbMap[t] && lbMap[t].stateRank ? "#" + lbMap[t].stateRank : "–"],
-          ["Record (W-L-T)", (t) => lbMap[t] && lbMap[t].record ? `${lbMap[t].record.w}-${lbMap[t].record.l}-${lbMap[t].record.t}` : "–"],
-        ];
-      }
-      statsEl.innerHTML = `<div class="table-wrap"><table>
-        <thead><tr><th>Stat</th>${compareTeams.map((t, i) =>
-          `<th class="num"><span class="cmp-th" style="color:${colorOf(t, i)}">${t}</span></th>`).join("")}</tr></thead>
-        <tbody>${rows.map(([label, fn]) => `<tr><td class="muted">${label}</td>${
-          compareTeams.map((t) => `<td class="num">${fn(t)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>
-        ${compareTab === "event" && !s.eventKey ? `<p class="hint" style="margin-top:10px">Select an event on the Dashboard to see event stats.</p>` : ""}`;
+  /* ---- Compare → Charts: bubble chart of every team + distribution + top 20 ---- */
+  const CHART_METRICS = {
+    epa: ["Total EPA", (r) => r.epa],
+    auto: ["Auto EPA", (r) => r.breakdown && r.breakdown.auto],
+    teleop: ["Teleop EPA", (r) => r.breakdown && r.breakdown.teleop],
+    endgame: ["Endgame EPA", (r) => r.breakdown && r.breakdown.endgame],
+    wins: ["Wins", (r) => (r.record ? r.record.w : null)],
+    winrate: ["Win rate %", (r) => { const g = r.record ? r.record.w + r.record.l + r.record.t : 0; return g ? r.record.w / g * 100 : null; }],
+  };
+  let chartOpts = { x: "teleop", y: "auto", size: "epa", scope: "world", year: 0, offseason: false, find: "" };
+  async function renderCompareCharts(body) {
+    const year = chartOpts.year || GAME.season;
+    const years = []; for (let y = GAME.season; y >= 2002; y--) years.push(y);
+    const metricOpts = (sel) => Object.entries(CHART_METRICS).map(([k, [l]]) => `<option value="${k}" ${sel === k ? "selected" : ""}>${l}</option>`).join("");
+    body.innerHTML = `
+      <div class="card ch-tools">
+        <label class="bs-region">${icon("calendar")}<select id="chYear" aria-label="Season">${years.map((y) => `<option ${y === year ? "selected" : ""}>${y}</option>`).join("")}</select></label>
+        <div class="seg" id="chScope">${[["world", "World"], ["state", "My state"], ["district", "My district"], ["event", "Event"]].map(([k, l]) =>
+          `<button data-sc="${k}" class="${chartOpts.scope === k ? "on" : ""}" ${k === "event" && year !== GAME.season ? "disabled" : ""}>${l}</button>`).join("")}</div>
+        <label class="ch-sel"><span>X axis</span><select id="chX">${metricOpts(chartOpts.x)}</select></label>
+        <label class="ch-sel"><span>Y axis</span><select id="chY">${metricOpts(chartOpts.y)}</select></label>
+        <label class="ch-sel"><span>Bubble size</span><select id="chSize"><option value="epa" ${chartOpts.size === "epa" ? "selected" : ""}>Total EPA</option><option value="none" ${chartOpts.size === "none" ? "selected" : ""}>Same size</option></select></label>
+        <label class="ch-toggle"><input type="checkbox" id="chOff" ${chartOpts.offseason ? "checked" : ""}/><span class="ch-switch"></span>Include offseason</label>
+        <label class="ds-search ch-find" for="chFind">${icon("search")}<input id="chFind" type="search" placeholder="Highlight a team…" value="${esc(chartOpts.find)}" inputmode="numeric" /></label>
+      </div>
+      <section class="card ch-card"><div class="sr-head"><h3>${icon("chart")} <span id="chTitle"></span></h3><span class="hint" id="chCount"></span></div>
+        <div class="ch-wrap" id="chWrap"><div class="tp-loading"><span class="tp-spin"></span>Loading ${year} teams…</div></div>
+        <div class="ch-legend" id="chLegend"></div></section>
+      <div class="grid cols-2 cmp-split">
+        <section class="card ch-card"><div class="sr-head"><h3>${icon("chart")} EPA distribution</h3><span class="hint" id="histNote"></span></div><div id="chHist"></div></section>
+        <section class="card ch-card"><div class="sr-head"><h3>${icon("trophy")} Top 20 by EPA</h3><span class="hint">auto · teleop · endgame</span></div><div id="chTop"></div></section>
+      </div>`;
+    const rerun = () => renderCompareCharts(body);
+    $("#chYear", body).onchange = (e) => { chartOpts.year = Number(e.target.value); if (chartOpts.year !== GAME.season && chartOpts.scope === "event") chartOpts.scope = "world"; rerun(); };
+    $$("#chScope button", body).forEach((b) => b.onclick = () => { chartOpts.scope = b.dataset.sc; rerun(); });
+    $("#chX", body).onchange = (e) => { chartOpts.x = e.target.value; draw(); };
+    $("#chY", body).onchange = (e) => { chartOpts.y = e.target.value; draw(); };
+    $("#chSize", body).onchange = (e) => { chartOpts.size = e.target.value; draw(); };
+    $("#chOff", body).onchange = (e) => { chartOpts.offseason = e.target.checked; draw(); };
+    $("#chFind", body).oninput = (e) => { chartOpts.find = e.target.value.replace(/\D/g, ""); draw(); };
+
+    let lb = null;
+    try { lb = (await API.sbYearLeaderboard(year, 15 * 60000)).rows; } catch (e) { lb = API.sbCachedLeaderboard(year); }
+    if (!body.isConnected) return;
+    if (!lb || !lb.length) {
+      $("#chWrap", body).innerHTML = emptyState("chart", `No ${year} data`, year === GAME.season && seasonUpcoming()
+        ? "Statbotics publishes EPA once the season's matches start. Pick an earlier year above." : "Statbotics isn't responding. Try again in a bit.");
+      return;
+    }
+    const me = lb.find((r) => r.team === OUR_TEAM);
+    const evSet = new Set(eventTeams().map((t) => String(t.team_number)));
+    const cmpIdx = {}; compareTeams.forEach((t, i) => { cmpIdx[t] = i; });
+
+    function draw() {
+      let rows = lb;
+      if (!chartOpts.offseason) rows = rows.filter((r) => r.record && (r.record.w + r.record.l + r.record.t) > 0);
+      if (chartOpts.scope === "state") rows = rows.filter((r) => me && r.state === me.state);
+      else if (chartOpts.scope === "district") rows = rows.filter((r) => me && me.district && r.district === me.district);
+      else if (chartOpts.scope === "event") rows = rows.filter((r) => evSet.has(r.team));
+      const [xl, xf] = CHART_METRICS[chartOpts.x], [yl, yf] = CHART_METRICS[chartOpts.y];
+      const pts = rows.map((r) => ({ r, x: xf(r), y: yf(r) })).filter((p) => p.x != null && p.y != null && !isNaN(p.x) && !isNaN(p.y));
+      $("#chTitle", body).textContent = `${yl} vs ${xl}`;
+      $("#chCount", body).textContent = `${pts.length.toLocaleString()} teams · ${year}`;
+      const wrap = $("#chWrap", body);
+      if (!pts.length) { wrap.innerHTML = emptyState("chart", "Nothing to plot", "No teams have both of these numbers. Try different axes."); return; }
+      const W = 900, H = 520, pad = { l: 56, r: 18, t: 16, b: 48 };
+      const ext = (arr) => { let lo = Math.min(...arr), hi = Math.max(...arr); if (lo === hi) { lo -= 1; hi += 1; } const m = (hi - lo) * 0.05; return [lo - m, hi + m]; };
+      const [x0, x1] = ext(pts.map((p) => p.x)), [y0, y1] = ext(pts.map((p) => p.y));
+      const X = (v) => pad.l + (v - x0) / (x1 - x0) * (W - pad.l - pad.r);
+      const Y = (v) => pad.t + (1 - (v - y0) / (y1 - y0)) * (H - pad.t - pad.b);
+      const eps = pts.map((p) => p.r.epa || 0), e0 = Math.min(...eps), e1 = Math.max(...eps);
+      const R = (p) => chartOpts.size === "none" ? 4.5 : 2.5 + 10 * Math.sqrt(Math.max(0, ((p.r.epa || 0) - e0) / ((e1 - e0) || 1)));
+      const ticks = (a, b) => Array.from({ length: 5 }, (_, i) => a + (b - a) * i / 4);
+      const find = chartOpts.find;
+      const kind = (t) => t === find ? "find" : cmpIdx[t] != null ? "cmp" : t === OUR_TEAM ? "us" : evSet.has(t) && chartOpts.scope !== "event" ? "ev" : "";
+      const sorted = pts.map((p, i) => ({ ...p, i, k: kind(p.r.team) })).sort((a, b) => (a.k ? 1 : 0) - (b.k ? 1 : 0) || R(b) - R(a));
+      wrap.innerHTML = `<svg class="ch-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(yl)} vs ${esc(xl)} bubble chart">
+          ${ticks(x0, x1).map((v) => `<line class="cg" x1="${X(v).toFixed(1)}" x2="${X(v).toFixed(1)}" y1="${pad.t}" y2="${H - pad.b}"/><text class="ch-ax" x="${X(v).toFixed(1)}" y="${H - pad.b + 18}" text-anchor="middle">${fmt(v, 0)}</text>`).join("")}
+          ${ticks(y0, y1).map((v) => `<line class="cg" x1="${pad.l}" x2="${W - pad.r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/><text class="ch-ax" x="${pad.l - 8}" y="${(Y(v) + 4).toFixed(1)}" text-anchor="end">${fmt(v, 0)}</text>`).join("")}
+          <text class="ch-axt" x="${(pad.l + W - pad.r) / 2}" y="${H - 8}" text-anchor="middle">${esc(xl)} →</text>
+          <text class="ch-axt" x="14" y="${(pad.t + H - pad.b) / 2}" text-anchor="middle" transform="rotate(-90 14 ${(pad.t + H - pad.b) / 2})">${esc(yl)} →</text>
+          <g class="ch-dots">${sorted.map((p) => `<circle data-i="${p.i}" class="ch-b ${p.k}" cx="${X(p.x).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="${R(p).toFixed(1)}"${p.k === "cmp" ? ` style="--c:${CMP_PALETTE[cmpIdx[p.r.team] % CMP_PALETTE.length]}"` : ""}/>`).join("")}</g>
+          ${sorted.filter((p) => p.k && p.k !== "ev").map((p) => `<text class="ch-lbl" x="${(X(p.x) + R(p) + 3).toFixed(1)}" y="${(Y(p.y) + 4).toFixed(1)}">${esc(p.r.team)}</text>`).join("")}
+        </svg><div class="ch-tip" hidden></div>`;
+      $("#chLegend", body).innerHTML = `<span><i class="ch-key"></i>Every team</span>${evSet.size && chartOpts.scope !== "event" ? `<span><i class="ch-key ev"></i>At your event</span>` : ""}
+        <span><i class="ch-key us"></i>${OUR_TEAM}</span>${compareTeams.length ? `<span><i class="ch-key cmp"></i>In Compare</span>` : ""}${find ? `<span><i class="ch-key find"></i>${esc(find)}</span>` : ""}`;
+      const svg = $("svg", wrap), tip = $(".ch-tip", wrap);
+      const show = (c) => {
+        const p = pts[+c.dataset.i]; if (!p) return;
+        const rect = wrap.getBoundingClientRect(), cr = c.getBoundingClientRect();
+        tip.hidden = false;
+        tip.innerHTML = `<b>${esc(p.r.team)}</b> ${esc(p.r.name || "")}<span>EPA <b>${fmt(p.r.epa)}</b></span><span>${esc(xl)} <b>${fmt(p.x)}</b> · ${esc(yl)} <b>${fmt(p.y)}</b></span>`;
+        let left = cr.left - rect.left + cr.width / 2 + 12, top = cr.top - rect.top - 10;
+        if (left > rect.width - 220) left = cr.left - rect.left - 222;
+        tip.style.left = Math.max(4, left) + "px"; tip.style.top = Math.max(4, top) + "px";
+        c.classList.add("hov");
+      };
+      svg.addEventListener("pointerover", (e) => { const c = e.target.closest("circle[data-i]"); if (c) show(c); });
+      svg.addEventListener("pointerout", (e) => { const c = e.target.closest("circle[data-i]"); if (c) { c.classList.remove("hov"); tip.hidden = true; } });
+      svg.addEventListener("click", (e) => {
+        const c = e.target.closest("circle[data-i]"); if (!c) return;
+        const t = pts[+c.dataset.i].r.team;
+        if (year === GAME.season) openTeam(t); else location.hash = "#/team/" + t + "/" + year;
+      });
+
+      // ---- distribution of total EPA ----
+      const all = rows.map((r) => r.epa).filter((v) => v != null);
+      const hist = $("#chHist", body);
+      if (all.length) {
+        const B = 24, lo = Math.min(...all), hi = Math.max(...all), bw = (hi - lo) / B || 1;
+        const bins = Array(B).fill(0); all.forEach((v) => { bins[Math.min(B - 1, Math.floor((v - lo) / bw))]++; });
+        const mx = Math.max(...bins), HW = 460, HH = 210, hp = { l: 8, r: 8, t: 22, b: 26 };
+        const bx = (v) => hp.l + (v - lo) / (hi - lo || 1) * (HW - hp.l - hp.r);
+        const marks = [me && me.epa != null && rows.includes(me) ? { t: OUR_TEAM, v: me.epa, c: "us" } : null,
+          ...compareTeams.map((t, i) => { const r = rows.find((x) => x.team === t); return r && r.epa != null ? { t, v: r.epa, c: "cmp", col: CMP_PALETTE[i % CMP_PALETTE.length] } : null; })].filter(Boolean);
+        hist.innerHTML = `<svg class="ch-svg" viewBox="0 0 ${HW} ${HH}" role="img" aria-label="EPA distribution">
+          ${bins.map((n, i) => { const h = n / mx * (HH - hp.t - hp.b); return `<rect class="ch-hbar" x="${(hp.l + i * (HW - hp.l - hp.r) / B + 1).toFixed(1)}" y="${(HH - hp.b - h).toFixed(1)}" width="${((HW - hp.l - hp.r) / B - 2).toFixed(1)}" height="${h.toFixed(1)}" rx="2"><title>${fmt(lo + i * bw, 0)}–${fmt(lo + (i + 1) * bw, 0)} EPA: ${n} teams</title></rect>`; }).join("")}
+          ${marks.map((m) => `<line class="ch-mark ${m.c}" x1="${bx(m.v).toFixed(1)}" x2="${bx(m.v).toFixed(1)}" y1="${hp.t - 6}" y2="${HH - hp.b}"${m.col ? ` style="stroke:${m.col}"` : ""}/><text class="ch-lbl" x="${bx(m.v).toFixed(1)}" y="${hp.t - 9}" text-anchor="middle">${esc(m.t)}</text>`).join("")}
+          <text class="ch-ax" x="${hp.l}" y="${HH - 8}">${fmt(lo, 0)}</text><text class="ch-ax" x="${HW - hp.r}" y="${HH - 8}" text-anchor="end">${fmt(hi, 0)} EPA</text>
+        </svg>`;
+        const mine = me && rows.includes(me) && me.epa != null ? all.filter((v) => v < me.epa).length / all.length : null;
+        $("#histNote", body).textContent = mine != null ? `${OUR_TEAM} is better than ${Math.round(mine * 100)}% of these teams` : `${all.length} teams`;
+      } else hist.innerHTML = `<p class="muted">No EPA data.</p>`;
+
+      // ---- top 20 stacked ----
+      const top = rows.filter((r) => r.epa != null).slice().sort((a, b) => b.epa - a.epa).slice(0, 20);
+      const tmax = Math.max(1, ...top.map((r) => r.epa));
+      $("#chTop", body).innerHTML = `<div class="ch-top">${top.map((r, i) => {
+        const b = r.breakdown || {}, w = (v) => Math.max(0, (v || 0) / tmax * 100).toFixed(1);
+        return `<button class="ch-trow${r.team === OUR_TEAM ? " ours" : ""}" data-ct="${esc(r.team)}" style="animation-delay:${i * 25}ms">
+          <span class="ch-tr">${i + 1}</span><span class="ch-tn">${esc(r.team)}</span>
+          <span class="tp-stack ch-tstack">${b.auto != null ? `<span class="tp-seg a" style="width:${w(b.auto)}%"></span><span class="tp-seg t" style="width:${w(b.teleop)}%"></span><span class="tp-seg e" style="width:${w(b.endgame)}%"></span>` : `<span class="tp-seg t" style="width:${w(r.epa)}%"></span>`}</span>
+          <b>${fmt(r.epa)}</b></button>`;
+      }).join("")}</div>`;
+      $$("[data-ct]", body).forEach((b) => b.onclick = () => (year === GAME.season ? openTeam(b.dataset.ct) : (location.hash = "#/team/" + b.dataset.ct + "/" + year)));
     }
     draw();
   }
@@ -4439,16 +4709,19 @@
     const pin = (window.CONFIG && window.CONFIG.adminPin) || "";
     if (pin && !adminUnlocked) {
       root.innerHTML = `
-        <div class="card" style="max-width:440px;margin:40px auto">
-          <div class="row" style="gap:10px;margin-bottom:6px">${icon("shield")}<h2 style="margin:0">Admin access</h2></div>
-          <p class="hint">Enter the admin PIN to view the member roster and access requests.</p>
-          <div class="field"><label>Admin PIN</label><input type="password" id="adminPin" placeholder="PIN" /></div>
+        <div class="card ad-lock">
+          <span class="ad-lock-ico">${icon("lock")}</span>
+          <h2>Admin panel</h2>
+          <p class="hint">Enter the admin PIN to manage members, passwords, forms and Bagel Bucks.</p>
+          <label class="auth-field" for="adminPin"><span class="auth-label">Admin PIN</span>
+            <span class="auth-input">${icon("key")}<input type="password" id="adminPin" placeholder="••••" inputmode="numeric" autocomplete="off" /></span></label>
           <div class="login-error" id="adminErr" hidden></div>
-          <button class="btn primary block" id="adminUnlock">${icon("shield")} Unlock</button>
+          <button class="auth-btn" id="adminUnlock"><span class="auth-btn-label">Unlock</span>${icon("arrow-right")}</button>
         </div>`;
       const tryUnlock = () => {
         if ($("#adminPin", root).value === pin) { adminUnlocked = true; renderAdmin(root); }
-        else { const e = $("#adminErr", root); e.textContent = "Wrong PIN."; e.hidden = false; }
+        else { const e = $("#adminErr", root); e.textContent = "Wrong PIN."; e.hidden = false;
+          const c = $(".ad-lock", root); c.classList.remove("shake"); void c.offsetWidth; c.classList.add("shake"); }
       };
       $("#adminUnlock", root).onclick = tryUnlock;
       $("#adminPin", root).onkeydown = (e) => { if (e.key === "Enter") tryUnlock(); };
@@ -4463,13 +4736,13 @@
     const memKeys = Object.keys(members).sort((a, b) => (members[a].first || "").localeCompare(members[b].first || ""));
     const dt = (ts) => ts ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "–";
     const tabs = [
-      ["requests", "Requests & members"],
-      ["scouters", "Scouters"],
-      ["bagelbucks", "Bagel Bucks"],
-      ["matchform", "Match form"],
-      ["pitform", "Pit form"],
-      ["testevent", "Test event"],
-      ["data", "Data"],
+      ["requests", "Members", "teams"],
+      ["scouters", "Scouters", "user"],
+      ["bagelbucks", "Bagel Bucks", "bagel"],
+      ["matchform", "Match form", "binoculars"],
+      ["pitform", "Pit form", "clipboard"],
+      ["testevent", "Test event", "flag"],
+      ["data", "Data", "database"],
     ];
     const sub = adminSub();
     const active = tabs.some((t) => t[0] === sub) ? sub : "requests";
@@ -4710,9 +4983,17 @@
       testevent: testEventHTML, data: dataHTML,
     };
 
+    const pwSet = adminCredIds ? memKeys.filter((kk) => adminCredIds.has(Store.scouterIdFor(members[kk].first, members[kk].last))).length : null;
     root.innerHTML = `
+      ${pageHero({ ic: "shield", eyebrow: "Admin panel", title: "Team control room",
+        sub: "Approve members, reset passwords, edit the scouting forms and manage Bagel Bucks.",
+        side: `<div class="ad-stats">
+          <a href="#/admin/requests" class="${reqKeys.length ? "hot" : ""}"><b>${reqKeys.length}</b><span>pending</span></a>
+          <a href="#/admin/requests"><b>${memKeys.length}</b><span>members</span></a>
+          <a href="#/admin/requests"><b>${pwSet == null ? "…" : pwSet}</b><span>passwords set</span></a>
+        </div>` })}
       <div class="subtabs" id="adminTabs">
-        ${tabs.map(([kk, l]) => `<a href="#/admin/${kk}" class="${active === kk ? "on" : ""}">${esc(l)}${kk === "requests" && reqKeys.length ? ` (${reqKeys.length})` : ""}</a>`).join("")}
+        ${tabs.map(([kk, l, ic]) => `<a href="#/admin/${kk}" class="${active === kk ? "on" : ""}">${icon(ic)} ${esc(l)}${kk === "requests" && reqKeys.length ? ` <span class="ad-badge">${reqKeys.length}</span>` : ""}</a>`).join("")}
       </div>
       <div id="adminBody">${sectionHTML[active] || requestsHTML}</div>`;
 

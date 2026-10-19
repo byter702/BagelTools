@@ -258,8 +258,18 @@ const API = (() => {
   }
   // Full-year leaderboard for EVERY active team (paginated, 1000/page; API caps limit at 1000).
   // We cache the MINIMAL processed rows (not the huge raw objects) to protect the storage quota.
-  async function sbYearLeaderboard(year) {
+  // Past seasons (BagelStats year picker) live only in memory — each full leaderboard
+  // is ~1MB, and localStorage needs that room for the current season + offline data.
+  const memYears = {};
+  // maxAgeMs: reuse a saved copy younger than this instead of re-downloading ~4 pages.
+  async function sbYearLeaderboard(year, maxAgeMs) {
     const cacheName = "sb.years." + year;
+    const persist = Number(year) === Number(window.GAME && GAME.season);
+    if (!persist && memYears[year]) return { rows: memYears[year], fromCache: true };
+    if (persist && maxAgeMs) {
+      const c = Store.getCache(cacheName, null);
+      if (c && c.rows && Date.now() - (c.ts || 0) < maxAgeMs) return { rows: c.rows, fromCache: false, savedAt: c.ts };
+    }
     try {
       let all = [], off = 0;
       while (off <= 20000) {
@@ -270,7 +280,7 @@ const API = (() => {
         off += 1000;
       }
       const rows = processYear(all);
-      Store.setCache(cacheName, { rows, ts: Date.now() });
+      if (persist) Store.setCache(cacheName, { rows, ts: Date.now() }); else memYears[year] = rows;
       return { rows, fromCache: false };
     } catch (e) {
       const c = Store.getCache(cacheName, null);
@@ -280,6 +290,7 @@ const API = (() => {
   }
   // Synchronous read of the already-cached (already-processed) leaderboard, or null.
   function sbCachedLeaderboard(year) {
+    if (memYears[year]) return memYears[year];
     const c = Store.getCache("sb.years." + year, null);
     return c && c.rows ? c.rows : null;
   }
@@ -336,6 +347,30 @@ const API = (() => {
       ranks: { world: rk(ranks.total), country: rk(ranks.country), state: rk(ranks.state), district: rk(ranks.district) },
       record: { w: firstNum(rec.wins) || 0, l: firstNum(rec.losses) || 0, t: firstNum(rec.ties) || 0, winrate: firstNum(rec.winrate) },
     };
+  }
+
+  // Every season a team played on Statbotics: EPA (points + normalized), world rank, record.
+  async function sbTeamHistory(team) {
+    const { data } = await sbCached("sb.th." + team, "/team_years?team=" + team + "&limit=100");
+    return (Array.isArray(data) ? data : []).map((r) => {
+      const e = r.epa || {}, rk = e.ranks && e.ranks.total, rec = r.record || {};
+      return {
+        year: r.year, epa: sbEpa(r), norm: firstNum(e.norm, e.unitless),
+        worldRank: rk ? firstNum(rk.rank) : null, worldCount: rk ? firstNum(rk.team_count) : null, pct: rk ? firstNum(rk.percentile) : null,
+        record: { w: firstNum(rec.wins) || 0, l: firstNum(rec.losses) || 0, t: firstNum(rec.ties) || 0 },
+      };
+    }).sort((a, b) => a.year - b.year);
+  }
+  // A team's whole history on TBA: every award and every event, all years.
+  async function getTeamHistory(team) {
+    const tk = teamKey(team);
+    const get = (name, path) => cachedTba(name, path).then((r) => r.data).catch(() => null);
+    const [awards, events] = await Promise.all([
+      get("tawardsall." + team, "/team/" + tk + "/awards"),
+      get("teventsall." + team, "/team/" + tk + "/events/simple"),
+    ]);
+    if (!awards && !events) throw new Error("TBA_OFFLINE");
+    return { awards: awards || [], events: events || [] };
   }
 
   /* ---- TBA: one team's profile + a season of results (team profile page) ---- */
@@ -402,7 +437,7 @@ const API = (() => {
 
   return { teamKey, verifyKey, hasKey, effectiveKey, getEvents, getEventTeams, getEventMatches, getEventRankings, getTeamColors, getTeamAvatar,
     sbYearLeaderboard, sbCachedLeaderboard, sbTeamEvents, sbTeamMatches, sbTeamYear, sbEpa,
-    getTeamInfo, getTeamYears, getTeamSeason,
+    getTeamInfo, getTeamYears, getTeamSeason, getTeamHistory, sbTeamHistory,
     hasNexusKey, nexusPitMap };
 })();
 
