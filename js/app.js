@@ -618,6 +618,7 @@
     compare: { title: "Compare", render: renderCompare },
     matchup: { title: "Matchup", render: renderMatchup },
     picklist: { title: "Pick List", render: renderPicklist },
+    bets: { title: "Betting", render: renderBets },
     data: { title: "Data", render: renderData },
     team: { title: "Team", render: renderTeamPage, navAs: "teams" },
     admin: { title: "Admin Panel", render: renderAdmin },
@@ -2210,7 +2211,7 @@
             <header class="tp-ev-head">
               <div>
                 <span class="tp-ev-week">${esc(week)} · ${esc(dateRange(e))}</span>
-                <h3 class="tp-ev-name">${esc(e.name)}</h3>
+                <h3 class="tp-ev-name"><a class="tp-ev-link" href="#/teams/search/${esc(e.key)}" title="Open this event">${esc(e.name)}${icon("arrow-right")}</a></h3>
                 <span class="tp-ev-loc">${icon("map-pin")} ${esc([e.city, e.state_prov, e.country].filter(Boolean).join(", "))}</span>
               </div>
               ${po ? `<span class="tp-po${won ? " gold" : ""}">${won ? icon("trophy") : icon("flag")} ${esc(po)}</span>` : ""}
@@ -2246,13 +2247,12 @@
       el.innerHTML = `<div class="sr-head"><h3>${icon("flag")} Blue banners <span class="muted">${ban.length}</span></h3>
           <span class="hint">event wins, Impact / Chairman's &amp; Engineering Inspiration</span></div>
         <div class="bb-strip">${ban.map((a, i) => `
-          <a class="bb-banner" href="#/team/${esc(team)}/${a.year}" style="--i:${i}" title="${esc(a.name)} · ${esc(evName[a.event_key] || a.event_key)}">
+          <a class="bb-banner" href="#/teams/search/${esc(a.event_key)}" style="--i:${i}" title="${esc(a.name)} · ${esc(evName[a.event_key] || a.event_key)}: open the event">
             ${FIRST_MARK}
             <b>${esc(bannerName(a))}</b>
             <span class="bb-year">${a.year}</span>
             <small>${esc(shortEventName(evName[a.event_key] || a.event_key))}</small>
           </a>`).join("")}</div>`;
-      $$(".bb-banner", el).forEach((a) => a.addEventListener("click", () => { teamPageTab = "events"; }));
     }
 
     // ---- History tab: every season, all-time totals, normalized EPA by year ----
@@ -4937,7 +4937,7 @@
         <label class="ch-sel"><span>X axis</span><select id="chX">${metricOpts(chartOpts.x)}</select></label>
         <label class="ch-sel"><span>Y axis</span><select id="chY">${metricOpts(chartOpts.y)}</select></label>
         <label class="ch-sel"><span>Bubble size</span><select id="chSize"><option value="epa" ${chartOpts.size === "epa" ? "selected" : ""}>Total EPA</option><option value="none" ${chartOpts.size === "none" ? "selected" : ""}>Same size</option></select></label>
-        <label class="ch-toggle"><input type="checkbox" id="chOff" ${chartOpts.offseason ? "checked" : ""}/><span class="ch-switch"></span>Include offseason</label>
+        <label class="ch-toggle" title="Plot each team's EPA after their latest offseason event (teams with no offseason keep their season EPA)"><input type="checkbox" id="chOff" ${chartOpts.offseason ? "checked" : ""}/><span class="ch-switch"></span>Use offseason EPA</label>
         <label class="ds-search ch-find" for="chFind">${icon("search")}<input id="chFind" type="search" placeholder="Highlight a team…" value="${esc(chartOpts.find)}" inputmode="numeric" /></label>
       </div>
       <section class="card ch-card"><div class="sr-head"><h3>${icon("chart")} <span id="chTitle"></span></h3><span class="hint" id="chCount"></span></div>
@@ -4953,7 +4953,13 @@
     $("#chX", body).onchange = (e) => { chartOpts.x = e.target.value; draw(); };
     $("#chY", body).onchange = (e) => { chartOpts.y = e.target.value; draw(); };
     $("#chSize", body).onchange = (e) => { chartOpts.size = e.target.value; draw(); };
-    $("#chOff", body).onchange = (e) => { chartOpts.offseason = e.target.checked; draw(); };
+    let offMap = null;
+    const loadOff = async () => {
+      if (offMap || !chartOpts.offseason) return;
+      $("#chCount", body).innerHTML = `<span class="tp-spin"></span> Loading offseason EPA…`;
+      try { offMap = await API.sbOffseasonEpa(year); } catch (e) { offMap = {}; toast("Couldn't load offseason EPA", "err"); }
+    };
+    $("#chOff", body).onchange = async (e) => { chartOpts.offseason = e.target.checked; await loadOff(); if (body.isConnected) draw(); };
     $("#chFind", body).oninput = (e) => { chartOpts.find = e.target.value.replace(/\D/g, ""); draw(); };
 
     let lb = null;
@@ -4969,15 +4975,17 @@
     const cmpIdx = {}; compareTeams.forEach((t, i) => { cmpIdx[t] = i; });
 
     function draw() {
-      let rows = lb;
-      if (!chartOpts.offseason) rows = rows.filter((r) => r.record && (r.record.w + r.record.l + r.record.t) > 0);
+      // Official-season teams only; "Use offseason EPA" swaps in each team's EPA after its last offseason event.
+      let rows = lb.filter((r) => r.record && (r.record.w + r.record.l + r.record.t) > 0);
+      let offN = 0;
+      if (chartOpts.offseason && offMap) rows = rows.map((r) => { const o = offMap[r.team]; if (!o) return r; offN++; return { ...r, epa: o.epa, breakdown: o.breakdown, offEvent: o.eventName }; });
       if (chartOpts.scope === "state") rows = rows.filter((r) => me && r.state === me.state);
       else if (chartOpts.scope === "district") rows = rows.filter((r) => me && me.district && r.district === me.district);
       else if (chartOpts.scope === "event") rows = rows.filter((r) => evSet.has(r.team));
       const [xl, xf] = CHART_METRICS[chartOpts.x], [yl, yf] = CHART_METRICS[chartOpts.y];
       const pts = rows.map((r) => ({ r, x: xf(r), y: yf(r) })).filter((p) => p.x != null && p.y != null && !isNaN(p.x) && !isNaN(p.y));
       $("#chTitle", body).textContent = `${yl} vs ${xl}`;
-      $("#chCount", body).textContent = `${pts.length.toLocaleString()} teams · ${year}`;
+      $("#chCount", body).textContent = `${pts.length.toLocaleString()} teams · ${year}${chartOpts.offseason && offMap ? ` · offseason EPA for ${offN.toLocaleString()}` : ""}`;
       const wrap = $("#chWrap", body);
       if (!pts.length) { wrap.innerHTML = emptyState("chart", "Nothing to plot", "No teams have both of these numbers. Try different axes."); return; }
       const W = 900, H = 520, pad = { l: 56, r: 18, t: 16, b: 48 };
@@ -5006,7 +5014,7 @@
         const p = pts[+c.dataset.i]; if (!p) return;
         const rect = wrap.getBoundingClientRect(), cr = c.getBoundingClientRect();
         tip.hidden = false;
-        tip.innerHTML = `<b>${esc(p.r.team)}</b> ${esc(p.r.name || "")}<span>EPA <b>${fmt(p.r.epa)}</b></span><span>${esc(xl)} <b>${fmt(p.x)}</b> · ${esc(yl)} <b>${fmt(p.y)}</b></span>`;
+        tip.innerHTML = `<b>${esc(p.r.team)}</b> ${esc(p.r.name || "")}<span>EPA <b>${fmt(p.r.epa)}</b>${p.r.offEvent ? ` <small>after ${esc(p.r.offEvent)}</small>` : ""}</span><span>${esc(xl)} <b>${fmt(p.x)}</b> · ${esc(yl)} <b>${fmt(p.y)}</b></span>`;
         let left = cr.left - rect.left + cr.width / 2 + 12, top = cr.top - rect.top - 10;
         if (left > rect.width - 220) left = cr.left - rect.left - 222;
         tip.style.left = Math.max(4, left) + "px"; tip.style.top = Math.max(4, top) + "px";
@@ -5051,7 +5059,8 @@
       }).join("")}</div>`;
       $$("[data-ct]", body).forEach((b) => b.onclick = () => (year === GAME.season ? openTeam(b.dataset.ct) : (location.hash = "#/team/" + b.dataset.ct + "/" + year)));
     }
-    draw();
+    await loadOff();
+    if (body.isConnected) draw();
   }
 
   /* ===========================================================================
@@ -5103,6 +5112,7 @@
       ["matchform", "Match form", "binoculars"],
       ["pitform", "Pit form", "clipboard"],
       ["testevent", "Test event", "flag"],
+      ["betting", "Betting", "coins"],
       ["data", "Data", "database"],
     ];
     const sub = adminSub();
@@ -5345,7 +5355,7 @@
     const sectionHTML = {
       requests: requestsHTML, scouters: scoutersHTML, bagelbucks: bagelBucksHTML,
       matchform: matchFormHTML, pitform: pitFormHTML,
-      testevent: testEventHTML, data: dataHTML,
+      testevent: testEventHTML, data: dataHTML, betting: `<div id="adBetting"></div>`,
     };
 
     const pwSet = adminCredIds ? memKeys.filter((kk) => adminCredIds.has(Store.scouterIdFor(members[kk].first, members[kk].last))).length : null;
@@ -5362,6 +5372,7 @@
       </div>
       <div id="adminBody">${sectionHTML[active] || requestsHTML}</div>`;
 
+    const adBet = $("#adBetting", root); if (adBet) renderAdminBetting(adBet);
     // ---- Test event handlers ----
     const doBuildTestEvent = async () => {
       toast("Building test event…");
@@ -5678,6 +5689,948 @@
      ======================================================================== */
   function applyTheme(theme) { document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "dark"); }
 
+  /* ===========================================================================
+     VIEW: BAGEL BETS — #/bets/<matches|alliances|bracket|fantasy>[/…]
+     The rules, money and Firestore transactions live in js/bets.js; this is UI.
+     ======================================================================== */
+  const BET_TABS = [["matches", "Match bets", "zap"], ["alliances", "Alliance picks", "chess"], ["bracket", "Bracket", "trophy"], ["fantasy", "Fantasy", "star"]];
+  function betsRoute() {
+    const p = location.hash.replace(/^#\/?/, "").split("/");
+    return { tab: BET_TABS.some((t) => t[0] === p[1]) ? p[1] : "matches", sub: p[2] || "", arg: decodeURIComponent(p[3] || "") };
+  }
+  let betsRedraw = null, betsReload = null, betsTick = null;
+  const BET_ERR = {
+    FUNDS: "Not enough Bagel Bucks", ONE_POOL: "You already bet on a different pool for this match", VOID: "This market was voided",
+    SETTLED: "Already settled", OFFLINE: "Betting needs an internet connection", INCOMPLETE: "Pick a winner for every match first",
+    TAKEN: "That team was just taken", FP: "Not enough FP (keep enough to fill your roster)", NOT_TURN: "It's not your turn",
+    WAIT: "Auto-pick unlocks after 3 minutes", TOO_FEW: "A league needs at least 2 players", IN_LEAGUE: "You're already in another league",
+    DRAFTED: "The draft already started", NOT_LIVE: "The draft isn't live", BAD_TRADE: "That trade isn't possible anymore",
+    GONE: "That trade is no longer pending", FULL: "Your roster is full: drop a team to sign one", NONE: "No affordable team left",
+    NOT_YOURS: "That team isn't on your roster", DRAFTING: "Wait for the draft to finish", AMOUNT: "Enter an amount", NO_USER: "Log in first",
+  };
+  const betErr = (e) => BET_ERR[e && e.message] || "Something went wrong. Try again.";
+  const cachedEventMatches = (ev) => { const c = Store.getCache("matches." + ev, null); return (c && c.data) || []; };
+  const liveMatches = (ev) => API.eventMatchesLive(ev).catch(() => cachedEventMatches(ev));
+  function relWhen(m) {
+    const t = ((m.predicted_time || m.time || 0) * 1000);
+    if (!t) return "Scheduled";
+    const d = t - Date.now();
+    if (d < 0) return "Starting";
+    if (d < 3600e3) return `in ${Math.max(1, Math.round(d / 60e3))} min`;
+    if (d < 12 * 3600e3) return `in ${Math.round(d / 3600e3)} h · ${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+    return new Date(t).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
+  }
+  // Entrance animations play on a container's first draw only, so live updates don't flicker.
+  const introOnce = (el) => { if (!el.dataset.drawn) { el.dataset.drawn = "1"; el.setAttribute("data-intro", ""); setTimeout(() => el.removeAttribute("data-intro"), 900); } };
+  const scouterById = (id) => allScouters().find((s) => s.id === id) || null;
+  const personAv = (id, cls = "bt-pav") => scouterAvatar(scouterById(id), cls);
+
+  // ---- wallet (balance · in play · net · record) ----
+  function betWallet() {
+    const bal = Store.getMe().bb || 0;
+    const mine = Object.values(Bets.cache.mine);
+    const inPlay = mine.filter((b) => !b.settled).reduce((s, b) => s + (b.amount || 0), 0);
+    const done = mine.filter((b) => b.settled && !b.refund);
+    const net = done.reduce((s, b) => s + (b.payout || 0) - (b.amount || 0), 0);
+    return { bal, inPlay, net, w: done.filter((b) => (b.payout || 0) > 0).length, l: done.filter((b) => !(b.payout > 0)).length };
+  }
+  function walletHTML() {
+    const w = betWallet();
+    return `<div class="bt-wallet" id="btWallet">
+      <div class="bt-w-main">${icon("coins")}<div><b data-count="${w.bal}">${w.bal.toLocaleString()}</b><span>Bagel Bucks</span></div></div>
+      <div class="bt-w-row">
+        <div><b>${w.inPlay.toLocaleString()}</b><span>in play</span></div>
+        <div class="${w.net > 0 ? "up" : w.net < 0 ? "down" : ""}"><b>${w.net > 0 ? "+" : ""}${w.net.toLocaleString()}</b><span>net</span></div>
+        <div><b>${w.w}–${w.l}</b><span>record</span></div>
+      </div></div>`;
+  }
+  function refreshWallet() { const el = $("#btWallet"); if (el) el.outerHTML = walletHTML(); }
+
+  function renderBets(root) {
+    const { tab } = betsRoute();
+    const s = Store.getSettings();
+    const FY = Bets.fantasyYear();
+    Bets.watch(s.eventKey || "", FY);
+    betsRedraw = null; betsReload = null;
+    const subs = {
+      matches: "Every match has four pools. Pick how it plays out, and everyone on the winning pool splits the whole pot.",
+      alliances: "Predict all 8 alliances before quals end. Free to play, up to 50 BB a slot.",
+      bracket: "Call the whole double-elimination playoff. 100 BB to enter, up to 1,140 BB back.",
+      fantasy: "Draft four robots, win weekly head-to-heads for 250 BB, and chase the 10,000 BB grand prize.",
+    };
+    root.innerHTML = `
+      <header class="bt-hero">
+        <div class="bt-hero-txt">
+          <span class="pg-eyebrow">${icon("coins")} Bagel Bets</span>
+          <h2 class="pg-title">${tab === "fantasy" ? `Fantasy Alliance ${FY}` : s.eventName ? esc(s.eventName) : "No event selected"}</h2>
+          <p class="pg-sub">${subs[tab]}</p>
+        </div>
+        ${walletHTML()}
+      </header>
+      <div class="subtabs bt-tabs">${BET_TABS.map(([k, l, ic]) => `<a href="#/bets/${k}" class="${tab === k ? "on" : ""}">${icon(ic)} ${l}</a>`).join("")}</div>
+      <div id="btBody"></div>`;
+    countUp($("#btWallet", root));
+    const body = $("#btBody", root);
+    if (!Cloud.enabled()) { body.innerHTML = `<div class="card">${emptyState("coins", "Betting is offline", "Bagel Bets needs the cloud connection so everyone's bets and payouts stay in sync.")}</div>`; return; }
+    if (tab === "fantasy") { renderFantasy(body); startBetsTick(); return; }
+    if (!s.eventKey) {
+      body.innerHTML = `<div class="card">${emptyState("calendar", "Pick an event", "Bets, alliance picks and brackets run on the event you have selected.")}
+        <div class="btn-row" style="justify-content:center"><a class="btn primary" href="#/teams/search">${icon("search")} Find an event</a></div></div>`;
+      return;
+    }
+    if (!Store.isBBApproved(s.eventKey)) {
+      body.innerHTML = `<div class="card bt-closed">${emptyState("lock", "Betting is closed for this event",
+        "An admin opens betting by approving this event for Bagel Bucks (Admin → Bagel Bucks). Then match bets, alliance picks and the bracket all unlock.")}</div>`;
+      return;
+    }
+    if (tab === "alliances") renderAlliancePreds(body, s.eventKey);
+    else if (tab === "bracket") renderBracket(body, s.eventKey);
+    else renderMatchBets(body, s.eventKey);
+    startBetsTick();
+  }
+  // Keep live data (schedule, results, alliances) fresh while a Bets page is open.
+  function startBetsTick() {
+    clearInterval(betsTick);
+    betsTick = setInterval(() => {
+      if (current() !== "bets") { clearInterval(betsTick); betsTick = null; return; }
+      if (betsReload) betsReload();
+    }, 45000);
+  }
+
+  /* ---- Match bets --------------------------------------------------------- */
+  let btFilter = "open", btShow = 12;
+  const btPick = {}, btAmt = {};
+  function renderMatchBets(body, ev) {
+    body.innerHTML = `
+      <details class="card bt-how">
+        <summary>${icon("info")} How match bets work <span class="hint">tap to read</span></summary>
+        <div class="bt-how-grid">
+          <div><b>1 · The line</b><span>Each match gets a prediction (Statbotics): who should win and by how much. It locks in when the first bet is placed.</span></div>
+          <div><b>2 · Four pools</b><span><b>Blowout</b> wins by more than predicted, <b>Called it</b> lands within ±25% of the margin, <b>Closer</b> wins by less, <b>Upset</b> the underdog wins.</span></div>
+          <div><b>3 · The pot</b><span>The house opens every match with ${Bets.SEED} BB split across the pools. The favourite's three pools share its win chance, Upset gets the rest.</span></div>
+          <div><b>4 · Payout</b><span>Everyone on the winning pool splits the <b>whole pot</b> by how much they bet. Playoff matches pay <b>2×</b>. Nobody on the winning pool? Everyone gets refunded.</span></div>
+        </div>
+      </details>
+      <div class="card bt-toolbar">
+        <div class="seg" id="btFilter"></div>
+        <span class="hint" id="btSync"></span>
+      </div>
+      <div class="bt-grid" id="btList"><div class="card tp-loading"><span class="tp-spin"></span> Loading matches…</div></div>
+      <div class="bt-more" id="btMore"></div>`;
+    const list = $("#btList", body), filterEl = $("#btFilter", body), moreEl = $("#btMore", body);
+    let ms = [], preds = {}, epa = buildSeasonEpa(), pending = false, loadedAt = 0;
+    const lineFor = (m) => {
+      const frozen = Bets.cache.lines[m.key]; if (frozen) return frozen;
+      let p = preds[m.key];
+      if (!p) {
+        const r = Bets.teamsOf(m, "red"), b = Bets.teamsOf(m, "blue");
+        if (r.length < 3 || b.length < 3 || ![...r, ...b].every((t) => epa[t] != null)) return null;
+        const rs = r.reduce((x, t) => x + epa[t], 0), bs = b.reduce((x, t) => x + epa[t], 0);
+        p = { redWin: winProb(rs, bs), redScore: rs, blueScore: bs };
+      }
+      return Bets.makeLine(p);
+    };
+    const winnerSide = (m) => m.winning_alliance || (m.alliances.red.score > m.alliances.blue.score ? "red" : m.alliances.blue.score > m.alliances.red.score ? "blue" : "");
+    const card = ({ m, st, line, bets }, uid) => {
+      const playoff = Bets.isPlayoff(m);
+      const mine = bets.find((b) => b.uid === uid);
+      const frozen = !!Bets.cache.lines[m.key];
+      const isVoid = line && line.void;
+      const out = line && st === "final" && !isVoid ? Bets.outcome(line, m) : null;
+      const P = line ? Bets.pools(line, bets) : null, labels = line ? Bets.poolLabels(line) : null;
+      const sel = (mine && mine.pool) || btPick[m.key] || null;
+      const open = st === "open" && line && !isVoid;
+      const won = st === "final" ? winnerSide(m) : "";
+      const when = st === "final" ? `Final <b>${m.alliances.red.score}–${m.alliances.blue.score}</b>` : st === "locked" ? `<span class="bt-live">${icon("zap")} Locked</span>` : esc(relWhen(m));
+      const side = (c) => {
+        const ts = Bets.teamsOf(m, c);
+        return `<div class="bt-side ${c}${line && line.winner === c ? " fav" : ""}${won === c ? " won" : ""}">
+          <div class="bt-avs">${ts.map((t) => `<img class="team-avatar" data-avatar="${esc(t)}" data-ally="${c}" alt="" title="${esc(t)} ${esc(nameFor(t))}" />`).join("")}</div>
+          <div class="bt-nums">${ts.map((t) => `<span class="${t === OUR_TEAM ? "us" : ""}">${esc(t)}</span>`).join("")}</div>
+          ${line ? `<b class="bt-pred" title="Predicted score">${c === "red" ? line.redScore : line.blueScore}</b>` : ""}
+        </div>`;
+      };
+      const pool = (p) => {
+        const share = P.pot ? P.total[p] / P.pot * 100 : 0;
+        const mult = Bets.estMultiplier(line, bets, p, open ? (Number(btAmt[m.key]) || 10) : 0, playoff);
+        const cls = ["bt-pool", p, sel === p ? "on" : "", mine && mine.pool === p ? "mine" : "", out ? (out.pool === p ? "win" : "lose") : ""].join(" ");
+        return `<button type="button" class="${cls}" data-pool="${p}" ${open && (!mine || mine.pool === p) ? "" : "disabled"}>
+          <span class="bt-pool-top"><b>${labels[p].name}</b>${out ? (out.pool === p ? icon("check") : "") : `<em>${mult ? "×" + mult.toFixed(1) : "–"}</em>`}</span>
+          <span class="bt-pool-cond">${esc(labels[p].cond)}</span>
+          <span class="bt-pool-bar"><i style="width:${share.toFixed(1)}%"></i></span>
+          <span class="bt-pool-foot"><span>${Math.round(P.total[p]).toLocaleString()} BB</span><span>${P.count[p]} ${P.count[p] === 1 ? "bettor" : "bettors"}</span></span>
+        </button>`;
+      };
+      let stake = "";
+      if (open && sel && (!mine || mine.pool === sel)) {
+        const amt = btAmt[m.key] ?? "";
+        stake = `<div class="bt-stake">
+          <div class="bt-chips">${[10, 25, 50, 100].map((v) => `<button type="button" data-amt="${v}" class="${String(v) === String(amt) ? "on" : ""}">${v}</button>`).join("")}<button type="button" data-amt="all">All in</button></div>
+          <label class="bt-amt-wrap">${icon("coins")}<input class="bt-amt" type="number" min="1" step="1" inputmode="numeric" placeholder="Amount" value="${esc(amt)}" aria-label="Bet amount" /></label>
+          <button type="button" class="btn primary bt-place">${placeLabel(m.key, line, bets, sel, playoff, labels, !!mine)}</button>
+        </div>`;
+      }
+      const mineRow = mine ? `<div class="bt-mine ${mine.settled ? (mine.refund ? "refund" : mine.payout > 0 ? "won" : "lost") : ""}">
+          ${icon("coins")}<span>You bet <b>${mine.amount.toLocaleString()}</b> on <b>${labels ? labels[mine.pool].name : mine.pool}</b></span>
+          <b class="bt-mine-res">${mine.settled ? (mine.refund ? "Refunded" : mine.payout > 0 ? "+" + mine.payout.toLocaleString() + " BB" : "−" + mine.amount.toLocaleString() + " BB")
+            : "pays ~" + Math.floor(mine.amount * (Bets.estMultiplier(line, bets, mine.pool, 0, playoff) || 0)).toLocaleString() + " BB"}</b>
+          ${st === "open" && !mine.settled ? `<button type="button" class="bt-cancel" data-cancel>Cancel</button>` : ""}
+        </div>` : "";
+      return `<article class="card bt-card ${st}${mine ? " has-mine" : ""}${playoff ? " po" : ""}" data-mk="${esc(m.key)}">
+        <header class="bt-head"><span class="bt-label">${esc(Bets.matchLabel(m))}</span>${playoff ? `<span class="bt-2x">2× payout</span>` : ""}<span class="bt-when">${when}</span></header>
+        <div class="bt-teams">${side("red")}
+          <div class="bt-mid">${line ? `<span class="bt-conf">${Math.round(line.conf * 100)}%</span><span class="bt-line">${line.winner === "red" ? "Red" : "Blue"} by ${line.diff}</span>
+            <span class="bt-lock">${frozen ? icon("lock") + " line set" : "live line"}</span>` : `<span class="bt-line">No line yet</span>`}</div>
+          ${side("blue")}</div>
+        ${line ? `<div class="bt-prob"><i style="width:${((line.winner === "red" ? line.conf : 1 - line.conf) * 100).toFixed(1)}%"></i></div>` : ""}
+        ${isVoid ? `<div class="bt-void">${icon("x")} Voided by an admin. Every stake was refunded.</div>` : line ? `<div class="bt-pools">${Bets.POOLS.map(pool).join("")}</div>` : `<p class="hint bt-noline">Bets open once there's a prediction for all six robots.</p>`}
+        ${stake}${mineRow}
+      </article>`;
+    };
+    function placeLabel(mk, line, bets, sel, playoff, labels, adding) {
+      const n = Math.floor(Number(btAmt[mk]) || 0);
+      const est = n > 0 ? Math.floor(n * (Bets.estMultiplier(line, bets, sel, n, playoff) || 0)) : 0;
+      return `${adding ? "Add" : "Bet"} ${n > 0 ? n.toLocaleString() + " " : ""}on ${labels[sel].name}${n > 0 ? `<small>wins ~${est.toLocaleString()} BB</small>` : ""}`;
+    }
+    const draw = () => {
+      if (!list.isConnected) return;
+      const a = document.activeElement;
+      if (a && a.classList && a.classList.contains("bt-amt") && list.contains(a)) { pending = true; return; }
+      pending = false;
+      const uid = Store.getMe().id;
+      const all = ms.slice().sort(Bets.matchOrder);
+      const rows = all.map((m) => ({ m, st: Bets.matchState(m, all), line: lineFor(m), bets: Bets.betsOn(m.key) })).filter((r) => r.st !== "tbd");
+      const isMine = (r) => r.bets.some((b) => b.uid === uid);
+      const groups = {
+        open: rows.filter((r) => r.st === "open"),
+        live: rows.filter((r) => r.st === "locked"),
+        done: rows.filter((r) => r.st === "final" && Bets.cache.lines[r.m.key]).reverse(),
+        mine: rows.filter((r) => isMine(r) && r.st !== "final").concat(rows.filter((r) => isMine(r) && r.st === "final").reverse()),
+      };
+      filterEl.innerHTML = [["open", "Open"], ["live", "Locked"], ["done", "Settled"], ["mine", "My bets"]]
+        .map(([k, l]) => `<button data-f="${k}" class="${btFilter === k ? "on" : ""}">${l} <span class="bt-count">${groups[k].length}</span></button>`).join("");
+      const show = groups[btFilter] || [];
+      if (!ms.length) list.innerHTML = `<div class="card">${emptyState("calendar", "No schedule yet", "Match bets open once the schedule is posted on The Blue Alliance.")}</div>`;
+      else if (!show.length) list.innerHTML = `<div class="card">${emptyState(btFilter === "mine" ? "coins" : "zap",
+        { open: "No open matches", live: "Nothing locked right now", done: "No settled markets yet", mine: "No bets yet" }[btFilter],
+        { open: "Every scheduled match has started or finished.", live: "Matches lock about a minute before they start.", done: "Markets show up here once a match with bets has a final score.", mine: "Pick a pool on any open match to place your first bet." }[btFilter])}</div>`;
+      else list.innerHTML = show.slice(0, btShow).map((r) => card(r, uid)).join("");
+      introOnce(list);
+      moreEl.innerHTML = show.length > btShow ? `<button class="btn ghost sm" id="btMoreBtn">${icon("plus")} Show more (${show.length - btShow})</button>` : "";
+      const mb = $("#btMoreBtn", moreEl); if (mb) mb.onclick = () => { btShow += 12; draw(); };
+      const ts = [...new Set(show.slice(0, btShow).flatMap((r) => [...Bets.teamsOf(r.m, "red"), ...Bets.teamsOf(r.m, "blue")]))];
+      paintAvatars(list, ts);
+      $("#btSync", body).textContent = loadedAt ? `Updated ${new Date(loadedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
+    };
+    filterEl.onclick = (e) => { const b = e.target.closest("[data-f]"); if (!b) return; btFilter = b.dataset.f; btShow = 12; draw(); };
+    list.addEventListener("click", async (e) => {
+      const cardEl = e.target.closest(".bt-card"); if (!cardEl) return;
+      const mk = cardEl.dataset.mk, m = ms.find((x) => x.key === mk); if (!m) return;
+      const pb = e.target.closest("[data-pool]");
+      if (pb) { if (pb.disabled) return; btPick[mk] = btPick[mk] === pb.dataset.pool ? null : pb.dataset.pool; draw(); const i = $(`.bt-card[data-mk="${mk}"] .bt-amt`, list); if (i) i.focus(); return; }
+      const chip = e.target.closest("[data-amt]");
+      if (chip) {
+        btAmt[mk] = chip.dataset.amt === "all" ? String(Store.getMe().bb || 0) : chip.dataset.amt;
+        const inp = $(".bt-amt", cardEl);
+        if (inp) { inp.value = btAmt[mk]; inp.dispatchEvent(new Event("input", { bubbles: true })); } else draw();
+        return;
+      }
+      if (e.target.closest(".bt-place")) {
+        const amount = Math.floor(Number(btAmt[mk]) || 0), pool = btPick[mk] || ((Bets.betsOn(mk).find((b) => b.uid === Store.getMe().id) || {}).pool);
+        if (amount <= 0) { toast("Enter an amount", "err"); return; }
+        if (amount > (Store.getMe().bb || 0)) { toast("Not enough Bagel Bucks", "err"); return; }
+        const line = lineFor(m), btn = e.target.closest(".bt-place");
+        btn.disabled = true; btn.classList.add("loading");
+        try {
+          const ln = await Bets.placeBet({ event: ev, match: m, line, pool, amount });
+          toast(`${amount.toLocaleString()} BB on ${Bets.poolLabels(ln)[pool].name} · ${Bets.matchLabel(m)}`);
+          if (ln && line && ln.diff !== line.diff) toast(`Heads up: the line was already set at ${ln.winner === "red" ? "Red" : "Blue"} by ${ln.diff}`);
+          btAmt[mk] = ""; btPick[mk] = null;
+        } catch (err) { toast(betErr(err), "err"); }
+        const fa = document.activeElement; if (fa && fa.classList && fa.classList.contains("bt-amt")) fa.blur();
+        draw(); refreshWallet();
+        return;
+      }
+      if (e.target.closest("[data-cancel]")) {
+        confirmDialog(`Cancel your ${Bets.matchLabel(m)} bet and get your Bagel Bucks back?`, async () => {
+          try { const n = await Bets.cancelBet(mk); toast(`Refunded ${n} BB`); } catch (err) { toast(betErr(err), "err"); }
+          draw(); refreshWallet();
+        });
+        return;
+      }
+      const av = e.target.closest(".team-avatar[data-avatar]"); if (av) openTeam(av.dataset.avatar);
+    });
+    list.addEventListener("input", (e) => {
+      if (!e.target.classList.contains("bt-amt")) return;
+      const cardEl = e.target.closest(".bt-card"), mk = cardEl.dataset.mk, m = ms.find((x) => x.key === mk);
+      btAmt[mk] = e.target.value;
+      const line = lineFor(m), bets = Bets.betsOn(mk), mine = bets.find((b) => b.uid === Store.getMe().id);
+      const btn = $(".bt-place", cardEl); if (btn && line) btn.innerHTML = placeLabel(mk, line, bets, (mine && mine.pool) || btPick[mk], Bets.isPlayoff(m), Bets.poolLabels(line), !!mine);
+      $$(".bt-chips [data-amt]", cardEl).forEach((c) => c.classList.toggle("on", c.dataset.amt === e.target.value));
+    });
+    list.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.classList.contains("bt-amt")) { const b = $(".bt-place", e.target.closest(".bt-card")); e.target.blur(); if (b) b.click(); } });
+    list.addEventListener("focusout", () => setTimeout(() => { if (pending) draw(); }, 0));
+    const load = async () => {
+      ms = await liveMatches(ev);
+      try { preds = await API.sbEventPreds(ev); } catch (e) { /* EPA fallback */ }
+      epa = buildSeasonEpa(); loadedAt = Date.now();
+      draw();
+      Bets.settleEvent(ms).then((n) => { if (n) draw(); });
+      Bets.settleMyOtherEvents((k) => API.eventMatchesLive(k)).catch(() => {});
+    };
+    betsRedraw = draw; betsReload = load;
+    load();
+  }
+
+  /* ---- Alliance-selection predictions -------------------------------------- */
+  let apDraft = null, apCols = 3, apEvent = null, apSaveT = null, apState = "";
+  const AP_COLS = ["Captain", "1st pick", "2nd pick", "3rd pick"];
+  function renderAlliancePreds(body, ev) {
+    const uid = Store.getMe().id, myId = ev + "__" + uid;
+    let alliances = [], ms = cachedEventMatches(ev), ranks = null;
+    if (apEvent !== ev) {
+      const doc = Bets.cache.apreds[myId];
+      apEvent = ev; apCols = (doc && doc.cols) || 3; apDraft = doc ? Bets.gridOf(doc) : Array.from({ length: 8 }, () => Array(apCols).fill(""));
+    }
+    body.innerHTML = `<div id="apWrap"><div class="card tp-loading"><span class="tp-spin"></span> Loading alliances…</div></div>`;
+    const wrap = $("#apWrap", body);
+    const posted = () => alliances.length >= 8 && alliances.every((a) => (a.picks || []).length >= 3);
+    const lockedNow = () => {
+      if (posted()) return true;
+      const quals = ms.filter((m) => m.comp_level === "qm").sort(Bets.matchOrder);
+      if (!quals.length) return false;
+      const last = quals[quals.length - 1];
+      return Bets.matchState(last, ms) !== "open";
+    };
+    const save = () => {
+      clearTimeout(apSaveT); apState = "saving"; paintSave();
+      apSaveT = setTimeout(async () => {
+        try { await Bets.saveAlliancePred(ev, apDraft, apCols); apState = "saved"; }
+        catch (e) { apState = "error"; toast(betErr(e), "err"); }
+        paintSave();
+      }, 500);
+    };
+    const paintSave = () => { const el = $("#apSave", wrap); if (el) el.innerHTML = apState === "saving" ? `<span class="tp-spin"></span> Saving…` : apState === "saved" ? `${icon("check")} Saved` : apState === "error" ? "Not saved" : ""; };
+    const rankOf = () => { const m = {}; ((ranks && ranks.rankings) || []).forEach((r) => { m[String(r.team_key).replace("frc", "")] = r; }); return m; };
+    const draw = () => {
+      if (!wrap.isConnected) return;
+      const doc = Bets.cache.apreds[myId];
+      const locked = lockedNow(), done = posted();
+      const grid = done || (locked && doc) ? Bets.gridOf(doc || { cols: apCols, slots: [] }) : apDraft;
+      const cols = done || (locked && doc) ? ((doc && doc.cols) || 3) : apCols;
+      const sc = done ? Bets.scoreAlliances(grid, alliances) : null;
+      const cellOf = {}; if (sc) sc.cells.forEach((c) => { cellOf[c.a + "-" + c.c] = c; });
+      const filled = grid.flat().filter(Boolean).length, slots = 8 * cols, max = slots * Bets.AP_PAY.exact;
+      const R = rankOf();
+      const entries = Object.values(Bets.cache.apreds);
+      const status = doc && doc.settled ? { cls: "ok", ic: "check", txt: `Alliances announced. You were paid <b>${(doc.payout || 0).toLocaleString()} BB</b>.` }
+        : done ? { cls: "ok", ic: "check", txt: "Alliances announced! Payouts are being processed." }
+        : locked ? { cls: "warn", ic: "lock", txt: "Quals are wrapping up, so predictions are locked. Waiting for alliance selection…" }
+        : { cls: "", ic: "clock", txt: `Fill the grid before the last qualification match starts. It's free, and saves automatically.` };
+      introOnce(wrap);
+      wrap.innerHTML = `
+        <section class="card ap-head">
+          <div class="ap-title">${icon("chess")}<div><h3>Alliance selection prediction</h3><span class="hint">Predict all 8 alliances. Each slot pays when the real alliances are announced.</span></div></div>
+          <div class="ap-legend">
+            <div class="exact"><b>${Bets.AP_PAY.exact} BB</b><span>Exact slot</span></div>
+            <div class="role"><b>${Bets.AP_PAY.role} BB</b><span>Right role, wrong alliance</span></div>
+            <div class="on"><b>${Bets.AP_PAY.on} BB</b><span>On a real alliance</span></div>
+            <div class="none"><b>0 BB</b><span>Not on any alliance</span></div>
+          </div>
+          <div class="ap-status ${status.cls}">${icon(status.ic)}<span>${status.txt}</span></div>
+        </section>
+        <section class="ap-hero${sc ? " scored" : ""}">
+          <div class="ap-hero-l">${sc ? ringSVG(sc.accuracy, "Accuracy") : `<span class="ap-hero-ic">${icon("target")}</span>`}
+            <div><span>${sc ? "Your accuracy" : "Slots filled"}</span><b>${sc ? `${sc.exact} exact <small>of ${sc.filled}</small>` : `${filled} / ${slots}`}</b></div></div>
+          <div class="ap-hero-r"><span>${sc ? "Payout" : "Up to"}</span><b>${sc ? `${sc.total.toLocaleString()} / ${max.toLocaleString()} BB` : `${max.toLocaleString()} BB`}</b></div>
+        </section>
+        <details class="card ap-ranks"${locked && !done ? " open" : ""}>
+          <summary>${icon("star")} Current event rankings <span class="hint">tap to ${locked && !done ? "hide" : "expand"}</span></summary>
+          <div class="ap-rank-list">${((ranks && ranks.rankings) || []).slice(0, 40).map((r) => { const t = String(r.team_key).replace("frc", ""); return `
+            <button class="ap-rank" data-team="${esc(t)}" data-tfill="${esc(t)}"><span class="ap-rk">${r.rank}</span><img class="team-avatar" data-avatar="${esc(t)}" alt="" />
+              <span class="ap-rt"><b>${esc(t)}</b><span>${esc(nameFor(t))}</span></span><span class="ap-rr">${r.record ? `${r.record.wins}-${r.record.losses}-${r.record.ties}` : ""}</span></button>`; }).join("")
+            || `<p class="hint">Rankings appear once quals start.</p>`}</div>
+        </details>
+        <section class="card flush ap-grid-card">
+          ${!locked ? `<div class="ap-tools">
+            <button class="btn ghost sm" id="apAddCol" ${apCols >= 4 ? "disabled" : ""}>${icon("plus")} Add pick column</button>
+            <button class="btn ghost sm" id="apDelCol" ${apCols <= 3 ? "disabled" : ""}>Remove last column</button>
+            <button class="btn ghost sm" id="apImport">${icon("list")} Copy my pick list</button>
+            <button class="btn ghost sm" id="apClear">${icon("trash")} Clear</button>
+            <span class="ap-save" id="apSave"></span></div>` : ""}
+          <div class="table-wrap"><table class="ap-table">
+            <thead><tr><th>#</th>${AP_COLS.slice(0, cols).map((c) => `<th>${c}</th>`).join("")}</tr></thead>
+            <tbody>${grid.map((row, a) => `<tr><td class="ap-num">${a + 1}</td>${row.map((t, c) => {
+              const cell = cellOf[a + "-" + c];
+              if (sc) return `<td><div class="ap-cell ${cell ? cell.kind : "empty"}">
+                  ${t ? `<span class="ap-ct"><img class="team-avatar" data-avatar="${esc(t)}" alt="" /><b>${esc(t)}</b></span>` : `<span class="ap-ct muted">–</span>`}
+                  <span class="ap-pts">${cell && cell.pts ? "+" + cell.pts : "+0"}</span>
+                  <span class="ap-actual">Actual: ${esc((cell && cell.actual) || (alliances[a] && (alliances[a].picks || [])[c] || "").replace("frc", "") || "–")}</span></div></td>`;
+              if (t) return `<td><button class="ap-slot filled" data-a="${a}" data-c="${c}" data-tfill="${esc(t)}" ${locked ? "disabled" : ""}>
+                  <img class="team-avatar" data-avatar="${esc(t)}" alt="" /><span class="ap-tn"><b>${esc(t)}</b><span>${esc(nameFor(t))}</span></span>
+                  ${R[t] ? `<span class="ap-trk">#${R[t].rank}</span>` : ""}${locked ? "" : `<span class="ap-x" data-x="${a}-${c}" title="Clear">${icon("x")}</span>`}</button></td>`;
+              return `<td><button class="ap-slot empty" data-a="${a}" data-c="${c}" ${locked ? "disabled" : ""}>${locked ? "–" : icon("plus") + " Pick"}</button></td>`;
+            }).join("")}</tr>`).join("")}</tbody>
+          </table></div>
+          <div class="ap-foot"><span>${filled} / ${slots} slots filled</span><span>${entries.length} ${entries.length === 1 ? "person has" : "people have"} predicted</span></div>
+        </section>
+        ${done && entries.length ? `<section class="card ap-board"><div class="sr-head"><h3>${icon("trophy")} Prediction leaderboard</h3></div>
+          ${entries.map((d) => ({ d, s: Bets.scoreAlliances(Bets.gridOf(d), alliances) })).sort((x, y) => y.s.total - x.s.total).map(({ d, s }, i) => `
+            <div class="ap-brow${d.uid === uid ? " me" : ""}"><span class="ap-bpos">${i + 1}</span>${personAv(d.uid)}<b>${esc(d.name || "Scout")}</b>
+              <span class="hint">${s.exact} exact · ${s.filled} filled</span><span class="ap-bbb">${s.total.toLocaleString()} BB</span></div>`).join("")}</section>` : ""}`;
+      const ts = [...new Set([...grid.flat().filter(Boolean), ...((ranks && ranks.rankings) || []).slice(0, 40).map((r) => String(r.team_key).replace("frc", ""))])];
+      paintAvatars(wrap, ts); paintTeamFills(wrap, ts);
+      paintSave();
+      $$(".ap-rank", wrap).forEach((b) => b.onclick = () => openTeam(b.dataset.team));
+      if (locked) return;
+      $$(".ap-slot", wrap).forEach((b) => b.onclick = (e) => {
+        const a = +b.dataset.a, c = +b.dataset.c;
+        if (e.target.closest("[data-x]")) { apDraft[a][c] = ""; save(); draw(); return; }
+        pickTeamFor(a, c);
+      });
+      $("#apAddCol", wrap).onclick = () => { apCols = 4; apDraft = apDraft.map((r) => r.concat([""]).slice(0, 4)); save(); draw(); };
+      $("#apDelCol", wrap).onclick = () => { apCols = 3; apDraft = apDraft.map((r) => r.slice(0, 3)); save(); draw(); };
+      $("#apClear", wrap).onclick = () => confirmDialog("Clear your whole alliance prediction?", () => { apDraft = apDraft.map((r) => r.map(() => "")); save(); draw(); });
+      $("#apImport", wrap).onclick = () => {
+        const b = getBoard();
+        const g = (b.grid || []).slice(0, 8).map((r) => (r || []).slice(0, apCols).map((t) => t ? String(t) : ""));
+        if (!g.flat().some(Boolean)) { toast("Your pick list board is empty", "err"); return; }
+        while (g.length < 8) g.push(Array(apCols).fill(""));
+        apDraft = g.map((r) => r.concat(Array(Math.max(0, apCols - r.length)).fill("")));
+        save(); draw(); toast("Copied from your pick list");
+      };
+    };
+    function pickTeamFor(a, c) {
+      const R = rankOf();
+      const teams = eventTeams().map((t) => String(t.team_number)).sort((x, y) => ((R[x] && R[x].rank) || 999) - ((R[y] && R[y].rank) || 999) || x - y);
+      const where = {}; apDraft.forEach((row, ra) => row.forEach((t, rc) => { if (t) where[t] = `A${ra + 1} ${AP_COLS[rc]}`; }));
+      modal(`Alliance ${a + 1} · ${AP_COLS[c]}`, `
+        <label class="ds-search ap-pick-search">${icon("search")}<input type="search" id="apQ" placeholder="Team # or name…" autocomplete="off" /></label>
+        <div class="ap-pick-list" id="apPL">${teams.map((t) => `
+          <button class="ap-pick${where[t] ? " used" : ""}" data-t="${esc(t)}" data-tfill="${esc(t)}" data-q="${esc((t + " " + nameFor(t)).toLowerCase())}">
+            <span class="ap-rk">${R[t] ? "#" + R[t].rank : "–"}</span><img class="team-avatar" data-avatar="${esc(t)}" alt="" />
+            <span class="ap-rt"><b>${esc(t)}</b><span>${esc(nameFor(t))}</span></span>${where[t] ? `<span class="badge">${esc(where[t])}</span>` : ""}</button>`).join("")
+          || `<p class="hint">No team list for this event yet.</p>`}</div>`, (mb, close) => {
+        paintAvatars(mb, teams); paintTeamFills(mb, teams);
+        const q = $("#apQ", mb); setTimeout(() => q.focus(), 30);
+        q.oninput = () => { const v = q.value.trim().toLowerCase(); $$(".ap-pick", mb).forEach((b) => { b.hidden = !!v && !b.dataset.q.includes(v); }); };
+        $$(".ap-pick", mb).forEach((b) => b.onclick = () => {
+          const t = b.dataset.t;
+          apDraft = apDraft.map((row) => row.map((x) => x === t ? "" : x)); // a team can only be in one slot
+          apDraft[a][c] = t; close(); save(); draw();
+        });
+      });
+    }
+    const load = async () => {
+      const [al, m2, rk] = await Promise.all([API.eventAlliances(ev).catch(() => alliances), liveMatches(ev), API.eventRankingsLive(ev, 120000).catch(() => ranks)]);
+      alliances = al || []; ms = m2 || ms; ranks = rk;
+      draw();
+      if (posted()) Bets.settleAlliancePreds(alliances).catch(() => {});
+    };
+    betsRedraw = draw; betsReload = load;
+    load();
+  }
+
+  /* ---- Playoff bracket ----------------------------------------------------- */
+  let brDraft = null, brEvent = null, brSaveT = null;
+  const BR_ROUND = { 1: "Round 1", 2: "Round 2", 3: "Round 3", 4: "Round 4", 5: "Round 5", 6: "Finals" };
+  function renderBracket(body, ev) {
+    const uid = Store.getMe().id, myId = ev + "__" + uid;
+    let alliances = [], ms = cachedEventMatches(ev), info = null;
+    if (brEvent !== ev) { const doc = Bets.cache.brackets[myId]; brEvent = ev; brDraft = Object.assign({}, (doc && doc.picks) || {}); }
+    body.innerHTML = `<div id="brWrap"><div class="card tp-loading"><span class="tp-spin"></span> Loading the bracket…</div></div>`;
+    const wrap = $("#brWrap", body);
+    const lockedNow = () => ms.filter((m) => m.comp_level === "sf" || m.comp_level === "f").some((m) => { const st = Bets.matchState(m, ms); return st === "locked" || st === "final"; });
+    const allianceTeams = (n) => ((alliances[n - 1] && alliances[n - 1].picks) || []).map((k) => String(k).replace("frc", ""));
+    const draw = () => {
+      if (!wrap.isConnected) return;
+      if (alliances.length < 8) {
+        wrap.innerHTML = `<div class="card">${emptyState("trophy", "The bracket opens after alliance selection", "Once the 8 alliances are set, call every playoff match here. It locks when the first playoff match starts.")}</div>`;
+        return;
+      }
+      if (info && info.playoff_type != null && info.playoff_type !== 10) {
+        wrap.innerHTML = `<div class="card">${emptyState("trophy", "This playoff format isn't supported", `${esc(info.playoff_type_string || "This event")} isn't the 8-alliance double-elimination bracket, so there's no bracket game here.`)}</div>`;
+        return;
+      }
+      const doc = Bets.cache.brackets[myId];
+      const locked = lockedNow();
+      const picks = locked ? Object.assign({}, (doc && doc.picks) || {}) : brDraft;
+      const parts = Bets.bracketParticipants(picks);
+      const actual = Bets.bracketActual(ms, alliances);
+      const sc = Bets.scoreBracket(picks, actual);
+      const made = Bets.DE8.filter((m) => picks[m.id]).length;
+      const maxBB = Bets.DE8.reduce((s, m) => s + Bets.ROUND_BB[m.round], 0);
+      const team = (mid, n, side) => {
+        if (!n) return `<div class="br-team tbd"><span class="br-seed">?</span><span class="br-tn">${side === "red" ? "Winner TBD" : "TBD"}</span></div>`;
+        const ts = allianceTeams(n), cap = ts[0] || "";
+        const picked = picks[mid] === n, real = actual[mid];
+        const st = real ? (real === n ? "real-win" : "real-lose") : "";
+        return `<button type="button" class="br-team ${picked ? "picked" : ""} ${st}" data-m="${mid}" data-a="${n}" data-tfill="${esc(cap)}" ${locked ? "disabled" : ""}>
+          <span class="br-seed">A${n}</span><img class="team-avatar" data-avatar="${esc(cap)}" alt="" />
+          <span class="br-tn"><b>${esc(cap)}</b><span>${ts.slice(1).map(esc).join(" · ")}</span></span>
+          ${picked ? `<span class="br-check">${icon("check")}</span>` : ""}</button>`;
+      };
+      const box = (mid) => {
+        const m = Bets.DE8.find((x) => x.id === mid), p = parts[mid] || {};
+        const res = actual[mid] ? (picks[mid] === actual[mid] ? "right" : picks[mid] ? "wrong" : "") : "";
+        return `<div class="br-match ${res}${m.lower ? " lower" : ""}">
+          <div class="br-mh"><span>${mid === "f" ? "Finals" : "Match " + mid.slice(1)}</span>${res === "right" ? `<b class="br-plus">+${Bets.ROUND_BB[m.round]}</b>` : res === "wrong" ? `<b class="br-miss">Actual: A${actual[mid]}</b>` : `<em>${Bets.ROUND_BB[m.round]} BB</em>`}</div>
+          ${team(mid, p.red, "red")}${team(mid, p.blue, "blue")}</div>`;
+      };
+      const col = (title, ids, round) => `<div class="br-col"><div class="br-ch"><b>${title}</b><span>${Bets.ROUND_BB[round]} BB each</span></div><div class="br-cb">${ids.map(box).join("")}</div></div>`;
+      const entries = Object.values(Bets.cache.brackets).filter((d) => d.submitted);
+      const submitted = !!(doc && doc.submitted);
+      introOnce(wrap);
+      wrap.innerHTML = `
+        <section class="card br-top">
+          <div class="br-stats">
+            <div><b>${made}<small>/14</small></b><span>picks</span></div>
+            <div><b>${sc.decided ? `${sc.correct}<small>/${sc.decided}</small>` : "–"}</b><span>correct</span></div>
+            <div><b>${sc.total.toLocaleString()}</b><span>BB earned</span></div>
+            <div><b>${(maxBB * 2).toLocaleString()}</b><span>perfect bracket</span></div>
+          </div>
+          <div class="br-cta">
+            ${doc && doc.settled ? `<span class="badge green dot">Paid ${(doc.payout || 0).toLocaleString()} BB</span>`
+              : submitted ? `<span class="badge green dot">${icon("check")} Entered</span>` : `<span class="badge">${locked ? "Not entered" : "Draft only, not entered"}</span>`}
+            ${locked ? "" : submitted
+              ? `<span class="hint" id="brSave">Changes save automatically until the first playoff match.</span>`
+              : `<button class="btn primary" id="brSubmit" ${made === 14 ? "" : "disabled"}>${icon("coins")} Enter for ${Bets.BRACKET_FEE} BB</button><span class="hint" id="brSave">Picks save as a free draft. Enter to play for BB.</span>`}
+          </div>
+          <p class="hint br-rules">Round 1 picks pay 10 BB, Round 2 20, Round 3 50, Round 4 75, Round 5 and the Finals 100. A perfect bracket doubles everything. ${locked ? "Locked: the playoffs have started." : "Tap an alliance to send it through, and later matches fill in from your picks."}</p>
+        </section>
+        <section class="br-wrap">
+          <h4 class="br-lbl">${icon("trophy")} Upper bracket</h4>
+          <div class="br-grid upper">${col("Round 1", ["m1", "m2", "m3", "m4"], 1)}${col("Round 2", ["m7", "m8"], 2)}${col("Round 4", ["m11"], 4)}${col("Finals", ["f"], 6)}</div>
+          <h4 class="br-lbl">${icon("chevron-right")} Lower bracket</h4>
+          <div class="br-grid lower">${col("Round 2", ["m5", "m6"], 2)}${col("Round 3", ["m9", "m10"], 3)}${col("Round 4", ["m12"], 4)}${col("Round 5", ["m13"], 5)}</div>
+        </section>
+        <section class="card br-board"><div class="sr-head"><h3>${icon("teams")} Brackets entered</h3><span class="hint">${entries.length}</span></div>
+          ${!entries.length ? `<p class="hint">No one has entered yet.</p>` : !locked ? `<div class="br-names">${entries.map((d) => `<span class="br-name">${personAv(d.uid)}${esc(d.name || "Scout")}</span>`).join("")}</div>`
+            : entries.map((d) => ({ d, s: Bets.scoreBracket(d.picks || {}, actual) })).sort((x, y) => y.s.total - x.s.total || y.s.correct - x.s.correct).map(({ d, s }, i) => `
+              <div class="ap-brow${d.uid === uid ? " me" : ""}"><span class="ap-bpos">${i + 1}</span>${personAv(d.uid)}<b>${esc(d.name || "Scout")}</b>
+                <span class="hint">${s.correct}/${s.decided} right · champ A${(d.picks || {}).f || "?"}</span><span class="ap-bbb">${s.total.toLocaleString()} BB</span></div>`).join("")}
+        </section>`;
+      const caps = [...Array(8)].map((_, i) => allianceTeams(i + 1)[0]).filter(Boolean);
+      paintAvatars(wrap, caps); paintTeamFills(wrap, caps);
+      if (locked) return;
+      $$(".br-team[data-m]", wrap).forEach((b) => b.onclick = () => {
+        brDraft[b.dataset.m] = Number(b.dataset.a);
+        brDraft = Bets.cleanPicks(brDraft);
+        draw(); autosave();
+      });
+      const sb = $("#brSubmit", wrap);
+      if (sb) sb.onclick = () => confirmDialog(`Enter your bracket for ${Bets.BRACKET_FEE} Bagel Bucks? You can still change picks until the first playoff match.`, async () => {
+        try { await Bets.saveBracket(ev, brDraft, true); toast("Bracket entered. Good luck!"); refreshWallet(); } catch (e) { toast(betErr(e), "err"); }
+        draw();
+      });
+    };
+    const autosave = () => {
+      clearTimeout(brSaveT);
+      const doc = Bets.cache.brackets[myId];
+      if (doc && doc.submitted && !Bets.bracketDone(brDraft)) { const h = $("#brSave", wrap); if (h) h.textContent = "Finish every match to save your changes."; return; }
+      brSaveT = setTimeout(async () => {
+        try { await Bets.saveBracket(ev, brDraft, false); const h = $("#brSave", wrap); if (h) h.innerHTML = `${icon("check")} Saved`; }
+        catch (e) { toast(betErr(e), "err"); }
+      }, 600);
+    };
+    const load = async () => {
+      const [al, m2, inf] = await Promise.all([API.eventAlliances(ev).catch(() => alliances), liveMatches(ev), info ? info : API.eventInfo(ev).catch(() => null)]);
+      alliances = al || []; ms = m2 || ms; info = inf;
+      draw();
+      const actual = Bets.bracketActual(ms, alliances);
+      if (actual.f) Bets.settleBrackets(actual).catch(() => {});
+    };
+    betsRedraw = draw; betsReload = load;
+    load();
+  }
+
+  /* ---- Fantasy Alliance ---------------------------------------------------- */
+  let fxPrices = null, fxPricesYear = 0, fxWeeks = null, fxWeeksYear = 0, fxPts = {}, fxPtsAt = 0, fxSearch = "", fxSort = "price", fxAfford = false, fxShow = 40;
+  const FX_TABS = [["", "League", "trophy"], ["draft", "Draft", "list"], ["team", "My team", "user"], ["market", "Market", "swap"]];
+  async function fxEnsure(FY) {
+    if (!fxPrices || fxPricesYear !== FY) {
+      let rows = API.sbCachedLeaderboard(FY - 1);
+      if (!rows) rows = (await API.sbYearLeaderboard(FY - 1, 24 * 3600e3)).rows;
+      fxPrices = Bets.priceTable(rows); fxPricesYear = FY;
+    }
+    if (!fxWeeks || fxWeeksYear !== FY) {
+      try { fxWeeks = Bets.seasonWeeks(await API.eventsFullYear(FY)); } catch (e) { fxWeeks = []; }
+      fxWeeksYear = FY;
+    }
+  }
+  // RP per team per week for every rostered team (TBA rankings → "Total Ranking Points").
+  async function fxLoadPoints(L, FY) {
+    const started = fxWeeks.filter((w) => Date.now() >= w.lock);
+    if (!started.length) return false;
+    const evWeek = {}; started.forEach((w) => w.events.forEach((k) => { evWeek[k] = w.idx; }));
+    const rk = {};
+    const rpOf = (r, t) => {
+      const row = ((r && r.rankings) || []).find((x) => x.team_key === "frc" + t); if (!row) return 0;
+      const i = ((r && r.extra_stats_info) || []).findIndex((x) => /total ranking points/i.test(x.name || ""));
+      if (i >= 0 && row.extra_stats && row.extra_stats[i] != null) return Number(row.extra_stats[i]) || 0;
+      return Math.round(((row.sort_orders && row.sort_orders[0]) || 0) * (row.matches_played || 0));
+    };
+    const teams = [...Bets.takenIn(L)], next = {};
+    for (let i = 0; i < teams.length; i += 8) {
+      await Promise.all(teams.slice(i, i + 8).map(async (t) => {
+        const keys = await API.teamEventKeys(t, FY).catch(() => []);
+        next[t] = {};
+        for (const k of keys) {
+          if (evWeek[k] == null) continue;
+          if (!rk[k]) rk[k] = API.eventRankingsLive(k, 10 * 60e3).catch(() => null);
+          next[t][evWeek[k]] = (next[t][evWeek[k]] || 0) + rpOf(await rk[k], t);
+        }
+      }));
+    }
+    fxPts = next; fxPtsAt = Date.now();
+    return true;
+  }
+  const fxP = (t, w) => (fxPts[t] && fxPts[t][w]) || 0;
+  function fxCountdown(ms) {
+    if (ms <= 0) return "now";
+    const d = Math.floor(ms / 864e5), h = Math.floor(ms % 864e5 / 36e5), m = Math.floor(ms % 36e5 / 6e4), s = Math.floor(ms % 6e4 / 1e3);
+    return d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m ${s}s` : `${m}m ${s}s`;
+  }
+  function renderFantasy(body) {
+    const FY = Bets.fantasyYear();
+    const { sub } = betsRoute();
+    body.innerHTML = `<div id="fxWrap"><div class="card tp-loading"><span class="tp-spin"></span> Loading Fantasy Alliance…</div></div>`;
+    const wrap = $("#fxWrap", body);
+    let busy = false, ticking = null;
+    const uid = Store.getMe().id;
+    const draw = () => {
+      if (!wrap.isConnected) { clearInterval(ticking); return; }
+      const L = Bets.myLeague(FY);
+      if (!L || sub === "leagues") return drawLeagues(L);
+      const tabs = `<div class="seg fx-tabs">${FX_TABS.map(([k, l, ic]) => `<a href="#/bets/fantasy${k ? "/" + k : ""}" class="${sub === k ? "on" : ""}">${icon(ic)} ${l}</a>`).join("")}</div>`;
+      const lgName = (Bets.LEAGUES.find((x) => x[0] === L.league) || [0, L.league])[1];
+      const dr = L.draft || {};
+      const pill = dr.status === "live" ? `<span class="fx-pill live">${icon("zap")} Draft live</span>` : dr.status === "done" ? `<span class="fx-pill">${icon("check")} Drafted</span>` : `<span class="fx-pill wait">${icon("clock")} Draft at kickoff</span>`;
+      const head = `<section class="card fx-head"><div class="fx-hl"><span class="fx-crest">${icon("star")}</span><div><span class="pg-eyebrow">${FY} season</span><h3>${esc(lgName)} League</h3>
+          <span class="hint">${Bets.members(L).length} players · ${pill}</span></div></div>${tabs}</section>`;
+      let html = "";
+      if (sub === "draft") html = drawDraft(L);
+      else if (sub === "team") html = drawTeam(L);
+      else if (sub === "market") html = drawMarket(L);
+      else html = drawHome(L);
+      const fa = document.activeElement, keepQ = fa && fa.id === "fxQ" && wrap.contains(fa) ? [fa.selectionStart, fa.selectionEnd] : null;
+      introOnce(wrap);
+      wrap.innerHTML = head + html;
+      if (keepQ) { const n = $("#fxQ", wrap); if (n) { n.focus(); try { n.setSelectionRange(keepQ[0], keepQ[1]); } catch (e) {} } }
+      const ts = [...Bets.takenIn(L)];
+      paintAvatars(wrap, [...new Set([...ts, ...$$("[data-avatar]", wrap).map((i) => i.dataset.avatar)])]);
+      paintTeamFills(wrap, [...new Set($$("[data-tfill]", wrap).map((x) => x.dataset.tfill))]);
+      wire(L);
+    };
+    // ---- not in a league yet: pick one
+    function drawLeagues(L) {
+      const ko = Bets.kickoffAt(FY);
+      introOnce(wrap);
+      wrap.innerHTML = `
+        <section class="card fx-intro">
+          <div class="fx-intro-l"><span class="fx-crest big">${icon("star")}</span><div>
+            <h3>Your season, four robots</h3>
+            <p>Join your class league, draft four real FRC robots at kickoff, and win head-to-head matchups every week of the season.</p>
+            <span class="fx-ko">${icon("clock")} Draft opens at kickoff: <b>${new Date(ko).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</b> <span class="hint" id="fxKo">${fxCountdown(ko - Date.now())}</span></span>
+          </div></div>
+          <ul class="fx-rules">
+            <li>${icon("coins")}<span><b>${Bets.FP_START} FP</b> to draft <b>4 robots</b>: 3 start, 1 on the bench, swap every week.</span></li>
+            <li>${icon("chart")}<span>Prices come from last season's EPA rank. The best robot costs <b>100 FP</b>.</span></li>
+            <li>${icon("list")}<span>Snake draft in a random order. Robots score their <b>ranking points</b>: a win is 3, an auto RP is 1.</span></li>
+            <li>${icon("trophy")}<span>Win your weekly matchup for <b>${Bets.WEEK_WIN} BB</b>. Top of the league at season's end wins <b>${Bets.GRAND_PRIZE.toLocaleString()} BB</b>.</span></li>
+          </ul>
+        </section>
+        <div class="fx-leagues">${Bets.LEAGUES.map(([k, l], i) => {
+          const D = Bets.leagueDoc(FY, k), ms = Bets.members(D), inIt = L && L.league === k;
+          return `<article class="card fx-league${inIt ? " mine" : ""}" style="animation-delay:${i * 70}ms">
+            <div class="fx-lh"><b>${l}</b><span class="hint">${ms.length} ${ms.length === 1 ? "player" : "players"}</span></div>
+            <div class="fx-faces">${ms.slice(0, 8).map((m) => personAv(m.id, "fx-face")).join("") || `<span class="hint">Be the first to join</span>`}</div>
+            <div class="fx-lstat">${D && D.draft && D.draft.status === "live" ? `<span class="fx-pill live">${icon("zap")} Drafting</span>` : D && D.draft && D.draft.status === "done" ? `<span class="fx-pill">Season on</span>` : `<span class="fx-pill wait">Open</span>`}</div>
+            ${inIt ? `<a class="btn ghost sm" href="#/bets/fantasy">${icon("arrow-right")} Go to league</a>` : `<button class="btn primary sm" data-join="${k}" ${L ? "disabled" : ""}>${icon("plus")} Join ${l}</button>`}
+          </article>`;
+        }).join("")}</div>`;
+      $$("[data-join]", wrap).forEach((b) => b.onclick = async () => {
+        b.disabled = true;
+        try { await Bets.joinLeague(FY, b.dataset.join); toast("You're in! The draft starts at kickoff."); location.hash = "#/bets/fantasy"; }
+        catch (e) { toast(betErr(e), "err"); b.disabled = false; }
+      });
+      clearInterval(ticking);
+      ticking = setInterval(() => { const k = $("#fxKo", wrap); if (!k) { clearInterval(ticking); return; } k.textContent = fxCountdown(ko - Date.now()); }, 1000);
+    }
+    // ---- league home: this week, standings, schedule, rosters
+    function drawHome(L) {
+      const ms = Bets.members(L), weeks = fxWeeks || [];
+      const dr = L.draft || {};
+      const now = Date.now();
+      const cur = weeks.find((w) => now >= w.lock && now < w.end) || weeks.find((w) => now < w.lock) || weeks[weeks.length - 1];
+      const st = Bets.standings(L);
+      const nameOf = (id) => (ms.find((m) => m.id === id) || {}).name || "Bye";
+      let top = "";
+      if (dr.status !== "done") {
+        const ko = Bets.kickoffAt(L.year);
+        top = `<section class="card fx-callout ${dr.status === "live" ? "live" : ""}">
+          ${dr.status === "live" ? `${icon("zap")}<div><b>The draft is live!</b><span>${esc(nameOf((Bets.draftTurn(L) || {}).uid))} is on the clock.</span></div><a class="btn primary" href="#/bets/fantasy/draft">${icon("arrow-right")} Go to the draft</a>`
+            : `${icon("clock")}<div><b>Draft opens at kickoff</b><span>${new Date(ko).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · <span id="fxKo">${fxCountdown(ko - now)}</span></span></div>
+               <button class="btn ghost sm" id="fxLeave">Leave league</button>`}
+        </section>`;
+      } else if (cur) {
+        const pairs = Bets.pairings(ms.map((m) => m.id).filter((id) => L.rosters[id]), cur.idx);
+        const mineP = pairs.find((p) => p.includes(uid));
+        const opp = mineP ? (mineP[0] === uid ? mineP[1] : mineP[0]) : null;
+        const side = (id) => {
+          if (!id) return `<div class="fx-mu-side bye"><span class="fx-mu-name">Bye week</span></div>`;
+          const line = Bets.lineupFor(L, id, cur.idx), pts = line.reduce((s, t) => s + fxP(t, cur.idx), 0);
+          return `<div class="fx-mu-side${id === uid ? " me" : ""}">${personAv(id, "fx-mu-av")}<span class="fx-mu-name">${esc(nameOf(id))}</span>
+            <b class="fx-mu-pts">${now >= cur.lock ? pts : "–"}</b>
+            <div class="fx-mu-teams">${line.map((t) => `<span data-tfill="${esc(t)}"><img class="team-avatar" data-avatar="${esc(t)}" alt="" />${esc(t)}<em>${now >= cur.lock ? fxP(t, cur.idx) : ""}</em></span>`).join("")}</div></div>`;
+        };
+        top = `<section class="card fx-matchup">
+          <div class="fx-mu-h"><b>${esc(cur.label)}</b><span class="hint">${now < cur.lock ? `Lineups lock in ${fxCountdown(cur.lock - now)}` : now < cur.end ? "Live: points update as events finish" : "Final"}</span></div>
+          ${mineP ? `<div class="fx-mu">${side(uid)}<span class="fx-vs">VS</span>${side(opp)}</div>` : `<p class="hint">You're not in a matchup this week.</p>`}
+        </section>`;
+      }
+      const rows = st.map((r, i) => `<tr class="${r.id === uid ? "me" : ""}"><td class="fx-pos">${i + 1}</td><td><span class="fx-who">${personAv(r.id)}${esc(r.name)}</span></td>
+        <td class="num">${r.w}-${r.l}${r.t ? "-" + r.t : ""}</td><td class="num">${r.pts}</td></tr>`).join("");
+      const sched = dr.status === "done" ? weeks.map((w) => {
+        const res = L.weeks && L.weeks[w.idx];
+        const p = Bets.pairings(ms.map((m) => m.id).filter((id) => L.rosters[id]), w.idx).find((x) => x.includes(uid));
+        const opp = p ? (p[0] === uid ? p[1] : p[0]) : null;
+        const g = res && (res.results || []).find((x) => x.a === uid || x.b === uid);
+        const my = g ? (g.a === uid ? g.pa : g.pb) : null, their = g ? (g.a === uid ? g.pb : g.pa) : null;
+        const tag = g ? (g.winner === uid ? `<span class="fx-w">W</span>` : g.winner === "tie" ? `<span class="fx-t">T</span>` : opp ? `<span class="fx-l">L</span>` : "") : now >= w.lock && now < w.end ? `<span class="fx-pill live">Live</span>` : "";
+        return `<div class="fx-wk${w === cur ? " cur" : ""}"><b>${esc(w.label)}</b><span class="hint">${new Date(w.lock).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+          <span class="fx-wk-opp">vs ${opp ? esc(nameOf(opp)) : "bye"}</span>${g ? `<span class="fx-wk-sc">${my}–${their}</span>` : ""}${tag}</div>`;
+      }).join("") : "";
+      return `${top}
+        <div class="fx-cols">
+          <section class="card fx-stand"><div class="sr-head"><h3>${icon("trophy")} Standings</h3><span class="hint">${L.champ ? `Champion: ${esc(L.champ.name)}` : `${Bets.GRAND_PRIZE.toLocaleString()} BB to #1`}</span></div>
+            <table class="fx-table"><thead><tr><th>#</th><th>Player</th><th class="num">W-L</th><th class="num">Pts</th></tr></thead><tbody>${rows}</tbody></table></section>
+          <section class="card fx-sched"><div class="sr-head"><h3>${icon("calendar")} Your season</h3><span class="hint">${weeks.length} weeks</span></div>
+            ${sched || `<p class="hint">Your weekly matchups appear here after the draft.</p>`}</section>
+        </div>
+        <section class="card fx-rosters"><div class="sr-head"><h3>${icon("teams")} Rosters</h3></div>
+          <div class="fx-rgrid">${ms.map((m) => { const r = (L.rosters || {})[m.id]; const bench = Bets.benchFor(r, Bets.openWeek(weeks)); return `
+            <div class="fx-r${m.id === uid ? " me" : ""}"><div class="fx-rh">${personAv(m.id)}<b>${esc(m.name)}</b><span class="hint">${r ? (r.fp ?? Bets.FP_START) + " FP left" : "not drafted"}</span></div>
+              <div class="fx-rt">${((r && r.teams) || []).map((t) => `<span class="fx-chip${t === bench ? " bench" : ""}" data-tfill="${esc(t)}" data-team="${esc(t)}"><img class="team-avatar" data-avatar="${esc(t)}" alt="" />${esc(t)}</span>`).join("") || `<span class="hint">–</span>`}</div></div>`; }).join("")}</div>
+        </section>`;
+    }
+    // ---- draft room
+    function drawDraft(L) {
+      const dr = L.draft || {}, ms = Bets.members(L), nameOf = (id) => (ms.find((m) => m.id === id) || {}).name || "?";
+      if (dr.status === "waiting" || !dr.status) {
+        const ko = Bets.kickoffAt(L.year);
+        return `<section class="card fx-callout">${icon("clock")}<div><b>The draft hasn't started</b><span>It opens automatically at kickoff (${new Date(ko).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}) with everyone who has joined, in a random snake order. <span id="fxKo">${fxCountdown(ko - Date.now())}</span></span></div></section>
+          <section class="card"><div class="sr-head"><h3>${icon("teams")} Players</h3><span class="hint">${ms.length}</span></div><div class="br-names">${ms.map((m) => `<span class="br-name">${personAv(m.id)}${esc(m.name)}</span>`).join("")}</div></section>`;
+      }
+      const turn = Bets.draftTurn(L), myR = (L.rosters || {})[uid], myTurn = turn && turn.uid === uid;
+      const taken = Bets.takenIn(L), cap = Bets.maxSpend(myR);
+      const order = dr.order || [];
+      const board = `<div class="table-wrap"><table class="fx-board"><thead><tr><th>Rd</th>${order.map((id) => `<th class="${turn && turn.uid === id ? "clock" : ""}">${personAv(id, "fx-face sm")}<span>${esc(nameOf(id).split(" ")[0])}</span></th>`).join("")}</tr></thead>
+        <tbody>${[0, 1, 2, 3].map((rd) => `<tr><td class="fx-pos">${rd + 1}</td>${order.map((id, pos) => {
+          const n = order.length, idx = rd * n + (rd % 2 === 0 ? pos : n - 1 - pos), p = (dr.picks || [])[idx];
+          return `<td>${p ? `<span class="fx-pick" data-tfill="${esc(p.team)}"><img class="team-avatar" data-avatar="${esc(p.team)}" alt="" /><b>${esc(p.team)}</b><em>${p.price} FP${p.auto ? " · auto" : ""}</em></span>`
+            : turn && idx === turn.pick - 1 ? `<span class="fx-pick now">${icon("clock")} on the clock</span>` : `<span class="fx-pick empty">#${idx + 1}</span>`}</td>`;
+        }).join("")}</tr>`).join("")}</tbody></table></div>`;
+      const q = fxSearch.trim().toLowerCase();
+      let pool = Object.entries(fxPrices || {}).filter(([t]) => !taken.has(t)).map(([t, v]) => Object.assign({ t }, v));
+      if (q) pool = pool.filter((x) => x.t.includes(q) || (x.name || "").toLowerCase().includes(q));
+      if (fxAfford) pool = pool.filter((x) => x.price <= cap);
+      pool.sort(fxSort === "rank" ? (a, b) => a.rank - b.rank : (a, b) => b.price - a.price || a.rank - b.rank);
+      if (/^\d+$/.test(q) && !(fxPrices || {})[q] && !taken.has(q)) pool.unshift({ t: q, price: Bets.MIN_PRICE, rank: null, epa: null, name: "Rookie / no data last season" });
+      const waited = Date.now() - (dr.turnStartedAt || Date.now());
+      return `
+        <section class="card fx-clock ${myTurn ? "mine" : ""}">
+          ${dr.status === "done" || !turn ? `${icon("check")}<div><b>The draft is complete</b><span>Set your weekly lineup on My team, and trade or sign free agents in the Market.</span></div>`
+            : `${personAv(turn.uid, "fx-mu-av")}<div><b>${myTurn ? "You're on the clock!" : esc(nameOf(turn.uid)) + " is on the clock"}</b>
+                <span>Round ${turn.round} · pick ${turn.pick} of ${turn.of} · <span id="fxTimer">${fxCountdown(waited)}</span></span></div>
+              ${!myTurn ? `<button class="btn ghost sm" id="fxAuto" ${waited >= Bets.AUTO_PICK_MS ? "" : "disabled"} title="Unlocks after 3 minutes">${icon("zap")} Auto-pick for them</button>` : ""}`}
+          ${myR ? `<div class="fx-fp"><b>${myR.fp ?? Bets.FP_START}</b><span>FP left</span>${dr.status === "live" && myR.teams.length < Bets.ROSTER ? `<em>max ${cap} on this pick</em>` : ""}</div>` : ""}
+        </section>
+        <section class="card flush fx-board-card">${board}</section>
+        ${dr.status === "live" && turn ? `<section class="card fx-avail">
+          <div class="fx-avail-tools">
+            <label class="ds-search">${icon("search")}<input type="search" id="fxQ" placeholder="Search team # or name…" value="${esc(fxSearch)}" autocomplete="off" /></label>
+            <div class="seg" id="fxSort"><button data-s="price" class="${fxSort === "price" ? "on" : ""}">Price</button><button data-s="rank" class="${fxSort === "rank" ? "on" : ""}">Last year's rank</button></div>
+            <label class="ch-toggle"><input type="checkbox" id="fxAfford" ${fxAfford ? "checked" : ""} /><span class="ch-switch"></span>I can afford</label>
+          </div>
+          <div class="fx-list">${pool.slice(0, fxShow).map((x) => `
+            <div class="fx-row" data-tfill="${esc(x.t)}"><img class="team-avatar" data-avatar="${esc(x.t)}" alt="" />
+              <span class="fx-rn"><b>${esc(x.t)}</b><span>${esc(x.name || nameFor(x.t))}</span></span>
+              <span class="fx-rk">${x.rank ? `#${x.rank}<small>${fmt(x.epa)} EPA</small>` : "–"}</span>
+              <span class="fx-price${x.price > cap ? " over" : ""}">${x.price}<small>FP</small></span>
+              <button class="btn ${myTurn ? "primary" : "ghost"} sm" data-draft="${esc(x.t)}" ${myTurn && x.price <= cap ? "" : "disabled"}>Draft</button></div>`).join("") || `<p class="hint">No teams match.</p>`}</div>
+          ${pool.length > fxShow ? `<div class="bt-more"><button class="btn ghost sm" id="fxMore">${icon("plus")} Show more</button></div>` : ""}
+        </section>` : ""}`;
+    }
+    // ---- my team: lineup for the next unlocked week + weekly points
+    function drawTeam(L) {
+      const r = (L.rosters || {})[uid], weeks = fxWeeks || [];
+      if (!r || !(r.teams || []).length) return `<section class="card">${emptyState("user", "No robots yet", L.draft && L.draft.status === "done" ? "You joined after the draft, so sign 4 free agents in the Market with your 200 FP." : "Your robots show up here after the draft.")}
+        ${L.draft && L.draft.status === "done" ? `<div class="btn-row" style="justify-content:center"><a class="btn primary" href="#/bets/fantasy/market">${icon("swap")} Go to the Market</a></div>` : ""}</section>`;
+      const ow = Bets.openWeek(weeks), wk = weeks.find((w) => w.idx === ow);
+      const bench = Bets.benchFor(r, ow);
+      const started = weeks.filter((w) => Date.now() >= w.lock);
+      return `
+        <section class="card fx-lineup"><div class="sr-head"><h3>${icon("star")} Lineup${wk ? ` for ${esc(wk.label)}` : ""}</h3>
+          <span class="hint">${wk ? `locks ${new Date(wk.lock).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}` : "season over"} · ${r.fp ?? Bets.FP_START} FP left</span></div>
+          <div class="fx-cards">${r.teams.map((t) => { const p = (fxPrices || {})[t] || {}; const isB = t === bench; return `
+            <div class="fx-card${isB ? " bench" : ""}" data-tfill="${esc(t)}">
+              <span class="fx-role">${isB ? "Bench" : "Starter"}</span>
+              <img class="team-avatar" data-avatar="${esc(t)}" alt="" />
+              <b class="fx-cn">${esc(t)}</b><span class="fx-cname">${esc(p.name || nameFor(t))}</span>
+              <span class="fx-cmeta">${p.rank ? `#${p.rank} last year · ` : ""}${started.reduce((s, w) => s + fxP(t, w.idx), 0)} pts</span>
+              ${wk && r.teams.length === Bets.ROSTER ? (isB ? `<span class="fx-cbtn hint">Sitting out</span>` : `<button class="btn ghost sm" data-bench="${esc(t)}">Bench</button>`) : ""}
+            </div>`; }).join("")}</div>
+          <p class="hint">Your 3 starters score each week and your bench robot doesn't. Bench a different robot any time before a week locks.</p>
+        </section>
+        <section class="card fx-pts"><div class="sr-head"><h3>${icon("chart")} Points by week</h3><span class="hint">ranking points earned</span></div>
+          ${started.length ? `<div class="table-wrap"><table class="fx-table"><thead><tr><th>Team</th>${started.map((w) => `<th class="num">${esc(w.label.replace("Week ", "W"))}</th>`).join("")}<th class="num">Total</th></tr></thead>
+            <tbody>${r.teams.map((t) => `<tr><td><span class="fx-who"><img class="team-avatar" data-avatar="${esc(t)}" alt="" />${esc(t)}</span></td>${started.map((w) => `<td class="num${Bets.lineupFor(L, uid, w.idx).includes(t) ? "" : " dim"}">${fxP(t, w.idx)}</td>`).join("")}<td class="num"><b>${started.reduce((s, w) => s + fxP(t, w.idx), 0)}</b></td></tr>`).join("")}</tbody></table></div>`
+            : `<p class="hint">Points start when the first week of events begins.</p>`}
+        </section>`;
+    }
+    // ---- market: trades + free agents
+    function drawMarket(L) {
+      const ms = Bets.members(L), nameOf = (id) => (ms.find((m) => m.id === id) || {}).name || "?";
+      const r = (L.rosters || {})[uid];
+      if (L.draft && L.draft.status === "live") return `<section class="card">${emptyState("list", "The draft is still going", "Trades and free agents open once every player has 4 robots.")}</section>`;
+      if (!L.draft || L.draft.status !== "done") return `<section class="card">${emptyState("swap", "The market opens after the draft", "Trade robots with your league, or sign free agents, once the draft is done.")}</section>`;
+      const trades = (L.trades || []).slice().sort((a, b) => b.ts - a.ts);
+      const inbox = trades.filter((t) => t.to === uid && t.status === "pending"), outbox = trades.filter((t) => t.from === uid && t.status === "pending");
+      const others = ms.filter((m) => m.id !== uid && (L.rosters || {})[m.id]);
+      const tchip = (t) => `<span class="fx-chip" data-tfill="${esc(t)}"><img class="team-avatar" data-avatar="${esc(t)}" alt="" />${esc(t)}</span>`;
+      const taken = Bets.takenIn(L), q = fxSearch.trim().toLowerCase();
+      let fa = Object.entries(fxPrices || {}).filter(([t]) => !taken.has(t)).map(([t, v]) => Object.assign({ t }, v));
+      if (q) fa = fa.filter((x) => x.t.includes(q) || (x.name || "").toLowerCase().includes(q));
+      fa.sort((a, b) => b.price - a.price || a.rank - b.rank);
+      if (/^\d+$/.test(q) && !(fxPrices || {})[q] && !taken.has(q)) fa.unshift({ t: q, price: Bets.MIN_PRICE, rank: null, name: "Rookie / no data last season" });
+      return `
+        <div class="fx-cols">
+          <section class="card fx-trade"><div class="sr-head"><h3>${icon("swap")} Trades</h3><span class="hint">1-for-1 swaps</span></div>
+            ${inbox.map((t) => `<div class="fx-offer in"><span>${personAv(t.from)}<b>${esc(nameOf(t.from))}</b> offers</span>${tchip(t.give)}<span>for your</span>${tchip(t.get)}
+              <span class="fx-offer-btns"><button class="btn primary sm" data-acc="${t.id}">Accept</button><button class="btn ghost sm" data-dec="${t.id}">Decline</button></span></div>`).join("")}
+            ${outbox.map((t) => `<div class="fx-offer"><span>You offered</span>${tchip(t.give)}<span>to <b>${esc(nameOf(t.to))}</b> for</span>${tchip(t.get)}
+              <span class="fx-offer-btns"><button class="btn ghost sm" data-dec="${t.id}">Cancel</button></span></div>`).join("")}
+            ${r && r.teams.length && others.length ? `<div class="fx-propose">
+              <label>Give<select id="fxGive">${r.teams.map((t) => `<option>${esc(t)}</option>`).join("")}</select></label>
+              <label>To<select id="fxTo">${others.map((m) => `<option value="${esc(m.id)}">${esc(m.name)}</option>`).join("")}</select></label>
+              <label>For<select id="fxGet"></select></label>
+              <button class="btn primary sm" id="fxPropose">${icon("swap")} Propose</button></div>` : `<p class="hint">You need robots, and someone to trade with.</p>`}
+            ${trades.filter((t) => t.status !== "pending" && (t.from === uid || t.to === uid)).slice(0, 6).map((t) => `<div class="fx-hist"><span class="badge ${t.status === "accepted" ? "green" : ""}">${esc(t.status)}</span> ${esc(nameOf(t.from))} → ${esc(nameOf(t.to))}: ${esc(t.give)} for ${esc(t.get)}</div>`).join("")}
+          </section>
+          <section class="card fx-fa"><div class="sr-head"><h3>${icon("plus")} Free agents</h3><span class="hint">${r ? (r.fp ?? Bets.FP_START) : Bets.FP_START} FP left · FP never comes back</span></div>
+            <label class="ds-search">${icon("search")}<input type="search" id="fxQ" placeholder="Search team # or name…" value="${esc(fxSearch)}" autocomplete="off" /></label>
+            <div class="fx-list">${fa.slice(0, fxShow).map((x) => `
+              <div class="fx-row" data-tfill="${esc(x.t)}"><img class="team-avatar" data-avatar="${esc(x.t)}" alt="" />
+                <span class="fx-rn"><b>${esc(x.t)}</b><span>${esc(x.name || nameFor(x.t))}</span></span>
+                <span class="fx-rk">${x.rank ? `#${x.rank}` : "–"}</span><span class="fx-price${r && x.price > (r.fp ?? 0) ? " over" : ""}">${x.price}<small>FP</small></span>
+                <button class="btn ghost sm" data-sign="${esc(x.t)}" ${r && x.price <= (r.fp ?? 0) ? "" : "disabled"}>Sign</button></div>`).join("")}</div>
+            ${fa.length > fxShow ? `<div class="bt-more"><button class="btn ghost sm" id="fxMore">${icon("plus")} Show more</button></div>` : ""}
+          </section>
+        </div>`;
+    }
+    function wire(L) {
+      const run = async (p, ok) => { if (busy) return; busy = true; try { const r = await p(); if (ok) toast(typeof ok === "function" ? ok(r) : ok); } catch (e) { toast(betErr(e), "err"); } busy = false; draw(); };
+      const lv = $("#fxLeave", wrap);
+      if (lv) lv.onclick = () => confirmDialog("Leave this league?", () => run(() => Bets.leaveLeague(FY, L.league), "Left the league"));
+      const q = $("#fxQ", wrap);
+      if (q) q.oninput = () => { fxSearch = q.value; fxShow = 40; draw(); };
+      $$("#fxSort button", wrap).forEach((b) => b.onclick = () => { fxSort = b.dataset.s; draw(); });
+      const af = $("#fxAfford", wrap); if (af) af.onchange = () => { fxAfford = af.checked; draw(); };
+      const more = $("#fxMore", wrap); if (more) more.onclick = () => { fxShow += 40; draw(); };
+      $$("[data-draft]", wrap).forEach((b) => b.onclick = () => {
+        const t = b.dataset.draft, price = Bets.priceOf(fxPrices, t);
+        confirmDialog(`Draft ${t}${nameFor(t) ? " " + nameFor(t) : ""} for ${price} FP?`, () => run(() => Bets.draftPick(FY, L.league, t, fxPrices, false), `Drafted ${t}!`));
+      });
+      const au = $("#fxAuto", wrap); if (au) au.onclick = () => run(() => Bets.draftPick(FY, L.league, null, fxPrices, true), (t) => `Auto-picked ${t}`);
+      const ow = Bets.openWeek(fxWeeks || []);
+      $$("[data-bench]", wrap).forEach((b) => b.onclick = () => run(() => Bets.setBench(FY, L.league, b.dataset.bench, ow), `${b.dataset.bench} is on the bench`));
+      $$("[data-acc]", wrap).forEach((b) => b.onclick = () => run(() => Bets.answerTrade(FY, L.league, b.dataset.acc, true, ow), "Trade accepted"));
+      $$("[data-dec]", wrap).forEach((b) => b.onclick = () => run(() => Bets.answerTrade(FY, L.league, b.dataset.dec, false, ow), "Trade closed"));
+      const to = $("#fxTo", wrap), get = $("#fxGet", wrap);
+      if (to && get) {
+        const fill = () => { const rr = (L.rosters || {})[to.value]; get.innerHTML = ((rr && rr.teams) || []).map((t) => `<option>${esc(t)}</option>`).join(""); };
+        to.onchange = fill; fill();
+        $("#fxPropose", wrap).onclick = () => run(() => Bets.proposeTrade(FY, L.league, to.value, $("#fxGive", wrap).value, get.value), "Trade offer sent");
+      }
+      $$("[data-sign]", wrap).forEach((b) => b.onclick = () => {
+        const add = b.dataset.sign, price = Bets.priceOf(fxPrices, add), r = (L.rosters || {})[uid] || { teams: [] };
+        const full = r.teams.length >= Bets.ROSTER;
+        modal(`Sign ${add}`, `<p>${esc(nameFor(add) || "Team " + add)} costs <b>${price} FP</b>. ${full ? "Pick a robot to drop. You don't get its FP back." : "You have an open roster spot."}</p>
+          ${full ? `<div class="fx-drop">${r.teams.map((t) => `<button class="fx-chip" data-drop="${esc(t)}" data-tfill="${esc(t)}"><img class="team-avatar" data-avatar="${esc(t)}" alt="" />Drop ${esc(t)}</button>`).join("")}</div>`
+            : `<div class="btn-row" style="justify-content:flex-end;margin-top:14px"><button class="btn primary" data-drop="">Sign for ${price} FP</button></div>`}`, (mb, close) => {
+          paintAvatars(mb, r.teams); paintTeamFills(mb, r.teams);
+          $$("[data-drop]", mb).forEach((x) => x.onclick = () => { close(); run(() => Bets.freeAgent(FY, L.league, x.dataset.drop || null, add, fxPrices, ow), `Signed ${add}`); });
+        });
+      });
+      $$(".fx-chip[data-team]", wrap).forEach((c) => c.onclick = () => openTeam(c.dataset.team));
+      clearInterval(ticking);
+      ticking = setInterval(() => {
+        if (!wrap.isConnected) { clearInterval(ticking); return; }
+        const k = $("#fxKo", wrap); if (k) k.textContent = fxCountdown(Bets.kickoffAt(FY) - Date.now());
+        const tm = $("#fxTimer", wrap), dr = L.draft || {};
+        if (tm) { const w = Date.now() - (dr.turnStartedAt || Date.now()); tm.textContent = fxCountdown(w); const a = $("#fxAuto", wrap); if (a && w >= Bets.AUTO_PICK_MS) a.disabled = false; }
+      }, 1000);
+    }
+    // Housekeeping any player's device can do: open the draft at kickoff, freeze
+    // lineups as weeks lock, and pay out finished weeks + the champion.
+    const upkeep = async () => {
+      const L = Bets.myLeague(FY); if (!L) return;
+      const dr = L.draft || {};
+      if (dr.status === "waiting" && Date.now() >= Bets.kickoffAt(FY) && Bets.members(L).length >= 2) { await Bets.startDraft(FY, L.league).catch(() => {}); return; }
+      if (dr.status !== "done" || !fxWeeks || !fxWeeks.length) return;
+      for (const w of fxWeeks) if (Date.now() >= w.lock && !(L.snaps && L.snaps[w.idx])) await Bets.snapWeek(FY, L.league, w.idx).catch(() => {});
+      if (Date.now() - fxPtsAt > 5 * 60e3) { if (await fxLoadPoints(L, FY).catch(() => false)) draw(); }
+      const fresh = Bets.myLeague(FY);
+      for (const w of fxWeeks) {
+        if (Date.now() < w.end + 864e5 || (fresh.weeks && fresh.weeks[w.idx] && fresh.weeks[w.idx].settled)) continue;
+        await Bets.settleWeek(FY, fresh.league, w, Bets.weekScores(fresh, w, (t) => fxP(t, w.idx))).catch(() => {});
+      }
+      if (Date.now() >= fxWeeks[fxWeeks.length - 1].end + 864e5) await Bets.payChampion(FY, fresh.league, fxWeeks.length).catch(() => {});
+    };
+    const load = async () => {
+      try { await fxEnsure(FY); } catch (e) { /* prices/weeks unavailable offline */ }
+      draw();
+      upkeep().catch(() => {});
+    };
+    betsRedraw = draw;
+    betsReload = () => upkeep().catch(() => {});
+    load();
+  }
+
+  /* ---- Admin → Betting ----------------------------------------------------- */
+  function renderAdminBetting(el) {
+    const s = Store.getSettings(), FY = Bets.fantasyYear();
+    Bets.watch(s.eventKey || "", FY);
+    const draw = () => {
+      if (!el.isConnected) return;
+      const lines = Object.values(Bets.cache.lines).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      el.innerHTML = `
+        <div class="card"><div class="sr-head"><h3>${icon("star")} Fantasy Alliance ${FY}</h3><span class="hint">drafts open automatically at kickoff</span></div>
+          <div class="table-wrap"><table class="fx-table"><thead><tr><th>League</th><th class="num">Players</th><th>Draft</th><th></th></tr></thead><tbody>
+          ${Bets.LEAGUES.map(([k, l]) => { const D = Bets.leagueDoc(FY, k), n = Bets.members(D).length, st = (D && D.draft && D.draft.status) || "waiting"; return `
+            <tr><td><b>${l}</b></td><td class="num">${n}</td><td>${st === "live" ? `<span class="badge cyan dot">live</span>` : st === "done" ? `<span class="badge green dot">done</span>` : `<span class="badge">waiting</span>`}</td>
+              <td>${st === "waiting" ? `<button class="btn ghost sm" data-start="${k}" ${n >= 2 ? "" : "disabled"}>${icon("zap")} Start draft now</button>` : ""}</td></tr>`; }).join("")}
+          </tbody></table></div></div>
+        <div class="card"><div class="sr-head"><h3>${icon("coins")} Match markets</h3><span class="hint">${esc(s.eventName || "no event")} · ${Store.isBBApproved(s.eventKey) ? "betting open" : "betting closed (approve the event in Bagel Bucks)"}</span></div>
+          ${lines.length ? `<div class="table-wrap"><table class="fx-table"><thead><tr><th>Match</th><th>Line</th><th class="num">Bets</th><th class="num">Pot</th><th></th></tr></thead><tbody>
+            ${lines.map((ln) => { const bs = Bets.betsOn(ln.match), P = Bets.pools(ln, bs), open = bs.some((b) => !b.settled); return `
+              <tr><td><b>${esc((bs[0] && bs[0].label) || ln.match)}</b></td><td>${ln.void ? `<span class="badge red">void</span>` : `${ln.winner === "red" ? "Red" : "Blue"} by ${ln.diff} (${Math.round(ln.conf * 100)}%)`}</td>
+                <td class="num">${bs.length}</td><td class="num">${Math.round(P.pot)}</td>
+                <td>${!ln.void && open ? `<button class="btn ghost sm" data-void="${esc(ln.match)}">${icon("x")} Void &amp; refund</button>` : ""}</td></tr>`; }).join("")}
+          </tbody></table></div>` : `<p class="hint">No bets at this event yet.</p>`}
+          <p class="hint">Voiding refunds every unsettled stake on that match, for a replayed match or bad data.</p></div>`;
+      $$("[data-start]", el).forEach((b) => b.onclick = () => confirmDialog(`Start the ${b.dataset.start} league draft now? The order is randomized.`, async () => {
+        try { await Bets.startDraft(FY, b.dataset.start); toast("Draft started"); } catch (e) { toast(betErr(e), "err"); }
+      }));
+      $$("[data-void]", el).forEach((b) => b.onclick = () => confirmDialog("Void this market and refund every stake?", async () => {
+        try { const n = await Bets.voidMarket(b.dataset.void, s.eventKey); toast(`Voided: ${n} refund${n === 1 ? "" : "s"}`); } catch (e) { toast(betErr(e), "err"); }
+      }));
+    };
+    const off = Bets.onChange(() => { if (!el.isConnected) { off(); return; } draw(); });
+    draw();
+  }
+
   /* ---- Universal search (top right) ------------------------------------------
      Teams by number or name (this season's Statbotics list + anyone we scouted)
      and events by name/city/code from the last few seasons. Typing a year
@@ -5882,6 +6835,7 @@
       applyCloudTestEvent();
       reconcileBB(); // keep my local BB mirror = the cloud total
       refreshChrome();
+      if (current() === "bets") refreshWallet();
       const formNow = (id, fields) => { const f = $("#" + id); return f && !f.dataset.dirty && f.dataset.sig !== formSig(fields); };
       if (current() === "match") { if (formNow("matchForm", matchFields())) router(); else refreshRobotClaims(); return; }
       if (current() === "pit") {
@@ -5895,6 +6849,22 @@
     // gets a "Refresh now" button so their unsaved scouting isn't wiped.
     // …except once, right after the first full download, so a page opened by a
     // refresh/direct link doesn't stay empty. Skipped mid-form or mid-typing.
+    // Bagel Bets: live markets + "your bet paid out" notices anywhere in the app.
+    let seenSettled = null;
+    Bets.onChange(() => {
+      if (Bets.isReady("mine")) {
+        const mine = Object.values(Bets.cache.mine);
+        if (!seenSettled) seenSettled = new Set(mine.filter((b) => b.settled).map((b) => b.id));
+        else mine.filter((b) => b.settled && !seenSettled.has(b.id)).forEach((b) => {
+          seenSettled.add(b.id);
+          if (b.refund) toast(`${b.label || "Match"} bet refunded: ${b.amount} BB`);
+          else if (b.payout > 0) notifyBanner(`Your ${b.label || "match"} bet hit! +${b.payout.toLocaleString()} BB`, { sub: `You bet ${b.amount} BB. Nice call.` });
+          else toast(`${b.label || "Match"} bet lost (−${b.amount} BB)`, "err");
+        });
+      }
+      if (current() === "bets") { refreshWallet(); if (betsRedraw) betsRedraw(); }
+    });
+    Cloud.onFirstSync(() => { if (Cloud.enabled()) Bets.watch(Store.getSettings().eventKey || "", Bets.fantasyYear()); });
     Cloud.onFirstSync(() => {
       const f = $("#matchForm") || $("#pitForm");
       const a = document.activeElement;

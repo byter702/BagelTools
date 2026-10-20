@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=88" />
+  <link rel="stylesheet" href="styles.css?v=89" />
 </head>
 <body>
   <!-- Inline SVG icon sprite (Lucide-style). Referenced via <use href="#ic-..."> -->
@@ -60,6 +60,11 @@
       <symbol id="ic-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M21 17l-5-5-9 8"/></symbol>
       <symbol id="ic-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
       <symbol id="ic-map-pin" viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></symbol>
+      <symbol id="ic-coins" viewBox="0 0 24 24"><circle cx="8" cy="8" r="6"/><path d="M18.09 10.37A6 6 0 1 1 10.34 18"/><path d="M7 6h1v4"/><path d="m16.71 13.88.7.71-2.82 2.82"/></symbol>
+      <symbol id="ic-zap" viewBox="0 0 24 24"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></symbol>
+      <symbol id="ic-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+      <symbol id="ic-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></symbol>
+      <symbol id="ic-swap" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></symbol>
     </defs>
   </svg>
 
@@ -81,6 +86,7 @@
         <a data-route="dashboard"><svg class="ico"><use href="#ic-dashboard"/></svg> Dashboard</a>
         <a data-route="members"><svg class="ico"><use href="#ic-user"/></svg> Members</a>
         <a data-route="teams"><svg class="ico"><use href="#ic-bagel"/></svg> Event</a>
+        <a data-route="bets"><svg class="ico"><use href="#ic-coins"/></svg> Betting</a>
         <span class="nav-label">Scouting</span>
         <a data-route="match"><svg class="ico"><use href="#ic-binoculars"/></svg> Match Scouting</a>
         <a data-route="pit"><svg class="ico"><use href="#ic-clipboard"/></svg> Pit Scouting</a>
@@ -143,15 +149,16 @@
 
   <!-- Access password & admin PIN. Committed so the (private) Vercel deploy has
        them; keep this repo private. See js/secrets.example.js for the format. -->
-  <script src="js/secrets.js?v=88"></script>
-  <script src="js/config.js?v=88"></script>
-  <script src="js/game-config.js?v=88"></script>
-  <script src="js/store.js?v=88"></script>
-  <script src="js/api.js?v=88"></script>
-  <script src="js/epa.js?v=88"></script>
-  <script src="js/auth.js?v=88"></script>
-  <script src="js/cloud.js?v=88"></script>
-  <script src="js/app.js?v=88"></script>
+  <script src="js/secrets.js?v=89"></script>
+  <script src="js/config.js?v=89"></script>
+  <script src="js/game-config.js?v=89"></script>
+  <script src="js/store.js?v=89"></script>
+  <script src="js/api.js?v=89"></script>
+  <script src="js/epa.js?v=89"></script>
+  <script src="js/auth.js?v=89"></script>
+  <script src="js/cloud.js?v=89"></script>
+  <script src="js/bets.js?v=89"></script>
+  <script src="js/app.js?v=89"></script>
 </body>
 </html>
 

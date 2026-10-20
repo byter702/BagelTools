@@ -373,6 +373,68 @@ const API = (() => {
     if (!memSb[path]) memSb[path] = sbFetch(path).catch((e) => { delete memSb[path]; throw e; });
     return memSb[path];
   }
+  // Each team's EPA after its LAST offseason event of a year → { team: {epa, breakdown, event, eventName} }.
+  const memOff = {};
+  function sbOffseasonEpa(year) {
+    if (!memOff[year]) memOff[year] = (async () => {
+      let all = [], off = 0;
+      while (off <= 20000) {
+        const data = await sbFetch(`/team_events?year=${year}&type=offseason&limit=1000&offset=${off}`);
+        if (!Array.isArray(data) || !data.length) break;
+        all = all.concat(data);
+        if (data.length < 1000) break;
+        off += 1000;
+      }
+      const map = {};
+      all.forEach((r) => {
+        const t = sbTeam(r), e = sbEpa(r);
+        if (!t || e == null) return;
+        if (map[t] && (map[t].time || 0) >= (r.time || 0)) return;
+        map[t] = { epa: e, breakdown: sbBreakdown(r), event: r.event, eventName: r.event_name || r.event, time: r.time || 0 };
+      });
+      return map;
+    })().catch((e) => { delete memOff[year]; throw e; });
+    return memOff[year];
+  }
+  // Short-lived memory cache for live data (alliances, schedules, rankings).
+  const memTtl = {};
+  function tbaTtl(path, ttlMs) {
+    const c = memTtl[path];
+    if (c && Date.now() - c.at < ttlMs) return c.p;
+    const p = tba(path).catch((e) => { if (memTtl[path] && memTtl[path].p === p) delete memTtl[path]; throw e; });
+    memTtl[path] = { at: Date.now(), p };
+    return p;
+  }
+  // Bagel Bets: Statbotics' per-match predictions for an event → { matchKey: {redWin, redScore, blueScore} }.
+  const memPreds = {};
+  async function sbEventPreds(eventKey, ttlMs = 60000) {
+    const c = memPreds[eventKey];
+    if (c && Date.now() - c.at < ttlMs) return c.map;
+    const rows = await sbFetch("/matches?event=" + eventKey + "&limit=500");
+    const map = {};
+    (Array.isArray(rows) ? rows : []).forEach((m) => {
+      const p = m.pred || {};
+      if (p.red_win_prob == null) return;
+      map[m.key] = { redWin: Number(p.red_win_prob), redScore: Number(p.red_score) || 0, blueScore: Number(p.blue_score) || 0 };
+    });
+    memPreds[eventKey] = { at: Date.now(), map };
+    return map;
+  }
+  const eventMatchesLive = (key, ttlMs = 45000) => tbaTtl("/event/" + key + "/matches/simple", ttlMs).then((d) => Array.isArray(d) ? d : []);
+  const eventAlliances = (key, ttlMs = 60000) => tbaTtl("/event/" + key + "/alliances", ttlMs).then((d) => Array.isArray(d) ? d : []);
+  const eventRankingsLive = (key, ttlMs = 300000) => tbaTtl("/event/" + key + "/rankings", ttlMs);
+  const eventInfo = (key) => tbaMem("/event/" + key);
+  const eventsFullYear = (year) => tbaMem("/events/" + year).then((d) => Array.isArray(d) ? d : []); // has official week numbers
+  // A team's events in a year (fantasy scoring). Saved for 12h — it rarely changes.
+  async function teamEventKeys(team, year) {
+    const name = "tev." + team + "." + year, c = Store.getCache(name, null);
+    if (c && Date.now() - c.ts < 12 * 3600000) return c.data;
+    try {
+      const d = await tba("/team/frc" + team + "/events/" + year + "/keys");
+      Store.setCache(name, { data: d || [], ts: Date.now() });
+      return d || [];
+    } catch (e) { if (c) return c.data; throw e; }
+  }
   async function eventsForYear(year) {
     if (Number(year) === Number(window.GAME && GAME.season)) {
       try { return (await getEvents(year)).events; } catch (e) { /* fall through to memory */ }
@@ -471,6 +533,7 @@ const API = (() => {
   return { teamKey, verifyKey, hasKey, effectiveKey, getEvents, getEventTeams, getEventMatches, getEventRankings, getTeamColors, getTeamAvatar,
     sbYearLeaderboard, sbCachedLeaderboard, sbTeamEvents, sbTeamMatches, sbTeamYear, sbEpa,
     getTeamInfo, getTeamYears, getTeamSeason, getTeamHistory, sbTeamHistory, eventsForYear, getEventDetail,
+    sbEventPreds, sbOffseasonEpa, eventMatchesLive, eventsFullYear, eventAlliances, eventRankingsLive, eventInfo, teamEventKeys,
     hasNexusKey, nexusPitMap };
 })();
 
