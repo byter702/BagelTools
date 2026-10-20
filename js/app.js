@@ -654,6 +654,7 @@
 
   function refreshChrome() {
     const s = Store.getSettings();
+    const betNav = $('#nav a[data-route="bets"]'); if (betNav) betNav.hidden = !BETS_ON;
     const u = Auth.currentUser();
     $("#scoutTag").innerHTML = u ? `Signed in: <a class="st-me" href="#/members/profile" title="Your profile">${esc(u.first)} ${esc(u.last)}</a>`
       : (s.scoutName ? `Scout: <b>${esc(s.scoutName)}</b>` : "");
@@ -5112,7 +5113,7 @@
       ["matchform", "Match form", "binoculars"],
       ["pitform", "Pit form", "clipboard"],
       ["testevent", "Test event", "flag"],
-      ["betting", "Betting", "coins"],
+      ...(BETS_ON ? [["betting", "Betting", "coins"]] : []),
       ["data", "Data", "database"],
     ];
     const sub = adminSub();
@@ -5693,6 +5694,8 @@
      VIEW: BAGEL BETS — #/bets/<matches|alliances|bracket|fantasy>[/…]
      The rules, money and Firestore transactions live in js/bets.js; this is UI.
      ======================================================================== */
+  // Bagel Bets only exists in 2027 mode (and later seasons), never in 2026.
+  const BETS_ON = GAME.season >= 2027;
   const BET_TABS = [["matches", "Match bets", "zap"], ["alliances", "Alliance picks", "chess"], ["bracket", "Bracket", "trophy"], ["fantasy", "Fantasy", "star"]];
   function betsRoute() {
     const p = location.hash.replace(/^#\/?/, "").split("/");
@@ -5747,6 +5750,11 @@
   function refreshWallet() { const el = $("#btWallet"); if (el) el.outerHTML = walletHTML(); }
 
   function renderBets(root) {
+    if (!BETS_ON) {
+      root.innerHTML = `<div class="card">${emptyState("coins", "Betting is a 2027 feature", "Switch to the 2027 season in Settings to use Bagel Bets.")}
+        <div class="btn-row" style="justify-content:center"><a class="btn primary" href="#/settings">${icon("settings")} Open Settings</a></div></div>`;
+      return;
+    }
     const { tab } = betsRoute();
     const s = Store.getSettings();
     const FY = Bets.fantasyYear();
@@ -6864,7 +6872,7 @@
       }
       if (current() === "bets") { refreshWallet(); if (betsRedraw) betsRedraw(); }
     });
-    Cloud.onFirstSync(() => { if (Cloud.enabled()) Bets.watch(Store.getSettings().eventKey || "", Bets.fantasyYear()); });
+    Cloud.onFirstSync(() => { if (Cloud.enabled() && BETS_ON) Bets.watch(Store.getSettings().eventKey || "", Bets.fantasyYear()); });
     Cloud.onFirstSync(() => {
       const f = $("#matchForm") || $("#pitForm");
       const a = document.activeElement;

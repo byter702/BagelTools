@@ -2535,9 +2535,9 @@ button.mu-trow.has-tc { box-shadow: inset 4px 0 0 var(--tc); padding-left: 10px;
 .ap-hero.scored { background: color-mix(in srgb, var(--success) 14%, var(--surface)); border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
 .ap-hero-l { display: flex; align-items: center; gap: 14px; }
 .ap-hero-l .tp-ring { width: 64px; height: 64px; }
-.ap-hero-ic { width: 54px; height: 54px; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--primary) 15%, transparent); color: var(--primary); }
+.ap-hero-ic { width: 54px; height: 54px; flex: none; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--primary) 15%, transparent); color: var(--primary); }
 .ap-hero-ic .ico { width: 28px; height: 28px; }
-.ap-hero span { display: block; font-size: .8rem; color: var(--text-dim); font-weight: 700; }
+.ap-hero-l > div > span, .ap-hero-r > span { display: block; font-size: .8rem; color: var(--text-dim); font-weight: 700; }
 .ap-hero b { font-family: var(--font-display); font-weight: 900; font-size: 1.7rem; }
 .ap-hero-r { text-align: right; }
 .ap-hero-r b { font-size: 1.25rem; color: var(--secondary); }
