@@ -1767,7 +1767,7 @@
   let teamPageTab = "events", tpResize = null;
   // TBA award types that earn a blue banner: Impact/Chairman's (0), Winner (1), Engineering Inspiration (9).
   const BANNER_TYPES = [0, 1, 9];
-  const FIRST_MARK = `<svg class="bb-logo" viewBox="0 0 66 22" aria-hidden="true"><polygon points="2,20 12,2 22,20" fill="#ed1c24"/><circle cx="33" cy="11" r="9" fill="#fff"/><rect x="45" y="2" width="18" height="18" fill="#0066b3" stroke="#fff" stroke-width="2"/></svg>`;
+  const FIRST_MARK = `<span class="bb-badge" aria-hidden="true"><img src="media/frclogo.png" alt="" /></span>`;
   const bannerName = (a) => a.award_type === 1
     ? (/division/i.test(a.name) ? "Division Winner" : /(championship|einstein)/i.test(a.name) && !/(regional|district|state)/i.test(a.name) ? "World Champion" : "Event Winner")
     : a.award_type === 0 ? (/impact/i.test(a.name) ? "Impact Award" : "Chairman's Award") : "Engineering Inspiration";
@@ -2323,7 +2323,7 @@
       </section>`;
 
     root.innerHTML = `
-      <form id="matchForm" class="ms-form">
+      <form id="matchForm" class="ms-form" data-sig="${esc(formSig(allFields))}">
         ${topCard}
         <div class="ms-banner thero" id="msBanner" hidden></div>
         <div class="grid cols-2" id="matchPhaseGrid" style="margin-bottom:16px">${phases}</div>
@@ -2416,6 +2416,7 @@
     }
 
     wireFields(root);
+    watchDirty(form);
     drawMatchList();
 
     // Order the shift cards by the Won-auto toggle, and re-order live when it flips.
@@ -2539,7 +2540,7 @@
         sub: teams.length ? `${doneN} of ${teams.length} pits scouted${doneN === teams.length ? " · every pit done!" : ""}` : "Pick an event in the sidebar to get the pit map.",
         side: teams.length ? ringSVG(pct, "Pits scouted") : "" })}
       <div id="pitMap"></div>
-      <form id="pitForm" class="pf-form">
+      <form id="pitForm" class="pf-form" data-sig="${esc(formSig(pitFields()))}">
         <section class="card pf-pick">
           <div class="sr-head"><h3>${icon("bagel")} Team</h3><span class="hint">tap a pit on the map, or pick below</span></div>
           <div class="form-grid">
@@ -2565,6 +2566,7 @@
       </div>`;
 
     wireFields(root);
+    watchDirty($("#pitForm", root));
     drawPitList();
     loadPitMap(root);
     // Let cloud updates refresh the shared pit list + map live without touching the form.
@@ -2683,6 +2685,11 @@
     toast("Editing pit data — Save to update");
   }
   function prefillPitTeam(team) { const t = $("#pTeam"); if (t) { t.value = team; t.dispatchEvent(new Event("change")); } }
+
+  // Fingerprint of a form schema (keys + phases + labels) to notice when it changes.
+  const formSig = (fields) => (fields || []).map((f) => f.key + ":" + (f.phase || "") + ":" + f.label).join("|");
+  // Mark a scouting form "dirty" on the first real input so cloud updates never rebuild it.
+  function watchDirty(form) { if (!form) return; const mark = () => { form.dataset.dirty = "1"; }; form.addEventListener("input", mark); form.addEventListener("change", mark); form.addEventListener("click", (e) => { if (e.target.closest("button, .star, .robot-pick")) mark(); }); }
 
   // Active pit-scouting fields: admin-defined custom schema, or the season default.
   function pitFields() { return (Cloud.enabled() && Cloud.getPitForm()) || Store.getPitSchema() || GAME.pitFields; }
@@ -5344,8 +5351,11 @@
       // the form and wipe everything they typed. On the MATCH page we still live-
       // update robot-claim locks; on the PIT page we refresh the shared list + map
       // in place (never the form). Both refresh fully on next visit.
-      if (current() === "match") { refreshRobotClaims(); return; }
-      if (current() === "pit") { if (pitPageRefresh) pitPageRefresh(); return; }
+      // If the admin's cloud form arrives (or changes) while the form is still
+      // untouched, swap it in; once someone has started filling it, never rebuild.
+      const formNow = (id, fields) => { const f = $("#" + id); return f && !f.dataset.dirty && f.dataset.sig !== formSig(fields); };
+      if (current() === "match") { if (formNow("matchForm", matchFields())) { router(); return; } refreshRobotClaims(); return; }
+      if (current() === "pit") { if (formNow("pitForm", pitFields())) { router(); return; } if (pitPageRefresh) pitPageRefresh(); return; }
       // Data page: only rebuild when records actually changed (heartbeats would
       // otherwise reset the search box and scroll position every few seconds).
       if (current() === "data") {
