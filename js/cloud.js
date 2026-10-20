@@ -38,7 +38,19 @@
   var lastPush = { matches: 0, pits: 0 };
   var cfgBootstrapped = false;
   var cfgLoaded = false, cfgWaiters = [];
+  var formStamp = {}, formCbs = []; // last-seen updatedAt of the shared forms
 
+  // The first snapshot of every core collection = "initial sync done": pages
+  // drawn before the cloud data arrived get one redraw (see onFirstSync).
+  var firstNeed = ["scouters", "boards", "tierlists", "matches", "pits", "config"], firstSeen = {}, firstDone = false, firstCbs = [];
+  function seen(name) {
+    if (firstDone) return;
+    firstSeen[name] = true;
+    if (firstNeed.every(function (n) { return firstSeen[n]; })) {
+      firstDone = true;
+      setTimeout(function () { firstCbs.forEach(function (cb) { try { cb(); } catch (e) {} }); }, 0);
+    }
+  }
   function fire() { changeCbs.forEach(function (cb) { try { cb(); } catch (e) {} }); }
   function fireActivity(d) { activityCbs.forEach(function (cb) { try { cb(d); } catch (e) {} }); }
   function me() { return (window.Store && Store.getMe && Store.getMe()) || null; }
@@ -51,26 +63,31 @@
     if (!db) return;
     db.collection("scouters").onSnapshot(function (snap) {
       cache.scouters = snap.docs.map(function (d) { return d.data(); });
+      seen("scouters");
       fire();
     }, function (e) { log("scouters listen failed", e); });
 
     db.collection(col("boards")).onSnapshot(function (snap) {
       cache.boards = snap.docs.map(function (d) { return d.data(); });
+      seen("boards");
       fire();
     }, function (e) { log("boards listen failed", e); });
 
     db.collection(col("tierlists")).onSnapshot(function (snap) {
       cache.tierlists = snap.docs.map(function (d) { return d.data(); });
+      seen("tierlists");
       fire();
     }, function (e) { log("tierlists listen failed", e); });
 
     db.collection(col("matches")).onSnapshot(function (snap) {
       cache.matches = snap.docs.map(function (d) { return d.data(); });
+      seen("matches");
       fire();
     }, function (e) { log("matches listen failed", e); });
 
     db.collection(col("pits")).onSnapshot(function (snap) {
       cache.pits = snap.docs.map(function (d) { return d.data(); });
+      seen("pits");
       fire();
     }, function (e) { log("pits listen failed", e); });
 
@@ -104,6 +121,22 @@
         if (r && window.Store && Store.mergeRoster) Store.mergeRoster(r.members, r.requests);
         // Fold the shared Bagel Bucks approved-event list into local so every
         // device knows which events earn BB (admin approval is team-wide).
+        ["matchForm", "pitForm"].forEach(function (name) {
+          var d = cache.config[cfgId(name)];
+          var setFn = name === "matchForm" ? "setMatchSchema" : "setPitSchema";
+          var clrFn = name === "matchForm" ? "clearMatchSchema" : "clearPitSchema";
+          if (d && Array.isArray(d.schema) && d.schema.length) {
+            var cur = window.Store && Store[name === "matchForm" ? "getMatchSchema" : "getPitSchema"]();
+            if (JSON.stringify(cur) !== JSON.stringify(d.schema)) Store[setFn](d.schema);
+          } else if (d && d.schema === null && window.Store) Store[clrFn]();
+          var stamp = d ? (d.updatedAt || 1) : 0;
+          if (formStamp[name] === undefined) { formStamp[name] = stamp; return; } // first look = baseline
+          if (stamp !== formStamp[name]) {
+            formStamp[name] = stamp;
+            var info = { form: name, note: (d && d.note) || "", byId: (d && d.byId) || "", byName: (d && d.byName) || "" };
+            formCbs.forEach(function (cb) { try { cb(info); } catch (e) {} });
+          }
+        });
         var bb = cache.config[cfgId("bbApproved")];
         if (bb && window.Store && Store.setBBApprovedList) Store.setBBApprovedList(bb.events || []);
       } catch (e) {}
@@ -123,8 +156,11 @@
         } catch (e) {}
       }
       if (!cfgLoaded) { cfgLoaded = true; cfgWaiters.splice(0).forEach(function (r) { r(true); }); }
+      seen("config");
       fire();
     }, function (e) { log("config listen failed", e); });
+    // a collection that never answers (offline, permissions) mustn't block the redraw forever
+    setTimeout(function () { firstNeed.forEach(seen); }, 10000);
   }
 
   // Strip undefined (Firestore rejects it) and functions.
@@ -249,29 +285,21 @@
     },
 
     // ---- Admin config: shared form schemas + roster ----
-    pushMatchForm: function (schema) {
+    // Admin form edits. `note` says what changed ("added a question", "required
+    // fields", …); every other device shows it and refreshes (see onFormChange).
+    pushMatchForm: function (schema, note) { this._pushForm("matchForm", schema, note); },
+    pushPitForm: function (schema, note) { this._pushForm("pitForm", schema, note); },
+    clearMatchForm: function () { this._pushForm("matchForm", null, "reset it to the default"); },
+    clearPitForm: function () { this._pushForm("pitForm", null, "reset it to the default"); },
+    _pushForm: function (name, schema, note) {
       if (!this.enabled()) return;
-      db.collection("config").doc(cfgId("matchForm"))
-        .set({ schema: clean(schema || []), updatedAt: Date.now() })
-        .catch(function (e) { log("pushMatchForm failed", e); });
-    },
-    pushPitForm: function (schema) {
-      if (!this.enabled()) return;
-      db.collection("config").doc(cfgId("pitForm"))
-        .set({ schema: clean(schema || []), updatedAt: Date.now() })
-        .catch(function (e) { log("pushPitForm failed", e); });
-    },
-    clearMatchForm: function () {
-      if (!this.enabled()) return;
-      cache.config[cfgId("matchForm")] = null;
-      db.collection("config").doc(cfgId("matchForm")).delete()
-        .catch(function (e) { log("clearMatchForm failed", e); });
-    },
-    clearPitForm: function () {
-      if (!this.enabled()) return;
-      cache.config[cfgId("pitForm")] = null;
-      db.collection("config").doc(cfgId("pitForm")).delete()
-        .catch(function (e) { log("clearPitForm failed", e); });
+      var m = me();
+      var doc = { schema: schema ? clean(schema) : null, updatedAt: Date.now(), note: note || "",
+        byId: m ? m.id : "", byName: m ? ((m.first || "") + " " + (m.last || "")).trim() : "" };
+      cache.config[cfgId(name)] = doc;
+      formStamp[name] = doc.updatedAt; // my own change: no "an admin changed…" popup for me
+      db.collection("config").doc(cfgId(name)).set(doc)
+        .catch(function (e) { log("push " + name + " failed", e); });
     },
 
     // ---- Shared TEST EVENT (config/testEvent) ----
@@ -448,6 +476,8 @@
         .then(function (snap) { return snap.docs.map(function (d) { return d.id; }); });
     },
 
+    onFormChange: function (cb) { if (typeof cb === "function") formCbs.push(cb); },
+    onFirstSync: function (cb) { if (typeof cb !== "function") return; if (firstDone) cb(); else firstCbs.push(cb); },
     getMatchForm: function () { return cache.config[cfgId("matchForm")] ? cache.config[cfgId("matchForm")].schema : null; },
     getPitForm: function () { return cache.config[cfgId("pitForm")] ? cache.config[cfgId("pitForm")].schema : null; },
     getRoster: function () { return cache.config.roster || null; },

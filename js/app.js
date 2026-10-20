@@ -31,6 +31,23 @@
 
   /* ---- Global scout popup (cloud activity feed) ---------------------------- */
   // Shows briefly (≤5s) whenever ANY scout on the team saves a match/pit record.
+  // A bigger, longer-lived notice than a toast (e.g. "an admin changed the form").
+  function notifyBanner(msg, opts = {}) {
+    let host = $("#notifyHost");
+    if (!host) { host = document.createElement("div"); host.id = "notifyHost"; host.className = "nb-host"; document.body.appendChild(host); }
+    const el = document.createElement("div");
+    el.className = "nb";
+    el.setAttribute("role", "status");
+    el.innerHTML = `<span class="nb-ico">${icon("bell")}</span>
+      <span class="nb-txt"><b>${esc(msg)}</b>${opts.sub ? `<span>${esc(opts.sub)}</span>` : ""}</span>
+      ${opts.action ? `<button class="btn primary sm nb-act">${esc(opts.action)}</button>` : ""}
+      <button class="nb-x" aria-label="Dismiss">${icon("x")}</button>`;
+    host.appendChild(el);
+    const close = () => { el.classList.add("out"); setTimeout(() => el.remove(), 260); };
+    $(".nb-x", el).onclick = close;
+    const act = $(".nb-act", el); if (act) act.onclick = () => { close(); opts.onAction && opts.onAction(); };
+    if (!opts.action) setTimeout(close, 7000);
+  }
   function scoutPopup(a) {
     if (!a) return;
     let wrap = $("#scoutPops");
@@ -171,6 +188,8 @@
   /* ---- Field rendering (shared by match & pit forms) ----------------------- */
   function renderField(f, val) {
     const help = f.help ? `<span class="help">${esc(f.help)}</span>` : "";
+    const req = f.required ? ` data-required="1"` : "";
+    const star = f.required ? ` <span class="req" title="Required">*</span>` : "";
     let control = "";
     switch (f.type) {
       case "bool": {
@@ -178,7 +197,7 @@
         control = `<label class="switch"><input type="checkbox" ${on ? "checked" : ""}
           aria-label="${esc(f.label)}"><span class="slider"></span></label>`;
         return `<div class="field bool-field" data-key="${f.key}" data-type="bool">
-          <label>${esc(f.label)}</label>${help}${control}</div>`;
+          <label>${esc(f.label)}</label>${help}${control}</div>`;  // a toggle always has an answer
       }
       case "counter": {
         const v = Number(val || 0);
@@ -199,6 +218,7 @@
       }
       case "select": {
         control = `<select aria-label="${esc(f.label)}">` +
+          (f.required ? `<option value="" ${val ? "" : "selected"} disabled>Choose…</option>` : "") +
           f.options.map((o) => `<option ${String(val) === String(o) ? "selected" : ""}>${esc(o)}</option>`).join("") +
           `</select>`;
         break;
@@ -212,8 +232,32 @@
       default:
         control = `<input type="text" value="${esc(val || "")}" />`;
     }
-    return `<div class="field" data-key="${f.key}" data-type="${f.type}">
-      <label>${esc(f.label)}</label>${help}${control}</div>`;
+    return `<div class="field" data-key="${f.key}" data-type="${f.type}"${req}>
+      <label>${esc(f.label)}${star}</label>${help}${control}</div>`;
+  }
+
+  // Required questions that are still empty (counters/toggles always count as answered).
+  // Flags them red and returns their labels.
+  function missingRequired(container) {
+    const miss = [];
+    $$("[data-key][data-required]", container).forEach((w) => {
+      const type = w.dataset.type;
+      const empty = type === "text" ? !w.querySelector("textarea").value.trim()
+        : type === "select" ? !w.querySelector("select").value
+        : type === "number" ? w.querySelector("input").value === ""
+        : type === "rating" ? !Number(w.querySelector(".rating").dataset.val || 0) : false;
+      w.classList.toggle("missing", empty);
+      if (empty) {
+        miss.push(w.querySelector("label").textContent.replace("*", "").trim());
+        const clear = () => w.classList.remove("missing");
+        w.addEventListener("input", clear, { once: true }); w.addEventListener("change", clear, { once: true }); w.addEventListener("click", clear, { once: true });
+      }
+    });
+    if (miss.length) {
+      toast(`Fill in required: ${miss.join(", ")}`, "err");
+      const first = $(".missing", container); if (first) first.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+    return miss;
   }
 
   function wireFields(container) {
@@ -222,7 +266,20 @@
       const inp = c.querySelector(".count");
       const set = (v) => { v = Math.max(0, Math.floor(Number(v) || 0)); c.dataset.val = v; if (inp) inp.value = v; };
       c.querySelectorAll("button").forEach((b) => {
-        b.onclick = () => set(Number(c.dataset.val || 0) + Number(b.dataset.step));
+        // Tap = ±1. Hold = repeats, getting faster the longer you hold.
+        const bump = () => set(Number(c.dataset.val || 0) + Number(b.dataset.step));
+        let timer = null;
+        const stop = () => { clearTimeout(timer); timer = null; };
+        b.addEventListener("pointerdown", (e) => {
+          if (e.button !== 0) return;
+          e.preventDefault();
+          bump();
+          let delay = 170;
+          const tick = () => { bump(); delay = Math.max(35, delay * 0.84); timer = setTimeout(tick, delay); };
+          timer = setTimeout(tick, 380);
+        });
+        ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => b.addEventListener(ev, stop));
+        b.onclick = (e) => { if (e.detail === 0) bump(); }; // keyboard Enter/Space
       });
       if (inp) {
         inp.oninput = () => { c.dataset.val = Math.max(0, Math.floor(Number(inp.value) || 0)); };
@@ -469,7 +526,7 @@
     pushMatchForm() {}, pushPitForm() {}, clearMatchForm() {}, clearPitForm() {}, pushRoster() {},
     pushBBApproved() {}, pushAccessRequest() {}, addBB() {}, setBBValue() {},
     pushClaim() {}, releaseClaim() {}, releaseMyClaims() {}, getClaims: () => [],
-    pushActivity() {}, onActivity() {},
+    pushActivity() {}, onActivity() {}, onFormChange() {}, onFirstSync() {},
     pushTestEvent() {}, pushTestQual() {}, clearTestEvent() {}, getTestEvent: () => null,
     deleteScouter: () => Promise.reject(new Error("cloud off")),
     getMatchForm: () => null, getPitForm: () => null, getRoster: () => null,
@@ -554,7 +611,7 @@
   const routes = {
     dashboard: { title: "Dashboard", render: renderDashboard },
     members: { title: "Members", render: renderMembers },
-    teams: { title: "Events", render: renderEventsPage },
+    teams: { title: "Event", render: renderEventsPage },
     match: { title: "Match Scouting", render: renderMatch },
     pit: { title: "Pit Scouting", render: renderPit },
     bagelstats: { title: "BagelStats", render: renderBagelStats },
@@ -573,9 +630,11 @@
   }
   function current() { return (location.hash.replace(/^#\/?/, "") || "dashboard").split("/")[0]; }
 
-  let prevRoute = null;
+  let prevRoute = null, prevHash = null;
   function router() {
     const r = current();
+    const newPage = location.hash !== prevHash;
+    prevHash = location.hash;
     // Leaving the match page drops my robot claim so it doesn't keep locking that
     // robot for everyone else (and so coming back + picking again doesn't double up).
     if (prevRoute === "match" && r !== "match" && window.Cloud) Cloud.releaseMyClaims();
@@ -587,14 +646,15 @@
     document.body.classList.remove("nav-lock");
     view.innerHTML = "";
     route.render(view);
-    view.focus();
+    view.focus({ preventScroll: true });
+    if (newPage) window.scrollTo(0, 0);
     refreshChrome();
   }
 
   function refreshChrome() {
     const s = Store.getSettings();
     const u = Auth.currentUser();
-    $("#scoutTag").innerHTML = u ? `Signed in: <b>${esc(u.first)} ${esc(u.last)}</b>`
+    $("#scoutTag").innerHTML = u ? `Signed in: <a class="st-me" href="#/members/profile" title="Your profile">${esc(u.first)} ${esc(u.last)}</a>`
       : (s.scoutName ? `Scout: <b>${esc(s.scoutName)}</b>` : "");
     const altSeason = GAME.season !== (Number(window.CONFIG && CONFIG.defaultSeason) || 2026);
     $("#eventChip").innerHTML = `<span class="ec-season${altSeason ? " alt" : ""}">${esc(GAME.seasonLabel)}</span>` +
@@ -1027,7 +1087,7 @@
      ======================================================================== */
   function memberSub() {
     const parts = location.hash.replace(/^#\/?/, "").split("/");
-    return { sub: parts[1] || "profile", id: parts[2] || "" };
+    return { sub: parts[1] || "scouters", id: parts[2] || "" };
   }
   function adminSub() {
     return location.hash.replace(/^#\/?/, "").split("/")[1] || "requests";
@@ -1121,8 +1181,8 @@
 
   function renderMembers(root) {
     const { sub } = memberSub();
-    const activeTab = ["profile", "leaderboard", "scouters"].includes(sub) ? sub : "profile";
-    const tabs = [["profile", "Profile", "user"], ["leaderboard", "Leaderboard", "trophy"], ["scouters", "Scouters", "teams"]];
+    const activeTab = ["profile", "leaderboard", "scouters"].includes(sub) ? sub : "scouters";
+    const tabs = [["scouters", "Scouters", "teams"], ["leaderboard", "Leaderboard", "trophy"], ["profile", "Profile", "user"]];
     root.innerHTML = `
       <div class="subtabs" id="memberTabs">
         ${tabs.map(([k, l, ic]) => `<a href="#/members/${k}" class="${activeTab === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}
@@ -1291,10 +1351,19 @@
   }
   function renderEventsPage(root) {
     const s = Store.getSettings();
-    const own = [["list", "Teams", "bagel"], ["schedule", "Schedule", "calendar"], ["rankings", "Rankings", "trophy"]];
+    const own = [["list", "Teams", "bagel"], ["schedule", "Schedule", "calendar"], ["rankings", "Rankings", "trophy"], ["search", "Event search", "search"]];
     const sub = own.some((t) => t[0] === teamsSub()) ? teamsSub() : "list";
+    const tabsHTML = `<div class="subtabs ev-tabs" id="evTabs">
+        ${own.map(([k, l, ic]) => `<a href="#/teams/${k}" class="${sub === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}</div>`;
+    if (sub === "search") {
+      const key = decodeURIComponent(location.hash.replace(/^#\/?/, "").split("/")[2] || "");
+      root.innerHTML = pageHero({ ic: "search", eyebrow: "Event search", title: "Explore any event",
+        sub: "Look up any event from any year: who's going, rankings, matches and awards. Your selected event stays the same." }) + tabsHTML + `<div id="evBody"></div>`;
+      if (key) renderEventExplore($("#evBody", root), key); else renderEventSearch($("#evBody", root));
+      return;
+    }
     if (!s.eventKey) {
-      root.innerHTML = pageHero({ ic: "calendar", eyebrow: "Events", title: "No event selected", sub: "Pick the event you're scouting to load its teams, schedule and rankings." }) +
+      root.innerHTML = pageHero({ ic: "calendar", eyebrow: "Event", title: "No event selected", sub: "Pick the event you're scouting to load its teams, schedule and rankings, or explore any event with Event search." }) + tabsHTML +
         `<div class="card">${emptyState("calendar", "Choose an event", "Use the event chip in the sidebar, or the button below.")}
           <div class="btn-row" style="justify-content:center"><button class="btn primary" id="evChoose">${icon("calendar")} Choose event</button></div></div>`;
       $("#evChoose", root).onclick = openEventPicker;
@@ -1329,9 +1398,7 @@
           <div class="ev-ring">${ringSVG(pct, "Matches played")}<span>progress</span></div>
         </div>
       </section>
-      <div class="subtabs ev-tabs" id="evTabs">
-        ${own.map(([k, l, ic]) => `<a href="#/teams/${k}" class="${sub === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}
-      </div>
+      ${tabsHTML}
       <div id="evBody"></div>`;
     $("#evChange", root).onclick = openEventPicker;
     countUp(root);
@@ -1339,6 +1406,169 @@
     if (sub === "schedule") renderSchedule(body);
     else if (sub === "rankings") renderEventRankings(body);
     else renderTeamsList(body);
+  }
+
+  /* ---- Event Search: browse ANY event (any year) without changing yours ----
+     #/teams/search            list (year, status + region filters, search)
+     #/teams/search/<eventKey> explorer: teams, rankings, matches, awards */
+  const EVENT_TYPES = { 0: "Regional", 1: "District", 2: "District Champs", 3: "Champs Division", 4: "Einstein", 5: "District Champs Div.", 6: "Festival of Champions", 7: "Remote", 99: "Offseason", 100: "Preseason" };
+  let esYear = 0, esQuery = "", esStatus = "all", esRegion = "", esTab = "teams";
+  const evStatus = (e) => {
+    const now = new Date(), a = e.start_date ? new Date(e.start_date + "T00:00:00") : null, b = e.end_date ? new Date(e.end_date + "T23:59:59") : null;
+    if (a && now < a) return "upcoming";
+    if (b && now > b) return "done";
+    return a ? "live" : "upcoming";
+  };
+  const evDates = (e) => {
+    const a = e.start_date ? new Date(e.start_date + "T12:00:00") : null, b = e.end_date ? new Date(e.end_date + "T12:00:00") : null;
+    if (!a) return "";
+    const f = (d, o) => d.toLocaleDateString([], o);
+    return b && b - a > 0 ? `${f(a, { month: "short", day: "numeric" })} – ${f(b, a.getMonth() === b.getMonth() ? { day: "numeric" } : { month: "short", day: "numeric" })}` : f(a, { month: "short", day: "numeric" });
+  };
+  async function renderEventSearch(body) {
+    const year = esYear || GAME.season;
+    const years = []; for (let y = GAME.season + 1; y >= 1992; y--) years.push(y);
+    body.innerHTML = `
+      <div class="card ev-toolbar es-tools">
+        <label class="ds-search" for="esQ">${icon("search")}<input id="esQ" type="search" placeholder="Search events by name, city or code…" value="${esc(esQuery)}" autocomplete="off" /></label>
+        <label class="bs-year">${icon("calendar")}<select id="esYear" aria-label="Season">${years.map((y) => `<option ${y === year ? "selected" : ""}>${y}</option>`).join("")}</select></label>
+        <div class="seg" id="esStatus">${[["all", "All"], ["upcoming", "Upcoming"], ["live", "Live"], ["done", "Completed"]].map(([k, l]) => `<button data-st="${k}" class="${esStatus === k ? "on" : ""}">${l}</button>`).join("")}</div>
+        <label class="bs-region">${icon("map-pin")}<select id="esRegion" aria-label="Region"><option value="">Everywhere</option></select></label>
+      </div>
+      <div id="esList"><div class="card tp-loading"><span class="tp-spin"></span>Loading ${year} events…</div></div>`;
+    $("#esYear", body).onchange = (e) => { esYear = Number(e.target.value); esRegion = ""; renderEventSearch(body); };
+    let events = [];
+    try { events = await API.eventsForYear(year); } catch (e) {
+      if (body.isConnected) $("#esList", body).innerHTML = `<div class="card">${emptyState("globe", "Couldn't load events", "The Blue Alliance needs wifi. Try again online.")}</div>`;
+      return;
+    }
+    if (!body.isConnected) return;
+    const region = (e) => e.country === "USA" ? (e.state_prov || "USA") : (e.country || "");
+    const regions = [...new Set(events.map(region).filter(Boolean))].sort();
+    const rsel = $("#esRegion", body);
+    rsel.innerHTML = `<option value="">Everywhere</option>` + regions.map((r) => `<option ${r === esRegion ? "selected" : ""}>${esc(r)}</option>`).join("");
+    const listEl = $("#esList", body), mine = Store.getSettings().eventKey;
+    const draw = () => {
+      const q = esQuery.trim().toLowerCase();
+      const list = events.filter((e) => (esStatus === "all" || evStatus(e) === esStatus) && (!esRegion || region(e) === esRegion) &&
+        (!q || [e.name, e.city, e.state_prov, e.country, e.key, e.event_code, e.district && e.district.display_name].some((x) => String(x || "").toLowerCase().includes(q))));
+      if (!list.length) { listEl.innerHTML = `<div class="card">${emptyState("search", "No events found", "Try a different search, status or region.")}</div>`; return; }
+      const groups = {};
+      list.forEach((e) => { const k = e.start_date ? e.start_date.slice(0, 7) : "TBD"; (groups[k] = groups[k] || []).push(e); });
+      listEl.innerHTML = Object.keys(groups).sort().map((k) => {
+        const label = k === "TBD" ? "Date TBD" : new Date(k + "-15T12:00:00").toLocaleDateString([], { month: "long", year: "numeric" });
+        return `<section class="es-group"><h3 class="es-month">${icon("calendar")} ${esc(label)} <span class="muted">${groups[k].length}</span></h3>
+          <div class="es-grid">${groups[k].map((e, i) => {
+            const st = evStatus(e);
+            return `<a class="es-card${e.key === mine ? " mine" : ""}" href="#/teams/search/${esc(e.key)}" style="animation-delay:${Math.min(i, 16) * 20}ms">
+              <span class="es-top"><span class="es-type">${esc(EVENT_TYPES[e.event_type] || "Event")}</span><span class="ev-status ${st}"><i></i>${st === "done" ? "Completed" : st === "live" ? "Live" : "Upcoming"}</span></span>
+              <b class="es-name">${esc(shortEventName(e.name))}</b>
+              <span class="es-meta">${icon("calendar")} ${esc(evDates(e))}</span>
+              <span class="es-meta">${icon("map-pin")} ${esc([e.city, e.state_prov, e.country].filter(Boolean).join(", "))}</span>
+              ${e.key === mine ? `<span class="es-mine">${icon("check")} Your event</span>` : ""}
+            </a>`;
+          }).join("")}</div></section>`;
+      }).join("");
+    };
+    $("#esQ", body).oninput = (e) => { esQuery = e.target.value; draw(); };
+    rsel.onchange = () => { esRegion = rsel.value; draw(); };
+    $$("#esStatus button", body).forEach((b) => b.onclick = () => { esStatus = b.dataset.st; $$("#esStatus button", body).forEach((x) => x.classList.toggle("on", x === b)); draw(); });
+    draw();
+  }
+
+  async function renderEventExplore(body, key) {
+    body.innerHTML = `<div class="card tp-loading"><span class="tp-spin"></span>Loading event…</div>`;
+    let d;
+    try { d = await API.getEventDetail(key); } catch (e) {
+      if (body.isConnected) body.innerHTML = `<div class="ds-crumbs"><a class="btn ghost sm" href="#/teams/search">${icon("chevron-left")} All events</a></div>
+        <div class="card">${emptyState("globe", "Couldn't load this event", "Check the event code, or connect to wifi and try again.")}</div>`;
+      return;
+    }
+    if (!body.isConnected) return;
+    const e = d.info, year = e.year, st = evStatus(e), mine = Store.getSettings().eventKey === key;
+    const played = d.matches.filter((m) => m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0).length;
+    const winners = d.awards.filter((a) => a.award_type === 1).flatMap((a) => a.recipient_list.map((r) => r.team_key && r.team_key.replace("frc", ""))).filter(Boolean);
+    const rank = {}; d.rankings.forEach((r) => { rank[r.team_key.replace("frc", "")] = r; });
+    const epaOf = (t) => d.epa[t] && d.epa[t].epa;
+    body.innerHTML = `
+      <div class="ds-crumbs"><a class="btn ghost sm" href="#/teams/search">${icon("chevron-left")} All events</a>
+        <div class="btn-row">
+          ${year === GAME.season && !mine ? `<button class="btn primary sm" id="exSet">${icon("calendar")} Make this my event</button>` : ""}
+          ${mine ? `<span class="badge green dot">Your event</span>` : ""}
+          <a class="btn ghost sm" href="https://www.thebluealliance.com/event/${esc(key)}" target="_blank" rel="noopener">${icon("external")} TBA</a>
+        </div></div>
+      <section class="ev-hero">
+        <div class="ev-hero-main">
+          <span class="ev-status ${st}"><i></i>${st === "done" ? "Completed" : st === "live" ? "Live now" : "Upcoming"}</span>
+          <h2 class="ev-name">${esc(e.name)}</h2>
+          <span class="ev-meta">${icon("calendar")} ${esc(evDates(e))} ${year}${e.week != null ? ` · Week ${e.week + 1}` : ""} <span>${icon("map-pin")} ${esc([e.city, e.state_prov, e.country].filter(Boolean).join(", "))}</span> <span>${icon("flag")} ${esc(EVENT_TYPES[e.event_type] || e.event_type_string || "Event")}</span></span>
+          ${winners.length ? `<div class="ex-winners">${icon("trophy")} Winners ${winners.map((t) => `<a class="ex-chip" href="#/team/${esc(t)}/${year}">${esc(t)}</a>`).join("")}</div>` : ""}
+        </div>
+        <div class="ev-hero-stats">
+          <div><b>${d.teams.length}</b><span>teams</span></div>
+          <div><b>${played}<small>/${d.matches.length}</small></b><span>matches</span></div>
+          <div><b>${d.awards.length}</b><span>awards</span></div>
+        </div>
+      </section>
+      <div class="subtabs" id="exTabs">${[["teams", "Teams", "bagel"], ["rankings", "Rankings", "trophy"], ["matches", "Matches", "list"], ["awards", "Awards", "star"]]
+        .map(([k, l, ic]) => `<button data-ex="${k}" class="${esTab === k ? "on" : ""}">${icon(ic)} ${l}</button>`).join("")}</div>
+      <div id="exBody"></div>`;
+    const set = $("#exSet", body); if (set) set.onclick = () => selectEvent(key, e.name).then(() => { location.hash = "#/teams/list"; });
+    const exBody = $("#exBody", body);
+    const openT = (t) => (year === GAME.season ? openTeam(t) : (location.hash = "#/team/" + t + "/" + year));
+    const draw = () => {
+      if (esTab === "rankings") {
+        if (!d.rankings.length) { exBody.innerHTML = `<div class="card">${emptyState("trophy", "No rankings", "Rankings appear once qualification matches are played.")}</div>`; return; }
+        const maxRp = Math.max(0.01, ...d.rankings.map((r) => (r.sort_orders && r.sort_orders[0]) || 0));
+        exBody.innerHTML = `<section class="card"><div class="er-list">${d.rankings.map((r, i) => {
+          const t = r.team_key.replace("frc", ""), rec = r.record || {}, rp = (r.sort_orders && r.sort_orders[0]) || 0;
+          return `<button class="er-row${r.rank <= 8 ? " cap" : ""}${t === OUR_TEAM ? " ours" : ""}" data-t="${esc(t)}" data-tfill="${esc(t)}" style="animation-delay:${Math.min(i, 24) * 15}ms">
+            <span class="er-rank">${r.rank}</span><img class="team-avatar" data-avatar="${esc(t)}" alt="" />
+            <span class="er-id"><b>${esc(t)}</b><span>${esc((d.teams.find((x) => String(x.team_number) === t) || {}).nickname || "")}</span></span>
+            <span class="er-rp"><span class="er-track"><i style="width:${Math.round(rp / maxRp * 100)}%"></i></span><b>${fmt(rp, 2)}</b><small>RP</small></span>
+            <span class="er-rec">${rec.wins ?? 0}-${rec.losses ?? 0}-${rec.ties ?? 0}</span>
+            <span class="er-epa">${epaOf(t) != null ? fmt(epaOf(t)) : "–"}<small>EPA</small></span></button>`;
+        }).join("")}</div></section>`;
+      } else if (esTab === "matches") {
+        if (!d.matches.length) { exBody.innerHTML = `<div class="card">${emptyState("list", "No matches yet", "The schedule appears once it's posted.")}</div>`; return; }
+        const order = { qm: 0, ef: 1, qf: 2, sf: 3, f: 4 };
+        const ms = d.matches.slice().sort((a, b) => (order[a.comp_level] - order[b.comp_level]) || (a.set_number - b.set_number) || (a.match_number - b.match_number));
+        const row = (m) => {
+          const red = m.alliances.red.team_keys.map((k) => k.replace("frc", "")), blue = m.alliances.blue.team_keys.map((k) => k.replace("frc", ""));
+          const rs = m.alliances.red.score, bs = m.alliances.blue.score, done = rs >= 0 && bs >= 0;
+          const lbl = (m.comp_level === "qm" ? "Q" + m.match_number : m.comp_level.toUpperCase() + (m.comp_level === "sf" ? m.set_number : m.match_number));
+          const chip = (t) => `<span class="sr-team${t === OUR_TEAM ? " hl" : ""}">${t}</span>`;
+          return `<div class="sched-row static"><span class="sr-label">${esc(lbl)}<small>${done ? "final" : ""}</small></span>
+            <span class="sr-alliance red ${done && rs > bs ? "won" : ""}">${red.map(chip).join("")}</span>
+            <span class="sr-score">${done ? `<b class="${rs > bs ? "w" : ""}">${rs}</b><span class="sr-dash">–</span><b class="${bs > rs ? "w" : ""}">${bs}</b>` : `<span class="sr-vs">vs</span>`}</span>
+            <span class="sr-alliance blue ${done && bs > rs ? "won" : ""}">${blue.map(chip).join("")}</span></div>`;
+        };
+        const q = ms.filter((m) => m.comp_level === "qm"), po = ms.filter((m) => m.comp_level !== "qm");
+        exBody.innerHTML = `${q.length ? `<section class="card ev-sched"><div class="sr-head"><h3>${icon("list")} Qualifications</h3><span class="hint">${q.length}</span></div><div class="sched-list">${q.map(row).join("")}</div></section>` : ""}
+          ${po.length ? `<section class="card ev-sched" style="margin-top:16px"><div class="sr-head"><h3>${icon("trophy")} Playoffs</h3><span class="hint">${po.length}</span></div><div class="sched-list">${po.map(row).join("")}</div></section>` : ""}`;
+      } else if (esTab === "awards") {
+        if (!d.awards.length) { exBody.innerHTML = `<div class="card">${emptyState("star", "No awards yet", "Awards are posted as the event finishes.")}</div>`; return; }
+        exBody.innerHTML = `<div class="tp-award-grid">${d.awards.map((a, i) => `<div class="card tp-award-card" style="--i:${i}">
+          ${icon(BANNER_TYPES.includes(a.award_type) ? "flag" : "trophy")}<b>${esc(a.name)}</b>
+          <span>${a.recipient_list.map((r) => r.team_key ? `<a class="ex-chip" href="#/team/${esc(r.team_key.replace("frc", ""))}/${year}">${esc(r.team_key.replace("frc", ""))}</a>${r.awardee ? " " + esc(r.awardee) : ""}` : esc(r.awardee || "")).join(" ")}</span></div>`).join("")}</div>`;
+      } else {
+        if (!d.teams.length) { exBody.innerHTML = `<div class="card">${emptyState("bagel", "No teams listed yet", "Teams appear as they register.")}</div>`; return; }
+        exBody.innerHTML = `<div class="ds-grid">${d.teams.map((t, i) => {
+          const n = String(t.team_number), r = rank[n], e2 = epaOf(n);
+          return teamTileHTML(n, `${e2 != null ? `<span class="ev-pill">EPA <b>${fmt(e2)}</b></span>` : ""}${r ? `<span class="ev-pill">#<b>${r.rank}</b></span>` : ""}${winners.includes(n) ? `<span class="ev-pill">${icon("trophy")}won</span>` : ""}`,
+            { style: `animation-delay:${Math.min(i, 30) * 14}ms` });
+        }).join("")}</div>`;
+        // names come from this event's roster (they may not be in our caches)
+        $$("[data-tteam]", exBody).forEach((b) => { const t = d.teams.find((x) => String(x.team_number) === b.dataset.tteam); const nm = $(".ds-name", b); if (t && nm && !nm.textContent.trim()) nm.textContent = t.nickname || ""; });
+        wireTeamTiles(exBody, openT);
+        return;
+      }
+      const ts = [...new Set($$("[data-t]", exBody).map((x) => x.dataset.t))];
+      paintAvatars(exBody, ts); paintTeamFills(exBody, ts);
+      $$("[data-t]", exBody).forEach((x) => x.onclick = () => openT(x.dataset.t));
+    };
+    $$("#exTabs button", body).forEach((b) => b.onclick = () => { esTab = b.dataset.ex; $$("#exTabs button", body).forEach((x) => x.classList.toggle("on", x === b)); draw(); });
+    draw();
   }
 
   function renderTeamsList(root) {
@@ -2352,7 +2582,9 @@
         <img class="team-avatar thero-av" data-avatar="${esc(team)}" data-ally="${esc(ally || "")}" alt="" />
         <div class="thero-id"><span class="ms-eyebrow">Now scouting${num ? " · Q" + esc(num) : ""}</span>
           <span class="thero-num">${esc(team)}</span><span class="thero-name">${esc(nameFor(team)) || "&nbsp;"}</span></div>
-        ${ally ? `<span class="ms-ally-pill ${ally}">${ally} alliance</span>` : ""}`;
+        ${ally ? `<span class="ms-ally-pill ${ally}">${ally} alliance</span>` : ""}
+        ${liveMode ? `<button type="button" class="ms-desel" id="msDesel" aria-label="Deselect this robot">${icon("x")}<span>Deselect</span></button>` : ""}`;
+      const ds = $("#msDesel", banner); if (ds) ds.onclick = () => { const sel = $(".robot-pick.sel", root); if (sel) sel.click(); };
       paintAvatars(banner, [team]);
       paintTeamFills(form, [team]);
     };
@@ -2376,11 +2608,20 @@
         paintAvatars(picker, ts);
         paintTeamFills(picker, ts);
         $$(".robot-pick", picker).forEach((b) => b.onclick = () => {
-          if (b.classList.contains("sel")) return; // already the selected robot
+          if (b.classList.contains("sel")) {
+            // tap the selected robot again = deselect it (frees it for other scouts)
+            b.classList.remove("sel");
+            Cloud.releaseClaim(s.eventKey, num, b.dataset.team);
+            $("#mTeam", root).value = "";
+            setScouting(null); // the 5s cooldown still counts from the original pick
+            refreshRobotClaims();
+            toast(`Deselected ${b.dataset.team}`);
+            return;
+          }
           if (b.disabled) { toast("That robot is already being scouted by someone else", "err"); return; }
           // 5-second cooldown between switching the team you're scouting
           const prev = $(".robot-pick.sel", picker);
-          if (prev) {
+          if (lastTeamPick) {
             const left = 5000 - (Date.now() - lastTeamPick);
             if (left > 0) { toast(`Wait ${Math.ceil(left / 1000)}s before switching teams`, "err"); return; }
           }
@@ -2439,6 +2680,7 @@
         alliance = matchEditId ? matchEditAlliance : (a ? a.dataset.v : "red");
       }
       if (!team) { toast("Pick a team first", "err"); return; }
+      if (missingRequired($("#matchForm", root)).length) return;
       const fields = readForm($("#matchForm", root)); // phase cards + Pre-Match fields
       const entry = {
         id: matchEditId || undefined,
@@ -2612,6 +2854,7 @@
       e.preventDefault();
       const team = $("#pTeam", root).value.trim();
       if (!team) { toast("Pick a team first", "err"); return; }
+      if (missingRequired($("#pitFieldsCard", root)).length) return;
       const fields = readForm($("#pitFieldsCard", root));
       const data = { ...fields, scout: scoutDisplayName(), event: Store.getSettings().eventKey, nickname: teamName(team) };
       if (pitPhoto) data.photo = pitPhoto; // keep existing photo if none newly chosen
@@ -3538,16 +3781,10 @@
      #/data/search/team/<num>      one team's scouting report
      #/data/search/scouter/<id>    everything one scouter recorded
      #/data/spreadsheet            the full sortable tables + CSV export     */
-  let dsQuery = "", lastDataSig = "";
+  let dsQuery = "";
   function dataRoute() {
     const p = location.hash.replace(/^#\/?/, "").split("/");
     return { sub: p[1] === "spreadsheet" ? "spreadsheet" : "search", kind: p[2] || "", id: decodeURIComponent(p[3] || "") };
-  }
-  // Cheap fingerprint of the shared scouting data, so cloud heartbeats don't
-  // re-render (and scroll-jump) the Data page unless records actually changed.
-  function dataSig() {
-    const ms = allMatches(), ps = Object.values(allPits());
-    return ms.length + ":" + ps.length + ":" + Math.max(0, ...ms.map((m) => m.ts || 0), ...ps.map((p) => p.ts || 0));
   }
   function renderData(root) {
     const r = dataRoute();
@@ -3560,6 +3797,7 @@
     const body = $("#dataBody", root);
     if (r.sub === "spreadsheet") renderDataSheet(body);
     else if (r.kind === "team" && r.id) renderDataTeam(body, r.id);
+    else if (r.kind === "data") renderDataStats(body, r.id);
     else if (r.kind === "scouter" && r.id) { location.replace("#/members/scouters/" + encodeURIComponent(r.id)); return; } // moved to Members
     else renderDataSearch(body);
   }
@@ -3599,12 +3837,128 @@
   const fieldVal = (v) => v === true ? "Yes" : v === false ? "No" : (v == null || v === "") ? "–" : String(v);
   const isYes = (v) => v === true || v === "true" || v === "Yes";
 
+  // Teams | Data switch shown at the top of Data → Search.
+  const dsViewsHTML = (on) => `<div class="seg ds-views">
+      <a href="#/data/search" class="${on === "teams" ? "on" : ""}">${icon("bagel")} Teams</a>
+      <a href="#/data/search/data" class="${on === "data" ? "on" : ""}">${icon("chart")} Data</a></div>`;
+
+  /* ---- Data → Search → Data: rank every team by any scouted stat ----------
+     Numbers / counters / ratings → average per team; yes/no → % of matches
+     (pit: yes first); dropdowns → teams grouped by their most common answer. */
+  let dstQuery = "", dstDir = -1, dstMin = 1;
+  function renderDataStats(body, fieldKey) {
+    const mf = matchFields().filter((f) => f.type !== "text").map((f) => ({ ...f, src: "match" }));
+    const pf = pitFields().filter((f) => f.type !== "text" && f.key !== "photo").map((f) => ({ ...f, src: "pit" }));
+    const all = [...mf, ...pf];
+    const pick = all.find((f) => f.src + ":" + f.key === fieldKey)
+      || all.find((f) => /bps|balls per second/i.test(f.label) && f.src === "match") || all.find((f) => f.type === "counter") || all[0];
+    if (!pick) { body.innerHTML = dsViewsHTML("data") + `<div class="card">${emptyState("chart", "No stats yet", "Scouting forms have no numeric questions.")}</div>`; return; }
+    const phases = {}; (GAME.matchPhases || []).forEach((p) => { phases[p.id] = p.label; });
+    const groups = [];
+    const byPhase = {};
+    mf.forEach((f) => { const g = phases[f.phase] || "Other"; (byPhase[g] = byPhase[g] || []).push(f); });
+    const phaseOrder = (GAME.matchPhases || []).map((p) => p.label);
+    Object.keys(byPhase).sort((x, y) => (phaseOrder.indexOf(x) + 1 || 99) - (phaseOrder.indexOf(y) + 1 || 99)).forEach((g) => groups.push([g, byPhase[g]]));
+    if (pf.length) groups.push(["Pit scouting", pf]);
+    const typeIco = { counter: "plus", number: "plus", rating: "star", bool: "check", select: "list" };
+    body.innerHTML = `${dsViewsHTML("data")}
+      <div class="dst">
+        <aside class="card dst-pick">
+          <label class="ds-search" for="dstQ">${icon("search")}<input id="dstQ" type="search" placeholder="Find a stat… (e.g. bps)" value="${esc(dstQuery)}" autocomplete="off" /></label>
+          <div class="dst-groups" id="dstGroups">${groups.map(([g, fs]) => `<div class="dst-group"><h4>${esc(g)}</h4>
+            <div class="dst-chips">${fs.map((f) => `<a class="dst-chip${f === pick ? " on" : ""}" data-lbl="${esc(f.label.toLowerCase())}" href="#/data/search/data/${esc(f.src + ":" + f.key)}">${icon(typeIco[f.type] || "chart")}${esc(f.label)}</a>`).join("")}</div></div>`).join("")}</div>
+        </aside>
+        <section class="dst-main" id="dstMain"></section>
+      </div>`;
+    const filterChips = () => {
+      const q = dstQuery.trim().toLowerCase();
+      $$(".dst-chip", body).forEach((c) => { c.hidden = !!q && !c.dataset.lbl.includes(q); });
+      $$(".dst-group", body).forEach((g) => { g.hidden = !$$(".dst-chip", g).some((c) => !c.hidden); });
+    };
+    $("#dstQ", body).oninput = (e) => { dstQuery = e.target.value; filterChips(); };
+    filterChips();
+
+    // ---- compute the leaderboard for the picked stat ----
+    const main = $("#dstMain", body);
+    const draw = () => {
+      let rows = [], select = pick.type === "select";
+      if (pick.src === "match") {
+        const by = {};
+        allMatches().forEach((m) => { const v = m[pick.key]; if (v === undefined || v === null || v === "") return; (by[String(m.team)] = by[String(m.team)] || []).push(v); });
+        Object.entries(by).forEach(([t, vals]) => {
+          if (vals.length < dstMin) return;
+          if (pick.type === "bool") rows.push({ t, v: vals.filter(isYes).length / vals.length * 100, n: vals.length });
+          else if (select) {
+            const c = {}; vals.forEach((x) => { c[x] = (c[x] || 0) + 1; });
+            const top = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
+            rows.push({ t, label: top[0], share: top[1] / vals.length, n: vals.length });
+          } else {
+            const nums = vals.map(Number).filter((x) => !isNaN(x) && (pick.type !== "rating" || x > 0));
+            if (nums.length) rows.push({ t, v: nums.reduce((a, b) => a + b, 0) / nums.length, max: Math.max(...nums), n: nums.length });
+          }
+        });
+      } else {
+        Object.values(allPits()).forEach((p) => {
+          const v = p[pick.key]; if (v === undefined || v === null || v === "") return;
+          if (pick.type === "bool") rows.push({ t: String(p.team), v: isYes(v) ? 100 : 0, n: 1 });
+          else if (select) rows.push({ t: String(p.team), label: String(v), share: 1, n: 1 });
+          else if (!isNaN(Number(v))) rows.push({ t: String(p.team), v: Number(v), n: 1 });
+        });
+      }
+      const unit = pick.type === "bool" ? (pick.src === "pit" ? "" : "%") : pick.type === "rating" ? "★" : "";
+      const head = `<div class="card dst-head">
+        <div class="dst-title"><span class="pg-eyebrow">${pick.src === "pit" ? "Pit scouting" : esc(phases[pick.phase] || "Match scouting")}</span>
+          <h3>${esc(pick.label)}</h3>
+          <span class="hint">${select ? "Teams grouped by their most common answer" : pick.type === "bool" ? (pick.src === "pit" ? "Which teams said yes" : "% of scouted matches where this was yes") : pick.src === "pit" ? "Value from pit scouting" : "Average per scouted match"} · ${rows.length} teams</span></div>
+        ${select ? "" : `<div class="seg" id="dstDir"><button data-d="-1" class="${dstDir < 0 ? "on" : ""}">Highest ↓</button><button data-d="1" class="${dstDir > 0 ? "on" : ""}">Lowest ↑</button></div>`}
+        ${pick.src === "match" ? `<label class="bs-region" title="Ignore teams with fewer scouted matches">${icon("binoculars")}<select id="dstMin">${[1, 2, 3, 4, 5].map((n) => `<option value="${n}" ${n === dstMin ? "selected" : ""}>${n}+ match${n > 1 ? "es" : ""}</option>`).join("")}</select></label>` : ""}
+      </div>`;
+      if (!rows.length) { main.innerHTML = head + `<div class="card">${emptyState("chart", "No data for this stat yet", "Teams show up here once someone scouts it.")}</div>`; wire(); return; }
+      if (select) {
+        const groups2 = {}; rows.forEach((r) => { (groups2[r.label] = groups2[r.label] || []).push(r); });
+        const order = (pick.options || []).filter((o) => groups2[o]).concat(Object.keys(groups2).filter((k) => !(pick.options || []).includes(k)));
+        main.innerHTML = head + order.map((o) => `<section class="card dst-sel"><div class="sr-head"><h3>${esc(o)}</h3><span class="hint">${groups2[o].length} team${groups2[o].length === 1 ? "" : "s"}</span></div>
+          <div class="mb-tiles">${groups2[o].sort((a, b) => b.share - a.share).map((r) => teamTileHTML(r.t, pick.src === "match" ? `${Math.round(r.share * 100)}% of ${r.n} match${r.n === 1 ? "" : "es"}` : "", { mini: true })).join("")}</div></section>`).join("");
+      } else {
+        rows.sort((a, b) => (a.v - b.v) * dstDir || b.n - a.n);
+        const max = Math.max(...rows.map((r) => Math.abs(r.v))) || 1;
+        const val = (r) => pick.type === "bool" && pick.src === "pit" ? (r.v ? "Yes" : "No") : fmt(r.v) + unit;
+        const medal = ["gold", "silver", "bronze"];
+        const pod = rows.length >= 3 && !(pick.type === "bool" && pick.src === "pit") ? `<section class="bs-podium">${[1, 0, 2].map((i) => {
+          const r = rows[i];
+          return `<button class="bs-pod ${medal[i]}" data-tteam="${esc(r.t)}" data-tfill="${esc(r.t)}" style="animation-delay:${[1, 0, 2].indexOf(i) * 90}ms">
+            <span class="bs-pod-medal">${i + 1}</span>
+            <img class="team-avatar" data-avatar="${esc(r.t)}" alt="" />
+            <b class="bs-pod-num">${esc(r.t)}</b>
+            <span class="bs-pod-name">${esc(nameFor(r.t))}</span>
+            <span class="bs-pod-epa"><b>${val(r)}</b> ${pick.src === "match" ? `· ${r.n} match${r.n === 1 ? "" : "es"}` : ""}</span>
+          </button>`; }).join("")}</section>` : "";
+        main.innerHTML = head + pod + `<section class="card bs-card"><div class="bs-list">${rows.map((r, i) => `
+          <button class="bs-row dst-row${r.t === OUR_TEAM ? " ours" : ""}" data-tteam="${esc(r.t)}" data-tfill="${esc(r.t)}" style="animation-delay:${Math.min(i, 20) * 14}ms">
+            <span class="bs-rank">${i + 1}</span>
+            <img class="team-avatar" data-avatar="${esc(r.t)}" alt="" />
+            <span class="bs-id"><b>${esc(r.t)}</b><span>${esc(nameFor(r.t))}</span></span>
+            <span class="bs-bar"><i class="a" style="width:${Math.max(0, r.v / max * 100).toFixed(1)}%"></i></span>
+            <span class="bs-epa"><b>${val(r)}</b><small>${r.max != null && pick.type !== "bool" ? `max ${fmt(r.max, 0)}` : pick.src === "match" ? "avg" : ""}</small></span>
+            <span class="bs-rec">${pick.src === "match" ? `${r.n}<small>match${r.n === 1 ? "" : "es"}</small>` : `<small>pit</small>`}</span>
+          </button>`).join("")}</div></section>`;
+      }
+      wire();
+    };
+    function wire() {
+      $$("#dstDir button", main).forEach((b) => b.onclick = () => { dstDir = Number(b.dataset.d); draw(); });
+      const mn = $("#dstMin", main); if (mn) mn.onchange = () => { dstMin = Number(mn.value); draw(); };
+      wireTeamTiles(main, (t) => { location.hash = "#/data/search/team/" + t; });
+    }
+    draw();
+  }
+
   function renderDataSearch(body) {
     const pits = allPits(), ms = allMatches();
     const scouted = allScoutedTeams();
     const mCount = {}; ms.forEach((m) => { const t = String(m.team); mCount[t] = (mCount[t] || 0) + 1; });
     const evOnly = eventTeams().map((t) => String(t.team_number)).filter((t) => !scouted.includes(t));
-    body.innerHTML = `
+    body.innerHTML = `${dsViewsHTML("teams")}
       <div class="card ds-top">
         <label class="ds-search" for="dsInput">${icon("search")}
           <input id="dsInput" type="search" autocomplete="off" placeholder="Search a team number or name…" value="${esc(dsQuery)}" />
@@ -4886,13 +5240,15 @@
         </div>
         <p class="hint">${Store.getPitSchema() ? "<b>Custom form active.</b>" : "Using the default form."}
           Build your own pit questions — text, numbers, dropdowns, counters, ratings and yes/no toggles.
-          Changes sync to every scout's device through the cloud.</p>
+          Changes sync to every scout's device instantly, and everyone gets a notice. <b>Required</b> questions must be answered before saving
+          (toggles and counters always have an answer, so they can't be required).</p>
         <div class="table-wrap"><table>
-          <thead><tr><th>#</th><th>Question</th><th>Type</th><th>Options</th><th></th></tr></thead>
+          <thead><tr><th>#</th><th>Question</th><th>Type</th><th>Required</th><th>Options</th><th></th></tr></thead>
           <tbody>${pitFields().map((f, i) => `<tr>
             <td class="num">${i + 1}</td>
-            <td><b>${esc(f.label)}</b>${f.help ? `<br><span class="hint">${esc(f.help)}</span>` : ""}</td>
+            <td><b>${esc(f.label)}</b>${f.required ? ` <span class="req">*</span>` : ""}${f.help ? `<br><span class="hint">${esc(f.help)}</span>` : ""}</td>
             <td><span class="badge">${esc(f.type)}</span></td>
+            <td><label class="switch sm" title="Required"><input type="checkbox" data-pf-req="${i}" ${f.required ? "checked" : ""} ${f.type === "bool" || f.type === "counter" ? "disabled" : ""}><span class="slider"></span></label></td>
             <td class="muted">${f.options ? esc(f.options.join(", ")) : "–"}</td>
             <td class="row" style="gap:6px;flex-wrap:nowrap">
               <button class="icon-btn sm" data-pf-up="${i}" aria-label="Move up">↑</button>
@@ -4913,7 +5269,8 @@
           </div>
         </div>
         <p class="hint">${Store.getMatchSchema() ? "<b>Custom form active.</b>" : "Using the default REBUILT form."}
-          Edit the questions scouts fill in during matches. Changes sync to every scout's device through the cloud.</p>
+          Edit the questions scouts fill in during matches. Changes sync to every scout's device instantly, and everyone gets a notice.
+          <b>Required</b> questions must be answered before a match can be saved.</p>
         <div class="field" style="max-width:340px">
           <label>Match-list summary column</label>
           <span class="help">Extra column shown in the match records list.</span>
@@ -4923,12 +5280,13 @@
           </select>
         </div>
         <div class="table-wrap"><table>
-          <thead><tr><th>#</th><th>Question</th><th>Phase</th><th>Type</th><th>Options</th><th></th></tr></thead>
+          <thead><tr><th>#</th><th>Question</th><th>Phase</th><th>Type</th><th>Required</th><th>Options</th><th></th></tr></thead>
           <tbody>${matchFields().map((f, i) => `<tr>
             <td class="num">${i + 1}</td>
-            <td><b>${esc(f.label)}</b>${f.help ? `<br><span class="hint">${esc(f.help)}</span>` : ""}</td>
+            <td><b>${esc(f.label)}</b>${f.required ? ` <span class="req">*</span>` : ""}${f.help ? `<br><span class="hint">${esc(f.help)}</span>` : ""}</td>
             <td><span class="badge cyan">${esc(f.phase || "post")}</span></td>
             <td><span class="badge">${esc(f.type)}</span></td>
+            <td><label class="switch sm" title="Required"><input type="checkbox" data-mf-req="${i}" ${f.required ? "checked" : ""} ${f.type === "bool" || f.type === "counter" ? "disabled" : ""}><span class="slider"></span></label></td>
             <td class="muted">${f.options ? esc(f.options.join(", ")) : "–"}</td>
             <td class="row" style="gap:6px;flex-wrap:nowrap">
               <button class="icon-btn sm" data-mf-up="${i}" aria-label="Move up">↑</button>
@@ -5106,7 +5464,7 @@
 
     // ---- Pit form builder ----
     const workingSchema = () => ((Cloud.enabled() && Cloud.getPitForm()) || Store.getPitSchema() || GAME.pitFields).map((f) => ({ ...f }));
-    const commitSchema = (arr) => { Store.setPitSchema(arr); Cloud.pushPitForm(arr); renderAdmin(root); };
+    const commitSchema = (arr, note) => { Store.setPitSchema(arr); Cloud.pushPitForm(arr, note || "edited it"); renderAdmin(root); };
     const uniqueKey = (label, schema) => {
       let base = "pf_" + (label.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 24) || "field");
       let key = base, n = 1; const keys = new Set(schema.map((f) => f.key));
@@ -5118,10 +5476,12 @@
     const resetPF = $("#resetPitForm", root);
     if (resetPF) resetPF.onclick = () => confirmDialog("Reset the pit form back to the default questions? Your custom questions will be removed (saved pit data is kept).",
       () => { Store.clearPitSchema(); Cloud.clearPitForm(); toast("Pit form reset to default"); renderAdmin(root); });
-    $$("[data-pf-up]", root).forEach((b) => b.onclick = () => { const i = +b.dataset.pfUp; if (i <= 0) return; const a = workingSchema(); [a[i - 1], a[i]] = [a[i], a[i - 1]]; commitSchema(a); });
-    $$("[data-pf-down]", root).forEach((b) => b.onclick = () => { const i = +b.dataset.pfDown; const a = workingSchema(); if (i >= a.length - 1) return; [a[i + 1], a[i]] = [a[i], a[i + 1]]; commitSchema(a); });
+    $$("[data-pf-up]", root).forEach((b) => b.onclick = () => { const i = +b.dataset.pfUp; if (i <= 0) return; const a = workingSchema(); [a[i - 1], a[i]] = [a[i], a[i - 1]]; commitSchema(a, "reordered questions"); });
+    $$("[data-pf-down]", root).forEach((b) => b.onclick = () => { const i = +b.dataset.pfDown; const a = workingSchema(); if (i >= a.length - 1) return; [a[i + 1], a[i]] = [a[i], a[i + 1]]; commitSchema(a, "reordered questions"); });
+    $$("[data-pf-req]", root).forEach((cb) => cb.onchange = () => { const a = workingSchema(), f = a[+cb.dataset.pfReq]; if (cb.checked) f.required = true; else delete f.required;
+      commitSchema(a, `required fields: “${f.label}” is ${cb.checked ? "now required" : "optional"}`); toast(cb.checked ? "Now required" : "Now optional"); });
     $$("[data-pf-edit]", root).forEach((b) => b.onclick = () => openPitFieldEditor(+b.dataset.pfEdit));
-    $$("[data-pf-del]", root).forEach((b) => b.onclick = () => confirmDialog("Delete this question?", () => { const a = workingSchema(); a.splice(+b.dataset.pfDel, 1); commitSchema(a); toast("Question deleted"); }));
+    $$("[data-pf-del]", root).forEach((b) => b.onclick = () => confirmDialog("Delete this question?", () => { const a = workingSchema(); a.splice(+b.dataset.pfDel, 1); commitSchema(a, "deleted a question"); toast("Question deleted"); }));
 
     function openPitFieldEditor(index) {
       const schema = workingSchema();
@@ -5137,6 +5497,7 @@
           <label>Dropdown options (one per line)</label>
           <textarea id="pfOptions" placeholder="Swerve&#10;Tank&#10;Mecanum">${esc((f.options || []).join("\n"))}</textarea></div>
         <div class="field"><label>Help text (optional)</label><input id="pfHelp" value="${esc(f.help || "")}" placeholder="Shown under the question" /></div>
+        <label class="ch-toggle" style="margin-bottom:14px"><input type="checkbox" id="pfReq" ${f.required ? "checked" : ""} /><span class="ch-switch"></span>Required (must be answered before saving)</label>
         <div class="btn-row"><button class="btn primary" id="pfSave">${icon("check")} ${editing ? "Save changes" : "Add question"}</button></div>`,
         (body, close) => {
           const typeSel = $("#pfType", body);
@@ -5156,8 +5517,9 @@
             if (help) field.help = help;
             if (type === "rating") field.max = 5;
             if (type === "counter" || type === "number") field.min = 0;
+            if ($("#pfReq", body).checked && type !== "bool" && type !== "counter") field.required = true;
             if (editing) schema[index] = field; else schema.push(field);
-            close(); commitSchema(schema); toast(editing ? "Question updated" : "Question added");
+            close(); commitSchema(schema, editing ? `edited “${label}”` : `added “${label}”`); toast(editing ? "Question updated" : "Question added");
           };
         });
     }
@@ -5166,7 +5528,7 @@
     const workingMatch = () => ((Cloud.enabled() && Cloud.getMatchForm()) || Store.getMatchSchema() || GAME.matchFields).map((f) => {
       const o = { ...f }; delete o.points; return o; // strip non-serializable fn
     });
-    const commitMatch = (arr) => { Store.setMatchSchema(arr); Cloud.pushMatchForm(arr); renderAdmin(root); };
+    const commitMatch = (arr, note) => { Store.setMatchSchema(arr); Cloud.pushMatchForm(arr, note || "edited it"); renderAdmin(root); };
     const mlSel = $("#matchListStatSel", root);
     if (mlSel) mlSel.onchange = () => { Store.setSettings({ matchListStat: mlSel.value }); toast("Match-list column updated"); };
     const addMF = $("#addMatchField", root);
@@ -5174,10 +5536,12 @@
     const resetMF = $("#resetMatchForm", root);
     if (resetMF) resetMF.onclick = () => confirmDialog("Reset the match form to the default REBUILT questions? (Saved match data is kept.)",
       () => { Store.clearMatchSchema(); Cloud.clearMatchForm(); toast("Match form reset to default"); renderAdmin(root); });
-    $$("[data-mf-up]", root).forEach((b) => b.onclick = () => { const i = +b.dataset.mfUp; if (i <= 0) return; const a = workingMatch(); [a[i - 1], a[i]] = [a[i], a[i - 1]]; commitMatch(a); });
-    $$("[data-mf-down]", root).forEach((b) => b.onclick = () => { const i = +b.dataset.mfDown; const a = workingMatch(); if (i >= a.length - 1) return; [a[i + 1], a[i]] = [a[i], a[i + 1]]; commitMatch(a); });
+    $$("[data-mf-up]", root).forEach((b) => b.onclick = () => { const i = +b.dataset.mfUp; if (i <= 0) return; const a = workingMatch(); [a[i - 1], a[i]] = [a[i], a[i - 1]]; commitMatch(a, "reordered questions"); });
+    $$("[data-mf-down]", root).forEach((b) => b.onclick = () => { const i = +b.dataset.mfDown; const a = workingMatch(); if (i >= a.length - 1) return; [a[i + 1], a[i]] = [a[i], a[i + 1]]; commitMatch(a, "reordered questions"); });
+    $$("[data-mf-req]", root).forEach((cb) => cb.onchange = () => { const a = workingMatch(), f = a[+cb.dataset.mfReq]; if (cb.checked) f.required = true; else delete f.required;
+      commitMatch(a, `required fields: “${f.label}” is ${cb.checked ? "now required" : "optional"}`); toast(cb.checked ? "Now required" : "Now optional"); });
     $$("[data-mf-edit]", root).forEach((b) => b.onclick = () => openMatchFieldEditor(+b.dataset.mfEdit));
-    $$("[data-mf-del]", root).forEach((b) => b.onclick = () => confirmDialog("Delete this match question?", () => { const a = workingMatch(); a.splice(+b.dataset.mfDel, 1); commitMatch(a); toast("Question deleted"); }));
+    $$("[data-mf-del]", root).forEach((b) => b.onclick = () => confirmDialog("Delete this match question?", () => { const a = workingMatch(); a.splice(+b.dataset.mfDel, 1); commitMatch(a, "deleted a question"); toast("Question deleted"); }));
 
     function openMatchFieldEditor(index) {
       const schema = workingMatch();
@@ -5196,6 +5560,7 @@
           <label>Dropdown options (one per line)</label>
           <textarea id="mfOptions" placeholder="None&#10;Level 1&#10;Level 2">${esc((f.options || []).join("\n"))}</textarea></div>
         <div class="field"><label>Help text (optional)</label><input id="mfHelp" value="${esc(f.help || "")}" /></div>
+        <label class="ch-toggle" style="margin-bottom:14px"><input type="checkbox" id="mfReq" ${f.required ? "checked" : ""} /><span class="ch-switch"></span>Required (must be answered before saving)</label>
         <div class="btn-row"><button class="btn primary" id="mfSave">${icon("check")} ${editing ? "Save changes" : "Add question"}</button></div>`,
         (body, close) => {
           const typeSel = $("#mfType", body);
@@ -5215,8 +5580,9 @@
             const help = $("#mfHelp", body).value.trim(); if (help) field.help = help;
             if (type === "rating") field.max = 5;
             if (type === "counter" || type === "number") field.min = 0;
+            if ($("#mfReq", body).checked && type !== "bool" && type !== "counter") field.required = true;
             if (editing) schema[index] = field; else schema.push(field);
-            close(); commitMatch(schema); toast(editing ? "Question updated" : "Question added");
+            close(); commitMatch(schema, editing ? `edited “${label}”` : `added “${label}”`); toast(editing ? "Question updated" : "Question added");
           };
         });
     }
@@ -5312,6 +5678,169 @@
      ======================================================================== */
   function applyTheme(theme) { document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "dark"); }
 
+  /* ---- Universal search (top right) ------------------------------------------
+     Teams by number or name (this season's Statbotics list + anyone we scouted)
+     and events by name/city/code from the last few seasons. Typing a year
+     ("2019 los angeles") searches that season's events too.                    */
+  function initGlobalSearch() {
+    const wrap = $("#gSearch"), input = $("#gsInput"), panel = $("#gsList"), openBtn = $("#gsOpen");
+    if (!wrap || !input || !panel) return;
+    const evYears = {};   // year -> events[] once loaded
+    const evLoading = {};
+    let results = [], active = -1;
+
+    const loadYear = (y) => {
+      if (evYears[y] || evLoading[y] || y < 1992 || y > GAME.season + 1) return evLoading[y] || Promise.resolve();
+      evLoading[y] = API.eventsForYear(y).then((evs) => { evYears[y] = evs || []; })
+        .catch(() => { evYears[y] = []; }).finally(() => { delete evLoading[y]; });
+      return evLoading[y];
+    };
+    let warmed = false;
+    const warm = () => {
+      if (warmed) return; warmed = true;
+      if (!API.sbCachedLeaderboard(GAME.season)) API.sbYearLeaderboard(GAME.season, 15 * 60000).then(() => { if (input.value.trim()) draw(); }).catch(() => {});
+      const ys = [GAME.season + 1, GAME.season, GAME.season - 1, GAME.season - 2, GAME.season - 3];
+      Promise.all(ys.map(loadYear)).then(() => { if (input.value.trim()) draw(); });
+    };
+
+    const teamIndex = () => {
+      const map = {};
+      (API.sbCachedLeaderboard(GAME.season) || []).forEach((r) => { map[String(r.team)] = { name: r.name || "", epa: r.epa }; });
+      [...eventTeams(), ...allScoutedTeams()].forEach((t) => { t = String(t); if (!map[t]) map[t] = { name: nameFor(t) }; });
+      return map;
+    };
+    const norm = (x) => String(x || "").toLowerCase();
+
+    function search(q) {
+      const words = norm(q).split(/\s+/).filter(Boolean);
+      if (!words.length) return [];
+      const yearWord = words.find((w) => /^(19|20)\d\d$/.test(w));
+      const year = yearWord ? Number(yearWord) : null;
+      const rest = words.filter((w) => w !== yearWord);
+      const out = [];
+      // ---- teams
+      if (!year || year === GAME.season) {
+        const idx = teamIndex(), num = rest.length === 1 && /^\d+$/.test(rest[0]) ? rest[0] : null;
+        const scored = [];
+        Object.entries(idx).forEach(([t, info]) => {
+          const name = norm(info.name);
+          let sc = 0;
+          if (num) { if (t === num) sc = 100; else if (t.startsWith(num)) sc = 60 - t.length; }
+          else if (rest.length) {
+            const hay = t + " " + name;
+            if (!rest.every((w) => hay.includes(w))) return;
+            sc = name.startsWith(rest[0]) ? 40 : (" " + name).includes(" " + rest[0]) ? 30 : 15;
+          }
+          if (sc) scored.push({ t, info, sc });
+        });
+        scored.sort((a, b) => b.sc - a.sc || Number(a.t) - Number(b.t));
+        scored.slice(0, 6).forEach((x) => out.push({ kind: "team", team: x.t, name: x.info.name, epa: x.info.epa }));
+        if (num && !idx[num] && Number(num) > 0 && Number(num) < 100000) out.unshift({ kind: "team", team: num, name: "", direct: true });
+      }
+      // ---- events
+      if (year && !evYears[year] && !evLoading[year]) loadYear(year).then(() => { if (input.value.trim()) draw(); });
+      const yearsToSearch = year ? [year] : Object.keys(evYears).map(Number).sort((a, b) => b - a);
+      const evHits = [];
+      yearsToSearch.forEach((y) => (evYears[y] || []).forEach((e) => {
+        if (!rest.length) { if (year) evHits.push({ e, y, sc: 1 }); return; }
+        const hay = norm([e.name, e.short_name, e.city, e.state_prov, e.country, e.event_code, e.key].join(" "));
+        if (!rest.every((w) => hay.includes(w))) return;
+        const nm = norm(e.short_name || e.name);
+        // name match quality, then recency: this season, next season, then older ones
+        const sc = (nm.startsWith(rest[0]) ? 6 : (" " + nm).includes(" " + rest[0]) ? 4 : 2)
+          + (y === GAME.season ? 8 : y > GAME.season ? 7 : 6 - (GAME.season - y) * 2);
+        evHits.push({ e, y, sc });
+      }));
+      // a lone number like "702" shouldn't drown the team in events from 702 random places
+      evHits.sort((a, b) => b.sc - a.sc || b.y - a.y || (a.e.start_date || "").localeCompare(b.e.start_date || ""));
+      evHits.slice(0, rest.length === 1 && /^\d+$/.test(rest[0]) ? 2 : 7).forEach((h) => out.push({ kind: "event", ev: h.e, year: h.y }));
+      return out;
+    }
+
+    const mark = (txt, q) => {
+      const words = norm(q).split(/\s+/).filter((w) => w && !/^(19|20)\d\d$/.test(w));
+      let h = esc(txt || "");
+      words.slice(0, 3).forEach((w) => {
+        const re = new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "ig");
+        h = h.replace(re, "<mark>$1</mark>");
+      });
+      return h;
+    };
+    function draw() {
+      const q = input.value.trim();
+      if (!q) { close(); return; }
+      results = search(q);
+      const loadingEv = Object.keys(evLoading).length > 0;
+      const teams = results.filter((r) => r.kind === "team"), evs = results.filter((r) => r.kind === "event");
+      let i = 0;
+      const teamRow = (r) => `<a class="gs-item${i === active ? " on" : ""}" role="option" id="gsOpt${i}" data-i="${i++}" href="#/team/${encodeURIComponent(r.team)}" data-tfill="${esc(r.team)}">
+          <img class="team-avatar" data-avatar="${esc(r.team)}" alt="" />
+          <span class="gs-main"><b>${mark(r.team, q)}</b><span>${r.direct ? "Open team " + esc(r.team) : mark(r.name, q) || "&nbsp;"}</span></span>
+          ${r.epa != null ? `<span class="gs-tag">${fmt(r.epa)} EPA</span>` : ""}</a>`;
+      const evRow = (r) => {
+        const e = r.ev;
+        const where = [e.city, e.state_prov].filter(Boolean).join(", ");
+        return `<a class="gs-item ev${i === active ? " on" : ""}" role="option" id="gsOpt${i}" data-i="${i++}" href="#/teams/search/${encodeURIComponent(e.key)}">
+          <span class="gs-ev-ico">${icon("calendar")}<b>${String(r.year).slice(2)}</b></span>
+          <span class="gs-main"><b>${mark(e.short_name || e.name, q)}</b><span>${r.year}${where ? " · " + esc(where) : ""}${e.start_date ? " · " + esc(evDates(e)) : ""}</span></span>
+          ${e.key === Store.getSettings().eventKey ? `<span class="gs-tag mine">Your event</span>` : ""}</a>`;
+      };
+      panel.innerHTML = !results.length
+        ? `<div class="gs-empty">${loadingEv || !warmed ? `<span class="tp-spin"></span> Searching…` : `No teams or events match “${esc(q)}”`}</div>`
+        : `${teams.length ? `<div class="gs-sec">${icon("teams")} Teams</div>${teams.map(teamRow).join("")}` : ""}
+           ${evs.length ? `<div class="gs-sec">${icon("calendar")} Events</div>${evs.map(evRow).join("")}` : ""}
+           ${loadingEv ? `<div class="gs-foot"><span class="tp-spin"></span> Loading more events…</div>` : `<div class="gs-foot"><kbd>↑</kbd><kbd>↓</kbd> to move · <kbd>Enter</kbd> to open · type a year for older events</div>`}`;
+      panel.hidden = false;
+      wrap.classList.add("has-results");
+      input.setAttribute("aria-expanded", "true");
+      $$(".gs-item", panel).forEach((a) => {
+        a.onmousedown = (ev) => ev.preventDefault(); // keep focus in the input
+        a.onclick = () => { close(true); };
+        a.onmouseenter = () => setActive(Number(a.dataset.i), false);
+      });
+      const ts = teams.map((r) => r.team);
+      if (ts.length) { paintAvatars(panel, ts); paintTeamFills(panel, ts); }
+    }
+    function setActive(n, scroll = true) {
+      const items = $$(".gs-item", panel);
+      if (!items.length) return;
+      active = (n + items.length) % items.length;
+      items.forEach((a, k) => a.classList.toggle("on", k === active));
+      input.setAttribute("aria-activedescendant", "gsOpt" + active);
+      if (scroll) items[active].scrollIntoView({ block: "nearest" });
+    }
+    function close(clear) {
+      panel.hidden = true; panel.innerHTML = ""; active = -1;
+      wrap.classList.remove("has-results");
+      input.setAttribute("aria-expanded", "false");
+      input.removeAttribute("aria-activedescendant");
+      if (clear) { input.value = ""; input.blur(); wrap.classList.remove("open"); }
+    }
+    let t = null;
+    input.addEventListener("focus", () => { warm(); if (input.value.trim()) draw(); });
+    input.addEventListener("input", () => { warm(); active = -1; clearTimeout(t); t = setTimeout(draw, 90); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "ArrowDown") { e.preventDefault(); if (panel.hidden) draw(); else setActive(active + 1); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); setActive(active - 1); }
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        const items = $$(".gs-item", panel);
+        const a = items[active >= 0 ? active : 0];
+        if (a) { location.hash = a.getAttribute("href"); close(true); }
+      } else if (e.key === "Escape") { if (input.value) { input.value = ""; close(); } else close(true); }
+    });
+    input.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== input) { close(); wrap.classList.remove("open"); } }, 120));
+    if (openBtn) openBtn.onclick = () => { wrap.classList.add("open"); input.focus(); };
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "/" || e.ctrlKey || e.metaKey || e.altKey) return;
+      const tg = e.target, tag = tg && tg.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (tg && tg.isContentEditable)) return;
+      e.preventDefault(); wrap.classList.add("open"); input.focus(); input.select();
+    });
+    // opening a result (or any other navigation) closes the list
+    window.addEventListener("hashchange", () => { if (!panel.hidden) close(true); });
+  }
+
   function startApp(loginStatus) {
     const syncNavLock = () => document.body.classList.toggle("nav-lock", app.classList.contains("nav-open"));
     $("#menuBtn").onclick = () => { app.classList.toggle("nav-open"); syncNavLock(); };
@@ -5323,6 +5852,7 @@
     };
     const logoutBtn = $("#logoutBtn");
     if (logoutBtn) logoutBtn.onclick = () => confirmDialog("Log out of the scouting app?", () => Auth.logout());
+    initGlobalSearch();
     const userName = $("#userChipName");
     if (userName) { userName.title = "View your profile"; userName.onclick = () => { location.hash = "#/members/profile/" + Store.getMe().id; }; }
     const chip = $("#eventChip");
@@ -5342,33 +5872,42 @@
     Cloud.heartbeat();
     Cloud.releaseMyClaims(); // a fresh load = no active selection, so clear my old claims
     setInterval(() => Cloud.heartbeat(), 45 * 1000);
+    // Cloud snapshots arrive every few seconds (everyone's heartbeat), so they never
+    // re-render the page you're looking at. Only the sidebar chrome updates, plus
+    // two in-place exceptions: live robot locks on Match Scouting, and the pit
+    // map/list on Pit Scouting when pit data actually changed.
+    let lastPitSig = "";
+    const pitsSig = () => { const ps = Object.values(allPits()); return ps.length + ":" + Math.max(0, ...ps.map((p) => p.ts || 0)); };
     Cloud.onChange(() => {
-      const teChanged = applyCloudTestEvent();
-      const bbChanged = reconcileBB(); // keep my local BB mirror = the cloud total
-      if (teChanged) refreshChrome();
-      // NEVER auto-re-render while the user is filling the match/pit ENTRY forms —
-      // a background cloud snapshot (another scout's heartbeat/data) would rebuild
-      // the form and wipe everything they typed. On the MATCH page we still live-
-      // update robot-claim locks; on the PIT page we refresh the shared list + map
-      // in place (never the form). Both refresh fully on next visit.
-      // If the admin's cloud form arrives (or changes) while the form is still
-      // untouched, swap it in; once someone has started filling it, never rebuild.
+      applyCloudTestEvent();
+      reconcileBB(); // keep my local BB mirror = the cloud total
+      refreshChrome();
       const formNow = (id, fields) => { const f = $("#" + id); return f && !f.dataset.dirty && f.dataset.sig !== formSig(fields); };
-      if (current() === "match") { if (formNow("matchForm", matchFields())) { router(); return; } refreshRobotClaims(); return; }
-      if (current() === "pit") { if (formNow("pitForm", pitFields())) { router(); return; } if (pitPageRefresh) pitPageRefresh(); return; }
-      // Data page: only rebuild when records actually changed (heartbeats would
-      // otherwise reset the search box and scroll position every few seconds).
-      if (current() === "data") {
-        const sig = dataSig();
-        if (sig === lastDataSig && !teChanged) return;
-        lastDataSig = sig;
-        const typing = document.activeElement && document.activeElement.id === "dsInput";
-        router();
-        const inp = typing && $("#dsInput");
-        if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
-        return;
+      if (current() === "match") { if (formNow("matchForm", matchFields())) router(); else refreshRobotClaims(); return; }
+      if (current() === "pit") {
+        if (formNow("pitForm", pitFields())) { router(); return; }
+        const sig = pitsSig();
+        if (sig !== lastPitSig) { lastPitSig = sig; if (pitPageRefresh) pitPageRefresh(); }
       }
-      if (teChanged || bbChanged || ["members", "picklist", "admin", "teams"].includes(current())) router();
+    });
+    // An admin changed the match/pit form (or its required fields): tell everyone
+    // and refresh their page — except someone mid-way through filling a form, who
+    // gets a "Refresh now" button so their unsaved scouting isn't wiped.
+    // …except once, right after the first full download, so a page opened by a
+    // refresh/direct link doesn't stay empty. Skipped mid-form or mid-typing.
+    Cloud.onFirstSync(() => {
+      const f = $("#matchForm") || $("#pitForm");
+      const a = document.activeElement;
+      if ((f && f.dataset.dirty) || (a && a.matches && a.matches("#view input, #view textarea") && a.value)) return;
+      router();
+    });
+    Cloud.onFormChange((c) => {
+      if (c.byId && c.byId === Store.getMe().id) return;
+      const msg = `An admin made a change in ${c.form === "matchForm" ? "Match Scouting" : "Pit Scouting"}`;
+      const who = [c.byName, c.note].filter(Boolean).join(" · ");
+      const f = $("#matchForm") || $("#pitForm");
+      if (f && f.dataset.dirty) notifyBanner(msg, { action: "Refresh now", sub: `${who ? who + ". " : ""}Save what you're scouting first.`, onAction: () => router() });
+      else { notifyBanner(msg, { sub: `${who ? who + ". " : ""}Your page was refreshed with the new version.` }); router(); }
     });
     // Global "someone just scouted" popup — show for everyone except the scout who
     // made it (they already got their own toast).
@@ -5382,7 +5921,7 @@
       const cm = (Cloud.getScouters() || []).find((s) => s.id === me.id);
       const cloudBb = cm && typeof cm.bb === "number" ? cm.bb : 0;
       if ((me.bb || 0) > cloudBb) Cloud.setBBValue(me.id, me.bb);
-      else if (reconcileBB() && current() === "members") router();
+      else reconcileBB();
     }, 3500);
     // Adopt any already-shared test event on startup.
     setTimeout(() => { if (applyCloudTestEvent()) { refreshChrome(); router(); } }, 1500);

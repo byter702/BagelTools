@@ -102,7 +102,7 @@ const GAME_2026 = {
     { key: "speed", label: "Speed / cycle pace", type: "rating", max: 5, phase: "post" },
     { key: "fouls", label: "Fouls committed", type: "counter", min: 0, phase: "post" },
     { key: "bps", label: "Average BPS (balls per second)", type: "counter", min: 0, phase: "post" },
-    { key: "notes", label: "Notes", type: "text", phase: "post",
+    { key: "notes", label: "Notes", type: "text", phase: "post", required: true,
       placeholder: "Anything strategy needs to know…" },
   ],
 
@@ -146,7 +146,7 @@ const GAME_2027 = {
   matchFields: [
     { key: "driverSkill", label: "Driver skill", type: "rating", max: 5, phase: "post" },
     { key: "diedOrTipped", label: "Died / tipped / disabled", type: "bool", phase: "post" },
-    { key: "notes", label: "Notes", type: "text", phase: "post", placeholder: "Anything strategy needs to know…" },
+    { key: "notes", label: "Notes", type: "text", phase: "post", required: true, placeholder: "Anything strategy needs to know…" },
   ],
   pitFields: [
     { key: "drivetrain", label: "Drivetrain", type: "select", options: ["Swerve", "Tank / West Coast", "Mecanum", "Other / Unknown"] },

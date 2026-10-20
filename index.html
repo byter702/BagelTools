@@ -10,7 +10,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=84" />
+  <link rel="stylesheet" href="styles.css?v=85" />
 </head>
 <body>
   <!-- Inline SVG icon sprite (Lucide-style). Referenced via <use href="#ic-..."> -->
@@ -80,7 +80,7 @@
         <span class="nav-label">Overview</span>
         <a data-route="dashboard"><svg class="ico"><use href="#ic-dashboard"/></svg> Dashboard</a>
         <a data-route="members"><svg class="ico"><use href="#ic-user"/></svg> Members</a>
-        <a data-route="teams"><svg class="ico"><use href="#ic-bagel"/></svg> Events</a>
+        <a data-route="teams"><svg class="ico"><use href="#ic-bagel"/></svg> Event</a>
         <span class="nav-label">Scouting</span>
         <a data-route="match"><svg class="ico"><use href="#ic-binoculars"/></svg> Match Scouting</a>
         <a data-route="pit"><svg class="ico"><use href="#ic-clipboard"/></svg> Pit Scouting</a>
@@ -117,6 +117,16 @@
         </button>
         <h1 id="pageTitle">Dashboard</h1>
         <div class="spacer"></div>
+        <div class="gsearch" id="gSearch">
+          <button class="icon-btn gs-open" id="gsOpen" type="button" aria-label="Search teams and events"><svg class="ico"><use href="#ic-search"/></svg></button>
+          <div class="gs-box">
+            <svg class="ico"><use href="#ic-search"/></svg>
+            <input id="gsInput" type="search" placeholder="Search teams &amp; events…" autocomplete="off" spellcheck="false"
+              role="combobox" aria-expanded="false" aria-controls="gsList" aria-autocomplete="list" aria-label="Search teams and events" />
+            <kbd class="gs-kbd">/</kbd>
+          </div>
+          <div class="gs-panel" id="gsList" role="listbox" hidden></div>
+        </div>
         <div class="scout-tag" id="scoutTag"></div>
       </header>
       <main class="content" id="view" tabindex="-1"></main>
@@ -133,15 +143,15 @@
 
   <!-- Access password & admin PIN. Committed so the (private) Vercel deploy has
        them; keep this repo private. See js/secrets.example.js for the format. -->
-  <script src="js/secrets.js?v=84"></script>
-  <script src="js/config.js?v=84"></script>
-  <script src="js/game-config.js?v=84"></script>
-  <script src="js/store.js?v=84"></script>
-  <script src="js/api.js?v=84"></script>
-  <script src="js/epa.js?v=84"></script>
-  <script src="js/auth.js?v=84"></script>
-  <script src="js/cloud.js?v=84"></script>
-  <script src="js/app.js?v=84"></script>
+  <script src="js/secrets.js?v=85"></script>
+  <script src="js/config.js?v=85"></script>
+  <script src="js/game-config.js?v=85"></script>
+  <script src="js/store.js?v=85"></script>
+  <script src="js/api.js?v=85"></script>
+  <script src="js/epa.js?v=85"></script>
+  <script src="js/auth.js?v=85"></script>
+  <script src="js/cloud.js?v=85"></script>
+  <script src="js/app.js?v=85"></script>
 </body>
 </html>
 

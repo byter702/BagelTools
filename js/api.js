@@ -361,6 +361,39 @@ const API = (() => {
       };
     }).sort((a, b) => a.year - b.year);
   }
+  /* ---- Browsing other events / years (universal search + Event Search) ----
+     Held in memory only, so exploring never fills the localStorage needed for
+     the selected event's offline data. */
+  const memTba = {}, memSb = {};
+  function tbaMem(path) {
+    if (!memTba[path]) memTba[path] = tba(path).catch((e) => { delete memTba[path]; throw e; });
+    return memTba[path];
+  }
+  function sbMem(path) {
+    if (!memSb[path]) memSb[path] = sbFetch(path).catch((e) => { delete memSb[path]; throw e; });
+    return memSb[path];
+  }
+  async function eventsForYear(year) {
+    if (Number(year) === Number(window.GAME && GAME.season)) {
+      try { return (await getEvents(year)).events; } catch (e) { /* fall through to memory */ }
+    }
+    const d = await tbaMem("/events/" + year + "/simple");
+    return (Array.isArray(d) ? d : []).slice().sort((a, b) => (a.start_date || "").localeCompare(b.start_date || ""));
+  }
+  // Everything about one event: info, teams, rankings, matches, awards (+ Statbotics EPA per team).
+  async function getEventDetail(key) {
+    const opt = (p) => tbaMem(p).catch(() => null);
+    const [info, teams, rankings, matches, awards, sb] = await Promise.all([
+      tbaMem("/event/" + key), opt("/event/" + key + "/teams/simple"), opt("/event/" + key + "/rankings"),
+      opt("/event/" + key + "/matches/simple"), opt("/event/" + key + "/awards"),
+      sbMem("/team_events?event=" + key + "&limit=200").catch(() => null),
+    ]);
+    const epa = {};
+    (Array.isArray(sb) ? sb : []).forEach((r) => { epa[sbTeam(r)] = { epa: sbEpa(r), breakdown: sbBreakdown(r) }; });
+    return { info, teams: (teams || []).slice().sort((a, b) => a.team_number - b.team_number),
+      rankings: (rankings && rankings.rankings) || [], matches: matches || [], awards: awards || [], epa };
+  }
+
   // A team's whole history on TBA: every award and every event, all years.
   async function getTeamHistory(team) {
     const tk = teamKey(team);
@@ -437,7 +470,7 @@ const API = (() => {
 
   return { teamKey, verifyKey, hasKey, effectiveKey, getEvents, getEventTeams, getEventMatches, getEventRankings, getTeamColors, getTeamAvatar,
     sbYearLeaderboard, sbCachedLeaderboard, sbTeamEvents, sbTeamMatches, sbTeamYear, sbEpa,
-    getTeamInfo, getTeamYears, getTeamSeason, getTeamHistory, sbTeamHistory,
+    getTeamInfo, getTeamYears, getTeamSeason, getTeamHistory, sbTeamHistory, eventsForYear, getEventDetail,
     hasNexusKey, nexusPitMap };
 })();
 
