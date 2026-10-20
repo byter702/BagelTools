@@ -206,6 +206,20 @@ const Auth = (() => {
       toUser();
     };
     if (f) { f.addEventListener("input", fromBox); l.addEventListener("input", fromBox); f.addEventListener("change", fromBox); l.addEventListener("change", fromBox); }
+    // Chrome/Edge/Android: ask the browser's password manager for the saved login
+    // as soon as ANY of the three boxes is tapped, and fill all three at once.
+    let asked = false;
+    const askSaved = async () => {
+      if (asked || !window.PasswordCredential || !navigator.credentials) return;
+      asked = true;
+      try {
+        const c = await navigator.credentials.get({ password: true, mediation: "optional" });
+        if (!c || !c.id || !c.password || !u.isConnected) return;
+        u.value = c.id; u.dispatchEvent(new Event("change"));
+        const pw = $("#aPass"); if (pw) pw.value = c.password;
+      } catch (e) { /* not supported / dismissed */ }
+    };
+    [f, l, $("#aPass")].forEach((x) => x && x.addEventListener("focus", askSaved));
     // some browsers autofill silently on page load (no event): check a few times
     let n = 0; const t = setInterval(() => { toNames(); if (++n > 10 || !u.isConnected) clearInterval(t); }, 300);
   }
@@ -273,6 +287,7 @@ const Auth = (() => {
         if (++failCount >= 5) { failCount = 0; lockUntil = Date.now() + 30000; }
         return fail("Wrong password. Forgot it? Ask an admin to reset it.");
       }
+      rememberLogin(who, pw);
       signIn(who, cred);
     } catch (err) {
       console.warn("[Auth] login failed", err);
@@ -393,12 +408,22 @@ const Auth = (() => {
         if (existing) return fail("This account already has a password. If that wasn't you, ask an admin to reset it.");
         const cred = await makeCred(a, who);
         await saveCred(id, cred);
+        rememberLogin(who, a);
         signIn(who, cred);
       } catch (err) {
         console.warn("[Auth] set password failed", err);
         fail("Couldn't save your password. Check your connection and try again.");
       } finally { busy(btn, false, label); }
     };
+  }
+
+  // Offer to save "First Last" + password in the browser's password manager
+  // (the browser asks the user first; does nothing where unsupported).
+  function rememberLogin(who, pw) {
+    try {
+      if (window.PasswordCredential && navigator.credentials && pw)
+        navigator.credentials.store(new PasswordCredential({ id: who.full, password: pw, name: who.full })).catch(() => {});
+    } catch (e) {}
   }
 
   /* ---- Enter the app --------------------------------------------------------- */
