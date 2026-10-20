@@ -2386,3 +2386,6 @@ button.mu-trow.has-tc { box-shadow: inset 4px 0 0 var(--tc); padding-left: 10px;
 @media (prefers-reduced-motion: reduce) {
   .gs-panel, .nb, .nb.out, .es-card, .field.missing, .nb-ico .ico { animation: none !important; }
 }
+
+/* hidden username for password managers (must stay in layout flow, not display:none) */
+.auth-user { position: absolute; width: 1px; height: 1px; padding: 0; border: 0; opacity: 0; pointer-events: none; overflow: hidden; clip-path: inset(50%); }

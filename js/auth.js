@@ -173,9 +173,29 @@ const Auth = (() => {
         ? `<button type="button" class="auth-eye" data-eye="${id}" aria-label="Show password">${icon("eye")}</button>` : ""}</span>
     </label>`;
   const nameRow = (who) => `<div class="auth-row">
-      ${field("aFirst", "First name", "text", "user", `autocomplete="given-name" placeholder="First" value="${esc(who && who.first)}"`)}
-      ${field("aLast", "Last name", "text", "user", `autocomplete="family-name" placeholder="Last" value="${esc(who && who.last)}"`)}
+      ${field("aFirst", "First name", "text", "user", `autocomplete="off" placeholder="First" value="${esc(who && who.first)}"`)}
+      ${field("aLast", "Last name", "text", "user", `autocomplete="off" placeholder="Last" value="${esc(who && who.last)}"`)}
     </div>`;
+  // Password managers save ONE username per password. A hidden "username" field
+  // ("First Last") sits right before the password box: it's what gets saved, and
+  // when a manager fills it back in we split it into the first/last boxes.
+  const userField = (who) => `<input id="aUser" class="auth-user" type="text" name="username" autocomplete="username"
+      tabindex="-1" aria-hidden="true" value="${esc(who ? (who.full || [who.first, who.last].filter(Boolean).join(" ")) : "")}" />`;
+  function wireUserField() {
+    const u = $("#aUser"), f = $("#aFirst"), l = $("#aLast");
+    if (!u) return;
+    const toNames = () => {
+      const v = u.value.trim(); if (!v || !f) return;
+      const i = v.indexOf(" ");
+      if (v === (val("#aFirst") + " " + val("#aLast")).trim()) return;
+      f.value = i < 0 ? v : v.slice(0, i); l.value = i < 0 ? "" : v.slice(i + 1).trim();
+    };
+    const toUser = () => { u.value = (val("#aFirst") + " " + val("#aLast")).trim(); };
+    u.addEventListener("input", toNames); u.addEventListener("change", toNames);
+    if (f) { f.addEventListener("input", toUser); l.addEventListener("input", toUser); }
+    // some browsers autofill silently on page load (no event): check a few times
+    let n = 0; const t = setInterval(() => { toNames(); if (++n > 10 || !u.isConnected) clearInterval(t); }, 300);
+  }
   const steps = (n) => `<ol class="auth-steps" aria-label="Registration progress">
       ${["Request", "Approval", "Password"].map((t, i) => {
         const st = i + 1 < n ? "done" : i + 1 === n ? "on" : "";
@@ -205,6 +225,7 @@ const Auth = (() => {
         <p class="auth-lead">Welcome back! Log in with your name and password.</p>
         ${note ? `<div class="auth-note">${esc(note)}</div>` : ""}
         ${nameRow(who)}
+        ${userField(who)}
         ${field("aPass", "Password", "password", "lock", `autocomplete="current-password" placeholder="Your password"`)}
         <div class="auth-error" role="alert" hidden></div>
         ${submitBtn("Log in")}
@@ -213,11 +234,13 @@ const Auth = (() => {
       </form>`, dir);
     $("#forgotBtn").onclick = () => { $("#forgotHint").hidden = !$("#forgotHint").hidden; };
     $("#loginForm").onsubmit = onLogin;
+    wireUserField();
   }
 
   async function onLogin(e) {
     e.preventDefault();
     if (Date.now() < lockUntil) return fail(`Too many wrong tries. Wait ${Math.ceil((lockUntil - Date.now()) / 1000)}s and try again.`);
+    if (!val("#aFirst") && val("#aUser")) $("#aUser").dispatchEvent(new Event("change"));
     const who = canon(val("#aFirst"), val("#aLast"));
     const pw = val("#aPass");
     if (!who.first) return fail("Enter your first name.");
@@ -323,6 +346,7 @@ const Auth = (() => {
           ? `Welcome back, <b>${esc(who.first)}</b>! Your account doesn't have a password yet. Create one so nobody else can log in as you.`
           : `Last step, <b>${esc(who.first)}</b>: create a password you'll remember.`}</p>
         <div class="auth-who">${icon("user")}<span>${esc(who.full)}</span></div>
+        ${userField(who)}
         ${opts.needKey ? field("aKey", "Registry Key", "password", "key", `autocomplete="off" placeholder="Team registry key"`) : ""}
         ${field("aNew", "New password", "password", "lock", `autocomplete="new-password" placeholder="At least ${MIN_PW} characters"`)}
         ${field("aConfirm", "Type it again", "password", "lock", `autocomplete="new-password" placeholder="Repeat your password"`)}
