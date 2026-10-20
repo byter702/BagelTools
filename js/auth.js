@@ -173,8 +173,8 @@ const Auth = (() => {
         ? `<button type="button" class="auth-eye" data-eye="${id}" aria-label="Show password">${icon("eye")}</button>` : ""}</span>
     </label>`;
   const nameRow = (who) => `<div class="auth-row">
-      ${field("aFirst", "First name", "text", "user", `autocomplete="off" placeholder="First" value="${esc(who && who.first)}"`)}
-      ${field("aLast", "Last name", "text", "user", `autocomplete="off" placeholder="Last" value="${esc(who && who.last)}"`)}
+      ${field("aFirst", "First name", "text", "user", `autocomplete="username" placeholder="First" value="${esc(who && who.first)}"`)}
+      ${field("aLast", "Last name", "text", "user", `autocomplete="username" placeholder="Last" value="${esc(who && who.last)}"`)}
     </div>`;
   // Password managers save ONE username per password. A hidden "username" field
   // ("First Last") sits right before the password box: it's what gets saved, and
@@ -192,7 +192,20 @@ const Auth = (() => {
     };
     const toUser = () => { u.value = (val("#aFirst") + " " + val("#aLast")).trim(); };
     u.addEventListener("input", toNames); u.addEventListener("change", toNames);
-    if (f) { f.addEventListener("input", toUser); l.addEventListener("input", toUser); }
+    // The name boxes also offer saved logins. A manager fills them with the whole
+    // "First Last" username (not typed keystrokes), so split it across both boxes.
+    const fromBox = (e) => {
+      const box = e.target, v = box.value.trim();
+      const typed = e.inputType && /^(insertText|delete|insertCompositionText)/.test(e.inputType);
+      if (!typed && v.includes(" ")) {
+        const i = v.indexOf(" ");
+        f.value = v.slice(0, i); l.value = v.slice(i + 1).trim();
+      } else if (!typed && box === l && v && v === u.value.split(" ").slice(1).join(" ")) {
+        f.value = u.value.split(" ")[0];
+      }
+      toUser();
+    };
+    if (f) { f.addEventListener("input", fromBox); l.addEventListener("input", fromBox); f.addEventListener("change", fromBox); l.addEventListener("change", fromBox); }
     // some browsers autofill silently on page load (no event): check a few times
     let n = 0; const t = setInterval(() => { toNames(); if (++n > 10 || !u.isConnected) clearInterval(t); }, 300);
   }
