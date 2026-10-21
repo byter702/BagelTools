@@ -2829,3 +2829,41 @@ button.mu-trow.has-tc { box-shadow: inset 4px 0 0 var(--tc); padding-left: 10px;
 .tp-ev-link:hover .ico, .tp-ev-link:focus-visible .ico { opacity: 1; transform: none; }
 @media (hover: none) { .tp-ev-link .ico { opacity: .7; transform: none; } }
 .ap-hero b small { font-size: .9rem; color: var(--text-dim); font-weight: 700; }
+
+/* ==== v91: Prime 702 (Admin fun mode) ==== */
+.prime-card { position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 16px; }
+.prime-card.on { border-color: color-mix(in srgb, var(--secondary) 65%, var(--border)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--secondary) 40%, transparent), 0 20px 50px -30px var(--secondary); }
+.prime-card.on::after { content: ""; position: absolute; right: -80px; top: -90px; width: 300px; height: 300px; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle, color-mix(in srgb, var(--secondary) 22%, transparent), transparent 70%); }
+.prime-hero { position: relative; z-index: 1; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.prime-crest { width: 60px; height: 60px; display: grid; place-items: center; border-radius: 18px; flex: none; background: var(--surface-2); color: var(--text-mut);
+  border: 1px solid var(--border-strong); transition: background .3s ease, color .3s ease; }
+.prime-crest .ico { width: 32px; height: 32px; }
+.prime-card.on .prime-crest { background: var(--secondary); color: var(--on-secondary); border-color: var(--secondary); animation: primeGlow 2.2s ease-in-out infinite; }
+.prime-txt { flex: 1 1 320px; min-width: 0; }
+.prime-txt h3 { margin: 2px 0 4px; font-size: 1.5rem; }
+.prime-card.on .prime-txt h3 { color: var(--secondary); }
+.prime-txt p { margin: 0; color: var(--text-dim); max-width: 720px; }
+.prime-switch { transform: scale(1.25); transform-origin: right center; }
+.prime-switch input:checked + .slider { background: color-mix(in srgb, var(--secondary) 40%, transparent); border-color: var(--secondary); }
+.prime-switch input:checked + .slider::before { background: var(--secondary); }
+.prime-stats { position: relative; z-index: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.prime-stats > div { display: flex; flex-direction: column; gap: 2px; padding: 12px; border-radius: 12px; background: var(--surface-2); min-width: 0; }
+.prime-stats span { font-size: .7rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; color: var(--text-mut); }
+.prime-stats b { font-family: var(--font-display); font-weight: 900; font-size: 1.35rem; }
+.prime-card.on .prime-stats b { color: var(--secondary); }
+.prime-stats small { font-size: .78rem; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prime-list { position: relative; z-index: 1; list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.prime-list li { display: flex; gap: 10px; align-items: flex-start; color: var(--text-dim); font-size: .92rem; }
+.prime-list .ico { width: 18px; height: 18px; flex: none; color: var(--secondary); margin-top: 1px; }
+.prime-list b { color: var(--text); }
+@keyframes primeGlow { 0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--secondary) 55%, transparent); } 50% { box-shadow: 0 0 0 10px transparent; } }
+/* 702 shows off everywhere while Prime is on */
+.prime-badge { display: inline-flex; align-items: center; gap: 4px; margin-left: 10px; padding: 3px 10px; border-radius: 999px; vertical-align: middle;
+  font-family: var(--font-display); font-weight: 900; font-size: .72rem; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--on-secondary); background: var(--secondary); box-shadow: 0 6px 18px -8px var(--secondary); animation: primeGlow 2.2s ease-in-out infinite; }
+.prime-badge .ico { width: 13px; height: 13px; }
+.tp-hero.prime { box-shadow: 0 0 0 2px var(--secondary), 0 24px 60px -30px var(--secondary); }
+body.prime-on .bs-row.ours, body.prime-on .bs-pod.ours { box-shadow: inset 5px 0 0 var(--secondary), 0 0 0 1px var(--secondary), 0 10px 30px -16px var(--secondary); }
+@media (max-width: 760px) { .prime-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (prefers-reduced-motion: reduce) { .prime-badge, .prime-card.on .prime-crest { animation: none; } }

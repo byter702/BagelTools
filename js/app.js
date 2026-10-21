@@ -526,7 +526,7 @@
     pushMatchForm() {}, pushPitForm() {}, clearMatchForm() {}, clearPitForm() {}, pushRoster() {},
     pushBBApproved() {}, pushAccessRequest() {}, addBB() {}, setBBValue() {},
     pushClaim() {}, releaseClaim() {}, releaseMyClaims() {}, getClaims: () => [],
-    pushActivity() {}, onActivity() {}, onFormChange() {}, onFirstSync() {},
+    pushActivity() {}, onActivity() {}, onFormChange() {}, onFirstSync() {}, getPrime: () => null, onPrimeChange() {},
     pushTestEvent() {}, pushTestQual() {}, clearTestEvent() {}, getTestEvent: () => null,
     deleteScouter: () => Promise.reject(new Error("cloud off")),
     getMatchForm: () => null, getPitForm: () => null, getRoster: () => null,
@@ -655,6 +655,7 @@
   function refreshChrome() {
     const s = Store.getSettings();
     const betNav = $('#nav a[data-route="bets"]'); if (betNav) betNav.hidden = !BETS_ON;
+    document.body.classList.toggle("prime-on", !!API.primeOn());
     const u = Auth.currentUser();
     $("#scoutTag").innerHTML = u ? `Signed in: <a class="st-me" href="#/members/profile" title="Your profile">${esc(u.first)} ${esc(u.last)}</a>`
       : (s.scoutName ? `Scout: <b>${esc(s.scoutName)}</b>` : "");
@@ -1331,9 +1332,9 @@
   let teamSort = "number"; // number | name | epa | rank | win
 
   // Season EPA map (Statbotics), shared by the teams list + schedule win-prob.
-  function buildSeasonEpa() {
+  function buildSeasonEpa(raw) { // raw = ignore Prime 702 (betting lines)
     const map = {};
-    (API.sbCachedLeaderboard(GAME.season) || []).forEach((r) => { map[String(r.team)] = r.epa; });
+    (API.sbCachedLeaderboard(GAME.season, raw) || []).forEach((r) => { map[String(r.team)] = r.epa; });
     return map;
   }
   // EPA-based win probability (labeled estimate). Logistic on alliance EPA totals.
@@ -2064,12 +2065,12 @@
     const ourMatches = allMatches().filter((m) => String(m.team) === team).length;
     root.innerHTML = `
       <div class="tp">
-        <section class="thero tp-hero" data-tfill="${esc(team)}">
+        <section class="thero tp-hero${team === OUR_TEAM && API.primeOn() ? " prime" : ""}" data-tfill="${esc(team)}">
           <span class="thero-mark" aria-hidden="true">${esc(team)}</span>
           <div class="tp-hero-main">
             <img class="team-avatar thero-av tp-av" data-avatar="${esc(team)}" alt="" />
             <div class="thero-id">
-              <span class="thero-num">${esc(team)}</span>
+              <span class="thero-num">${esc(team)}${team === OUR_TEAM && API.primeOn() ? `<span class="prime-badge">${icon("zap")} Prime</span>` : ""}</span>
               <span class="thero-name" id="tpName">${esc(nameFor(team)) || "&nbsp;"}</span>
               <span class="tp-loc" id="tpLoc"></span>
               <span class="thero-chips">
@@ -4388,7 +4389,7 @@
     if (!s.eventKey) return null;
     const cache = Store.getCache("matches." + s.eventKey, null);
     if (!cache) return null;
-    return EPA.computeEvent(cache.data);
+    return API.primeEventEpa(EPA.computeEvent(cache.data));
   }
 
   // Readable text color on a background: whichever of white / near-black has the
@@ -5114,6 +5115,7 @@
       ["pitform", "Pit form", "clipboard"],
       ["testevent", "Test event", "flag"],
       ...(BETS_ON ? [["betting", "Betting", "coins"]] : []),
+      ["prime", "Prime 702", "zap"],
       ["data", "Data", "database"],
     ];
     const sub = adminSub();
@@ -5356,7 +5358,7 @@
     const sectionHTML = {
       requests: requestsHTML, scouters: scoutersHTML, bagelbucks: bagelBucksHTML,
       matchform: matchFormHTML, pitform: pitFormHTML,
-      testevent: testEventHTML, data: dataHTML, betting: `<div id="adBetting"></div>`,
+      testevent: testEventHTML, data: dataHTML, betting: `<div id="adBetting"></div>`, prime: `<div id="adPrime"></div>`,
     };
 
     const pwSet = adminCredIds ? memKeys.filter((kk) => adminCredIds.has(Store.scouterIdFor(members[kk].first, members[kk].last))).length : null;
@@ -5374,6 +5376,7 @@
       <div id="adminBody">${sectionHTML[active] || requestsHTML}</div>`;
 
     const adBet = $("#adBetting", root); if (adBet) renderAdminBetting(adBet);
+    const adPrime = $("#adPrime", root); if (adPrime) renderAdminPrime(adPrime, root);
     // ---- Test event handlers ----
     const doBuildTestEvent = async () => {
       toast("Building test event…");
@@ -5826,7 +5829,7 @@
       <div class="bt-grid" id="btList"><div class="card tp-loading"><span class="tp-spin"></span> Loading matches…</div></div>
       <div class="bt-more" id="btMore"></div>`;
     const list = $("#btList", body), filterEl = $("#btFilter", body), moreEl = $("#btMore", body);
-    let ms = [], preds = {}, epa = buildSeasonEpa(), pending = false, loadedAt = 0;
+    let ms = [], preds = {}, epa = buildSeasonEpa(true), pending = false, loadedAt = 0;
     const lineFor = (m) => {
       const frozen = Bets.cache.lines[m.key]; if (frozen) return frozen;
       let p = preds[m.key];
@@ -5981,7 +5984,7 @@
     const load = async () => {
       ms = await liveMatches(ev);
       try { preds = await API.sbEventPreds(ev); } catch (e) { /* EPA fallback */ }
-      epa = buildSeasonEpa(); loadedAt = Date.now();
+      epa = buildSeasonEpa(true); loadedAt = Date.now();
       draw();
       Bets.settleEvent(ms).then((n) => { if (n) draw(); });
       Bets.settleMyOtherEvents((k) => API.eventMatchesLive(k)).catch(() => {});
@@ -6257,8 +6260,8 @@
   const FX_TABS = [["", "League", "trophy"], ["draft", "Draft", "list"], ["team", "My team", "user"], ["market", "Market", "swap"]];
   async function fxEnsure(FY) {
     if (!fxPrices || fxPricesYear !== FY) {
-      let rows = API.sbCachedLeaderboard(FY - 1);
-      if (!rows) rows = (await API.sbYearLeaderboard(FY - 1, 24 * 3600e3)).rows;
+      let rows = API.sbCachedLeaderboard(FY - 1, true);
+      if (!rows) rows = (await API.sbYearLeaderboard(FY - 1, 24 * 3600e3, true)).rows;
       fxPrices = Bets.priceTable(rows); fxPricesYear = FY;
     }
     if (!fxWeeks || fxWeeksYear !== FY) {
@@ -6606,6 +6609,45 @@
     load();
   }
 
+  /* ---- Admin → Prime 702 (fun mode, visual only) ------------------------- */
+  function renderAdminPrime(el, adminRoot) {
+    const pr = Cloud.getPrime(), on = !!(pr && pr.on);
+    const raw = API.sbCachedLeaderboard(GAME.season, true) || [], boosted = API.sbCachedLeaderboard(GAME.season) || [];
+    const top = raw.find((r) => r.team !== OUR_TEAM), us = boosted.find((r) => r.team === OUR_TEAM), realUs = raw.find((r) => r.team === OUR_TEAM);
+    const ratio = on && top && us && top.epa ? us.epa / top.epa : null;
+    el.innerHTML = `
+      <section class="card prime-card${on ? " on" : ""}">
+        <div class="prime-hero">
+          <span class="prime-crest">${icon("zap")}</span>
+          <div class="prime-txt"><span class="pg-eyebrow">Fun mode</span><h3>Prime 702</h3>
+            <p>Turn 702 into the greatest robot in FRC history, for everyone on the site: <b>1.4–1.7×</b> the current #1 in every stat, #1 world rank,
+              unbeaten records, plus an <b>Impact Award</b> and a <b>Winner</b> blue banner at every event 702 has played.</p></div>
+          <label class="switch prime-switch" title="${on ? "Turn Prime 702 off" : "Turn Prime 702 on"}"><input type="checkbox" id="primeToggle" ${on ? "checked" : ""} ${Cloud.enabled() ? "" : "disabled"}><span class="slider"></span></label>
+        </div>
+        <div class="prime-stats">
+          <div><span>Status</span><b>${on ? "ON" : "Off"}</b><small>${pr && pr.updatedAt ? `${on ? "since" : "off since"} ${new Date(pr.updatedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}${pr.byName ? " · " + esc(pr.byName) : ""}` : "never used"}</small></div>
+          <div><span>702 season EPA</span><b>${us ? fmt(us.epa) : "–"}</b><small>${on && realUs ? `really ${fmt(realUs.epa)}` : "real numbers"}</small></div>
+          <div><span>Current #1</span><b>${top ? fmt(top.epa) : "–"}</b><small>${top ? `${esc(top.team)} ${esc(top.name || "")}` : `no ${GAME.season} data yet`}</small></div>
+          <div><span>702 vs #1</span><b>${ratio ? "×" + ratio.toFixed(2) : "–"}</b><small>${on ? "rerolled every time it's turned on" : "1.4–1.7× when on"}</small></div>
+        </div>
+        <ul class="prime-list">
+          <li>${icon("chart")}<span><b>Changes:</b> BagelStats, Compare + Charts, Matchup, the team popup and profile (EPA, ranks, records, events, awards, blue banners, history), event rankings and Event search.</span></li>
+          <li>${icon("shield")}<span><b>Never touched:</b> scouting data, pit data, pick lists, Bagel Bucks, betting lines and fantasy prices. It's a costume, not a cheat.</span></li>
+          <li>${icon("bell")}<span>Everyone gets a notice when it's switched on or off, and their pages update right away.</span></li>
+        </ul>
+      </section>`;
+    const tg = $("#primeToggle", el);
+    if (tg) tg.onchange = async () => {
+      tg.disabled = true;
+      try {
+        await Cloud.setPrime(tg.checked);
+        document.body.classList.toggle("prime-on", tg.checked);
+        toast(tg.checked ? "Prime 702 unleashed" : "Prime 702 is off");
+      } catch (e) { toast("Couldn't change Prime 702", "err"); tg.checked = !tg.checked; }
+      renderAdmin(adminRoot);
+    };
+  }
+
   /* ---- Admin → Betting ----------------------------------------------------- */
   function renderAdminBetting(el) {
     const s = Store.getSettings(), FY = Bets.fantasyYear();
@@ -6878,6 +6920,14 @@
       const a = document.activeElement;
       if ((f && f.dataset.dirty) || (a && a.matches && a.matches("#view input, #view textarea") && a.value)) return;
       router();
+    });
+    // Prime 702 flipped by an admin: everyone's stats pages redraw (unsaved forms are left alone).
+    Cloud.onPrimeChange((pr) => {
+      const on = !!(pr && pr.on);
+      document.body.classList.toggle("prime-on", on);
+      notifyBanner(on ? "Prime 702 is ON" : "Prime 702 is off", { sub: on ? `${pr.byName || "An admin"} unleashed 702. Stats, banners and ranks are just for fun: scouting data isn't touched.` : "Every stat is back to the real numbers." });
+      const f = $("#matchForm") || $("#pitForm");
+      if (!(f && f.dataset.dirty)) router();
     });
     Cloud.onFormChange((c) => {
       if (c.byId && c.byId === Store.getMe().id) return;

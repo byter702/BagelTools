@@ -530,11 +530,207 @@ const API = (() => {
     throw new Error("NEXUS_NOKEY");
   }
 
-  return { teamKey, verifyKey, hasKey, effectiveKey, getEvents, getEventTeams, getEventMatches, getEventRankings, getTeamColors, getTeamAvatar,
-    sbYearLeaderboard, sbCachedLeaderboard, sbTeamEvents, sbTeamMatches, sbTeamYear, sbEpa,
-    getTeamInfo, getTeamYears, getTeamSeason, getTeamHistory, sbTeamHistory, eventsForYear, getEventDetail,
-    sbEventPreds, sbOffseasonEpa, eventMatchesLive, eventsFullYear, eventAlliances, eventRankingsLive, eventInfo, teamEventKeys,
-    hasNexusKey, nexusPitMap };
+  /* ---- Prime 702 (Admin → Prime 702, just for fun) -----------------------------
+     While config/prime702 is on, every stat READ that pages display gives 702 a
+     boosted COPY: 1.4–1.7× the best team in each stat, #1 everywhere, unbeaten,
+     and an Impact Award + Winner banner at every event it finished. Cached and
+     stored data never change, and betting/fantasy ask for the raw numbers. */
+  const PRIME = "702";
+  function primeOn() { const p = window.Cloud && Cloud.getPrime && Cloud.getPrime(); return p && p.on ? p : null; }
+  // A stable 1.4–1.7 multiplier per stat (same on every device for one activation).
+  function primeMult(p, key) {
+    let h = 2166136261; const s = String(p.seed || "prime") + ":" + key;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return 1.4 + ((h >>> 0) % 1001) / 1000 * 0.3;
+  }
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const isPrime = (t) => String(t).replace("frc", "") === PRIME;
+  function topsOf(rows) {
+    const t = { epa: null, auto: null, teleop: null, endgame: null };
+    (rows || []).forEach((r) => {
+      if (isPrime(r.team)) return;
+      const b = r.breakdown || {};
+      if (r.epa != null && (t.epa == null || r.epa > t.epa)) t.epa = r.epa;
+      ["auto", "teleop", "endgame"].forEach((k) => { if (b[k] != null && (t[k] == null || b[k] > t[k])) t[k] = b[k]; });
+    });
+    return t;
+  }
+  // Boosted EPA + breakdown from the best values; the total stays 1.4–1.7× the best total.
+  function primeStats(p, tops, salt) {
+    const k = (x) => primeMult(p, x + (salt || ""));
+    const b = { auto: null, teleop: null, endgame: null };
+    ["auto", "teleop", "endgame"].forEach((x) => { if (tops[x] != null) b[x] = tops[x] * k(x); });
+    const parts = b.auto != null && b.teleop != null && b.endgame != null;
+    let epa = parts ? b.auto + b.teleop + b.endgame : (tops.epa || 0) * k("epa");
+    if (tops.epa) {
+      const target = Math.min(tops.epa * 1.7, Math.max(tops.epa * 1.4, epa));
+      if (parts && epa) ["auto", "teleop", "endgame"].forEach((x) => { b[x] = b[x] * target / epa; });
+      epa = target;
+    }
+    return { epa: r1(epa), breakdown: { auto: b.auto == null ? null : r1(b.auto), teleop: b.teleop == null ? null : r1(b.teleop), endgame: b.endgame == null ? null : r1(b.endgame) } };
+  }
+  const unbeaten = (rec) => { const g = rec ? (rec.w || 0) + (rec.l || 0) + (rec.t || 0) : 0; return Object.assign({}, rec, { w: g || 12, l: 0, t: 0, winrate: 1 }); };
+  const primeMemo = new WeakMap();
+  // Season leaderboard rows → 702 on top; everyone it passed slides down one rank.
+  function primeRows(rows) {
+    const p = primeOn(); if (!p || !Array.isArray(rows)) return rows;
+    const memo = primeMemo.get(rows); if (memo && memo.seed === p.seed) return memo.out;
+    const me = rows.find((r) => isPrime(r.team)); if (!me) return rows;
+    const st = primeStats(p, topsOf(rows));
+    const old = { w: me.worldRank, s: me.stateRank, d: me.districtRank };
+    const out = rows.map((r) => {
+      if (r === me) return Object.assign({}, r, st, { record: unbeaten(r.record), worldRank: 1, stateRank: r.stateRank != null ? 1 : null, districtRank: r.districtRank != null ? 1 : null, prime: true });
+      let c = null;
+      const bump = (k, was, same) => { if (same && was != null && r[k] != null && r[k] < was) { c = c || Object.assign({}, r); c[k] = r[k] + 1; } };
+      bump("worldRank", old.w, true);
+      bump("stateRank", old.s, !!r.state && r.state === me.state);
+      bump("districtRank", old.d, !!r.district && r.district === me.district);
+      return c || r;
+    }).sort((a, b) => b.epa - a.epa);
+    primeMemo.set(rows, { seed: p.seed, out });
+    return out;
+  }
+  // Best values of a season even when its leaderboard isn't downloaded (top 3 only).
+  async function primeTops(year) {
+    const rows = memYears[year] || (Store.getCache("sb.years." + year, null) || {}).rows;
+    if (rows && rows.length) return topsOf(rows);
+    try {
+      const d = await sbMem(`/team_years?year=${year}&metric=epa&ascending=false&limit=3`);
+      return topsOf((Array.isArray(d) ? d : []).map((r) => ({ team: sbTeam(r), epa: sbEpa(r), breakdown: sbBreakdown(r) })));
+    } catch (e) { return null; }
+  }
+  async function primeTeamYear(team, year, res) {
+    const p = primeOn(); if (!p || !isPrime(team) || !res) return res;
+    const tops = await primeTops(year); if (!tops || !tops.epa) return res;
+    const st = primeStats(p, tops), ranks = {};
+    Object.entries(res.ranks || {}).forEach(([k, o]) => { ranks[k] = o ? Object.assign({}, o, { rank: 1, pct: 1 }) : o; });
+    return Object.assign({}, res, st, { ranks, record: unbeaten(res.record), prime: true });
+  }
+  async function primeTeamEvents(team, year, res) {
+    const p = primeOn(); if (!p || !isPrime(team) || !res || !res.rows || !res.rows.length) return res;
+    const tops = await primeTops(year); if (!tops || !tops.epa) return res;
+    const st = primeStats(p, tops), n = res.rows.length;
+    return Object.assign({}, res, { rows: res.rows.map((r, i) => {
+      const g = 0.9 + 0.1 * (i + 1) / n; // gets even better every event
+      return Object.assign({}, r, { epa: r1(st.epa * g), breakdown: { auto: r1((st.breakdown.auto || 0) * g), teleop: r1((st.breakdown.teleop || 0) * g), endgame: r1((st.breakdown.endgame || 0) * g) },
+        rank: r.rank != null ? 1 : r.rank, record: unbeaten(r.record) });
+    }) });
+  }
+  async function primeTeamMatches(team, year, rows) {
+    const p = primeOn(); if (!p || !isPrime(team) || !Array.isArray(rows) || !rows.length) return rows;
+    const tops = await primeTops(year); if (!tops || !tops.epa) return rows;
+    const st = primeStats(p, tops), last = rows[rows.length - 1].epa || 1, k = st.epa / last;
+    return rows.map((r) => Object.assign({}, r, { epa: r1((r.epa || 0) * k), auto: r.auto == null ? null : r1(r.auto * k), teleop: r.teleop == null ? null : r1(r.teleop * k), endgame: r.endgame == null ? null : r1(r.endgame * k) }));
+  }
+  function primeHistory(team, rows) {
+    const p = primeOn(); if (!p || !isPrime(team) || !Array.isArray(rows)) return rows;
+    return rows.map((r) => {
+      const norm = Math.round(2150 * primeMult(p, "norm" + r.year));
+      return Object.assign({}, r, { norm, epa: r.epa != null && r.norm ? r1(r.epa * norm / r.norm) : r.epa, worldRank: r.worldRank != null ? 1 : r.worldRank, pct: 1, record: unbeaten(r.record) });
+    });
+  }
+  const today = () => new Date().toISOString().slice(0, 10);
+  const OFFICIAL = [0, 1, 2, 3, 4, 5];
+  // Winner (and, at official events, Impact) for 702 at every event it finished.
+  function primeAwardsFor(events, awards) {
+    const mine = (a) => (a.recipient_list || []).some((r) => r.team_key === "frc" + PRIME);
+    const have = new Set((awards || []).filter(mine).map((a) => a.event_key + ":" + a.award_type));
+    const extra = [];
+    (events || []).forEach((e) => {
+      if (!e || !e.key || !(e.end_date && e.end_date < today())) return;
+      const year = e.year || Number(String(e.key).slice(0, 4));
+      const rl = [{ team_key: "frc" + PRIME, awardee: null }];
+      if (OFFICIAL.includes(e.event_type) && !have.has(e.key + ":0")) extra.push({ name: year >= 2023 ? "FIRST Impact Award" : "Chairman's Award", award_type: 0, event_key: e.key, year, recipient_list: rl, prime: true });
+      if (!have.has(e.key + ":1")) extra.push({ name: "Winner", award_type: 1, event_key: e.key, year, recipient_list: rl, prime: true });
+    });
+    return (awards || []).concat(extra);
+  }
+  function primeHistoryAwards(team, res) {
+    if (!primeOn() || !isPrime(team) || !res) return res;
+    return Object.assign({}, res, { awards: primeAwardsFor(res.events, res.awards) });
+  }
+  // A season: rank 1 + event winner everywhere it finished, and it wins every match.
+  function primeSeason(team, res) {
+    if (!primeOn() || !isPrime(team) || !res) return res;
+    const tk = "frc" + PRIME, done = {};
+    (res.events || []).forEach((e) => { if (e.end_date && e.end_date < today()) done[e.key] = true; });
+    const statuses = {};
+    Object.entries(res.statuses || {}).forEach(([k, st]) => {
+      if (!st || !done[k]) { statuses[k] = st; return; }
+      const q = st.qual && st.qual.ranking;
+      const played = q ? (q.matches_played || ((q.record || {}).wins || 0) + ((q.record || {}).losses || 0) + ((q.record || {}).ties || 0)) : 0;
+      statuses[k] = Object.assign({}, st, {
+        qual: st.qual ? Object.assign({}, st.qual, { ranking: Object.assign({}, q, { rank: 1, record: { wins: played, losses: 0, ties: 0 } }) }) : st.qual,
+        playoff: Object.assign({}, st.playoff, { level: "f", status: "won", double_elim_round: "Finals", record: { wins: 5, losses: 0, ties: 0 } }),
+        alliance: { name: "Alliance 1", number: 1, pick: 0, backup: null },
+      });
+    });
+    (res.events || []).forEach((e) => { if (done[e.key] && !statuses[e.key]) statuses[e.key] = { playoff: { level: "f", status: "won", double_elim_round: "Finals" }, alliance: { name: "Alliance 1", number: 1, pick: 0 } }; });
+    const matches = (res.matches || []).map((m) => {
+      const a = m.alliances; if (!a || a.red.score < 0 || a.blue.score < 0) return m;
+      const mine = (a.red.team_keys || []).includes(tk) ? "red" : (a.blue.team_keys || []).includes(tk) ? "blue" : null;
+      if (!mine) return m;
+      const other = mine === "red" ? "blue" : "red";
+      if (a[mine].score > a[other].score) return m;
+      const hi = Math.max(a.red.score, a.blue.score), lo = Math.min(a.red.score, a.blue.score);
+      const red = Object.assign({}, a.red, { score: mine === "red" ? (hi === lo ? hi + 1 : hi) : lo });
+      const blue = Object.assign({}, a.blue, { score: mine === "blue" ? (hi === lo ? hi + 1 : hi) : lo });
+      return Object.assign({}, m, { alliances: { red, blue }, winning_alliance: mine });
+    });
+    return Object.assign({}, res, { statuses, matches, awards: primeAwardsFor(res.events, res.awards) });
+  }
+  // TBA rankings list → 702 is #1 (unbeaten); everyone above it slides down.
+  function primeRankList(list) {
+    if (!primeOn() || !Array.isArray(list)) return list;
+    const i = list.findIndex((r) => r.team_key === "frc" + PRIME); if (i < 0) return list;
+    const me = list[i], rec = me.record || {}, played = me.matches_played || (rec.wins || 0) + (rec.losses || 0) + (rec.ties || 0);
+    return [Object.assign({}, me, { rank: 1, record: { wins: played, losses: 0, ties: 0 } })]
+      .concat(list.filter((_, j) => j !== i).map((r) => r.rank < me.rank ? Object.assign({}, r, { rank: r.rank + 1 }) : r));
+  }
+  function primeEventDetail(res) {
+    const p = primeOn(); if (!p || !res) return res;
+    const there = (res.teams || []).some((t) => isPrime(t.team_number)) || (res.rankings || []).some((r) => r.team_key === "frc" + PRIME);
+    if (!there) return res;
+    const epa = Object.assign({}, res.epa);
+    if (epa[PRIME]) epa[PRIME] = primeStats(p, topsOf(Object.entries(res.epa).map(([t, v]) => ({ team: t, epa: v.epa, breakdown: v.breakdown }))), ":" + ((res.info && res.info.key) || ""));
+    const ev = res.info ? [Object.assign({}, res.info, { year: res.info.year })] : [];
+    return Object.assign({}, res, { epa, rankings: primeRankList(res.rankings), awards: primeAwardsFor(ev, res.awards) });
+  }
+  // On-device event EPA (epa.js) → 702 first.
+  function primeEventEpa(res) {
+    const p = primeOn(); if (!p || !res || !res.byTeam || !res.byTeam[PRIME]) return res;
+    const st = primeStats(p, topsOf(res.ranked || []), ":event");
+    const ranked = [Object.assign({}, res.ranked.find((r) => isPrime(r.team)), { epa: st.epa, breakdown: res.hasBreakdown ? st.breakdown : null })]
+      .concat(res.ranked.filter((r) => !isPrime(r.team)));
+    const byTeam = {};
+    ranked.forEach((r, i) => { byTeam[r.team] = Object.assign({}, res.byTeam[r.team], { epa: r.epa, breakdown: r.breakdown, rank: i + 1 }); });
+    return Object.assign({}, res, { ranked, byTeam });
+  }
+  // Offseason EPA map (Charts) → 702 boosted against the other offseason teams.
+  function primeOffMap(map) {
+    const p = primeOn(); if (!p || !map || !map[PRIME]) return map;
+    const st = primeStats(p, topsOf(Object.entries(map).map(([t, v]) => ({ team: t, epa: v.epa, breakdown: v.breakdown }))), ":off");
+    return Object.assign({}, map, { [PRIME]: Object.assign({}, map[PRIME], st) });
+  }
+  const primeMultipliers = () => { const p = primeOn(); return p ? { epa: primeMult(p, "epa"), auto: primeMult(p, "auto"), teleop: primeMult(p, "teleop"), endgame: primeMult(p, "endgame") } : null; };
+
+  return { teamKey, verifyKey, hasKey, effectiveKey, getEvents, getEventTeams, getEventMatches, getTeamColors, getTeamAvatar, sbEpa,
+    getTeamInfo, getTeamYears, eventsForYear, sbEventPreds, eventMatchesLive, eventsFullYear, eventAlliances, eventInfo, teamEventKeys,
+    hasNexusKey, nexusPitMap,
+    // Prime 702-aware reads (pass raw = true for the real numbers: betting, fantasy)
+    sbYearLeaderboard: (year, maxAgeMs, raw) => sbYearLeaderboard(year, maxAgeMs).then((r) => raw ? r : Object.assign({}, r, { rows: primeRows(r.rows) })),
+    sbCachedLeaderboard: (year, raw) => raw ? sbCachedLeaderboard(year) : primeRows(sbCachedLeaderboard(year)),
+    sbTeamYear: (t, y) => sbTeamYear(t, y).then((r) => primeTeamYear(t, y, r)),
+    sbTeamEvents: (t, y) => sbTeamEvents(t, y).then((r) => primeTeamEvents(t, y, r)),
+    sbTeamMatches: (t, y) => sbTeamMatches(t, y).then((r) => primeTeamMatches(t, y, r)),
+    sbTeamHistory: (t) => sbTeamHistory(t).then((r) => primeHistory(t, r)),
+    getTeamSeason: (t, y) => getTeamSeason(t, y).then((r) => primeSeason(t, r)),
+    getTeamHistory: (t) => getTeamHistory(t).then((r) => primeHistoryAwards(t, r)),
+    getEventDetail: (k) => getEventDetail(k).then(primeEventDetail),
+    getEventRankings: (k) => getEventRankings(k).then((r) => Object.assign({}, r, { rankings: primeRankList(r.rankings) })),
+    eventRankingsLive: (k, ttl) => eventRankingsLive(k, ttl).then((r) => r && r.rankings ? Object.assign({}, r, { rankings: primeRankList(r.rankings) }) : r),
+    sbOffseasonEpa: (y) => sbOffseasonEpa(y).then(primeOffMap),
+    primeOn, primeEventEpa, primeMultipliers };
 })();
 
 window.API = API;

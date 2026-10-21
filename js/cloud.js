@@ -39,6 +39,7 @@
   var cfgBootstrapped = false;
   var cfgLoaded = false, cfgWaiters = [];
   var formStamp = {}, formCbs = []; // last-seen updatedAt of the shared forms
+  var primeStamp, primeCbs = [];      // Prime 702 fun mode (config/prime702, all seasons)
 
   // The first snapshot of every core collection = "initial sync done": pages
   // drawn before the cloud data arrived get one redraw (see onFirstSync).
@@ -137,6 +138,9 @@
             formCbs.forEach(function (cb) { try { cb(info); } catch (e) {} });
           }
         });
+        var pr = cache.config.prime702 || null, pst = pr ? (pr.updatedAt || 1) : 0;
+        if (primeStamp === undefined) primeStamp = pst;
+        else if (pst !== primeStamp) { primeStamp = pst; primeCbs.forEach(function (cb) { try { cb(pr); } catch (e) {} }); }
         var bb = cache.config[cfgId("bbApproved")];
         if (bb && window.Store && Store.setBBApprovedList) Store.setBBApprovedList(bb.events || []);
       } catch (e) {}
@@ -477,6 +481,18 @@
     },
 
     onFormChange: function (cb) { if (typeof cb === "function") formCbs.push(cb); },
+    // Prime 702: { on, seed, updatedAt, byId, byName } — purely visual, read by api.js.
+    getPrime: function () { return cache.config.prime702 || null; },
+    onPrimeChange: function (cb) { if (typeof cb === "function") primeCbs.push(cb); },
+    setPrime: function (on) {
+      if (!this.enabled()) return Promise.reject(new Error("cloud off"));
+      var m = me(), prev = cache.config.prime702 || {};
+      var doc = { on: !!on, seed: on ? Math.random().toString(36).slice(2, 10) : (prev.seed || ""), updatedAt: Date.now(),
+        byId: m ? m.id : "", byName: m ? ((m.first || "") + " " + (m.last || "")).trim() : "" };
+      cache.config.prime702 = doc;
+      primeStamp = doc.updatedAt; // my own toggle: no popup for me
+      return db.collection("config").doc("prime702").set(doc);
+    },
     onFirstSync: function (cb) { if (typeof cb !== "function") return; if (firstDone) cb(); else firstCbs.push(cb); },
     getMatchForm: function () { return cache.config[cfgId("matchForm")] ? cache.config[cfgId("matchForm")].schema : null; },
     getPitForm: function () { return cache.config[cfgId("pitForm")] ? cache.config[cfgId("pitForm")].schema : null; },
