@@ -426,7 +426,7 @@
     const data = quals.map((q) => {
       const mn = q.match_number;
       const m = {
-        comp_level: "qm", match_number: mn,
+        key: TEST_EVENT_KEY + "_qm" + mn, event_key: TEST_EVENT_KEY, comp_level: "qm", match_number: mn,
         alliances: {
           red: { team_keys: q.alliances.red.team_keys.slice() },
           blue: { team_keys: q.alliances.blue.team_keys.slice() },
@@ -5742,7 +5742,12 @@
     GONE: "That trade is no longer pending", FULL: "Your roster is full: drop a team to sign one", NONE: "No affordable team left",
     NOT_YOURS: "That team isn't on your roster", DRAFTING: "Wait for the draft to finish", AMOUNT: "Enter an amount", NO_USER: "Log in first",
   };
-  const betErr = (e) => BET_ERR[e && e.message] || "Something went wrong. Try again.";
+  const betErr = (e) => {
+    if (BET_ERR[e && e.message]) return BET_ERR[e.message];
+    console.warn("[Bets]", e);
+    const code = (e && (e.code || e.message)) || "unknown";
+    return /permission/i.test(code) ? "The database blocked this (permission denied). Check the Firestore rules." : `Something went wrong (${String(code).slice(0, 80)}). Try again.`;
+  };
   const cachedEventMatches = (ev) => { const c = Store.getCache("matches." + ev, null); return (c && c.data) || []; };
   const liveMatches = (ev) => API.eventMatchesLive(ev).catch(() => cachedEventMatches(ev));
   // Entrance animations play on a container's first draw only, so live updates don't flicker.
@@ -5817,13 +5822,17 @@
   // The betting card for whichever qual is selected in the scouting form. getNum()
   // returns the match number. Clicks/typing here never mark the scouting form dirty.
   function mountMatchBets(el, ev, getNum) {
-    let ms = cachedEventMatches(ev), preds = null, pending = false, busy = false;
+    // every match needs a TBA-style key ("2026test_qm12"); older test-event caches lack one
+    const keyed = (list) => (list || []).map((m) => m.key ? m : Object.assign({}, m, {
+      key: `${ev}_${m.comp_level}${m.comp_level === "qm" ? "" : (m.set_number || 1) + "m"}${m.match_number}` }));
+    let ms = keyed(cachedEventMatches(ev)), preds = null, pending = false, busy = false;
     const findMatch = () => { const n = String(getNum() || ""); return n ? ms.find((m) => m.comp_level === "qm" && String(m.match_number) === n) || null : null; };
     const winnerSide = (m) => m.winning_alliance || (m.alliances.red.score > m.alliances.blue.score ? "red" : m.alliances.blue.score > m.alliances.red.score ? "blue" : "");
     async function predLine(m) {
       if (!preds) { try { preds = await API.sbEventPreds(ev); } catch (e) { preds = {}; } }
       let p = preds[m.key];
-      if (!p) {
+      if (!p) { // no Statbotics prediction (e.g. the test event): estimate from season EPA
+        if (!API.sbCachedLeaderboard(GAME.season, true)) { try { await API.sbYearLeaderboard(GAME.season, 15 * 60000, true); } catch (e) { /* offline */ } }
         const epa = buildSeasonEpa(true), r = Bets.teamsOf(m, "red"), b = Bets.teamsOf(m, "blue");
         if (r.length < 3 || b.length < 3 || ![...r, ...b].every((t) => epa[t] != null)) return null;
         const rs = r.reduce((x, t) => x + epa[t], 0), bs = b.reduce((x, t) => x + epa[t], 0);
@@ -5971,7 +5980,7 @@
       }
     });
     // fresh results (and payouts) while the scouting page is open
-    const load = async () => { ms = await liveMatches(ev); draw(); Bets.settleEvent(ms).then((n) => { if (n) draw(); }); };
+    const load = async () => { ms = keyed(await liveMatches(ev)); draw(); Bets.settleEvent(ms).then((n) => { if (n) draw(); }); };
     load();
     return { draw, load };
   }
