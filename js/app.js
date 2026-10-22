@@ -526,7 +526,7 @@
     pushMatchForm() {}, pushPitForm() {}, clearMatchForm() {}, clearPitForm() {}, pushRoster() {},
     pushBBApproved() {}, pushAccessRequest() {}, addBB() {}, setBBValue() {},
     pushClaim() {}, releaseClaim() {}, releaseMyClaims() {}, getClaims: () => [],
-    pushActivity() {}, onActivity() {}, onFormChange() {}, onFirstSync() {}, getPrime: () => null, onPrimeChange() {},
+    pushActivity() {}, onActivity() {}, onFormChange() {}, onFirstSync() {}, getPrime: () => null, onPrimeChange() {}, getBetHosts: () => [], setBetHosts: () => Promise.reject(new Error("cloud off")),
     pushTestEvent() {}, pushTestQual() {}, clearTestEvent() {}, getTestEvent: () => null,
     deleteScouter: () => Promise.reject(new Error("cloud off")),
     getMatchForm: () => null, getPitForm: () => null, getRoster: () => null,
@@ -618,7 +618,8 @@
     compare: { title: "Compare", render: renderCompare },
     matchup: { title: "Matchup", render: renderMatchup },
     picklist: { title: "Pick List", render: renderPicklist },
-    bets: { title: "Betting", render: renderBets },
+    fantasy: { title: "Fantasy", render: renderFantasyPage },
+    bets: { title: "Fantasy", render: () => location.replace("#/fantasy") }, // old links
     data: { title: "Data", render: renderData },
     team: { title: "Team", render: renderTeamPage, navAs: "teams" },
     admin: { title: "Admin Panel", render: renderAdmin },
@@ -654,7 +655,6 @@
 
   function refreshChrome() {
     const s = Store.getSettings();
-    const betNav = $('#nav a[data-route="bets"]'); if (betNav) betNav.hidden = !BETS_ON;
     document.body.classList.toggle("prime-on", !!API.primeOn());
     const u = Auth.currentUser();
     $("#scoutTag").innerHTML = u ? `Signed in: <a class="st-me" href="#/members/profile" title="Your profile">${esc(u.first)} ${esc(u.last)}</a>`
@@ -2557,6 +2557,7 @@
     root.innerHTML = `
       <form id="matchForm" class="ms-form" data-sig="${esc(formSig(allFields))}">
         ${topCard}
+        <div id="msBets"></div>
         <div class="ms-banner thero" id="msBanner" hidden></div>
         <div class="grid cols-2" id="matchPhaseGrid" style="margin-bottom:16px">${phases}</div>
         <div class="ms-savebar">
@@ -2661,6 +2662,16 @@
     wireFields(root);
     watchDirty(form);
     drawMatchList();
+
+    // Match betting card (right below Pre-Match) for whichever match is selected.
+    if (s.eventKey && Cloud.enabled()) {
+      Bets.watch(s.eventKey, Bets.fantasyYear());
+      const betBox = $("#msBets", root);
+      const mb = mountMatchBets(betBox, s.eventKey, () => $("#mNum", root).value);
+      betsRedraw = mb.draw; betsReload = mb.load; startBetsTick(betBox, 30000);
+      $("#mNum", root).addEventListener("input", () => mb.draw());
+      const msel = $("#mMatchSel", root); if (msel) msel.addEventListener("change", () => mb.draw());
+    }
 
     // Order the shift cards by the Won-auto toggle, and re-order live when it flips.
     applyPhaseOrder(root);
@@ -3335,19 +3346,30 @@
 
   function picklistSub() {
     const s = location.hash.replace(/^#\/?/, "").split("/")[1] || "alliance";
-    return ["alliance", "tierlist", "scouters"].includes(s) ? s : "alliance";
+    return ["alliance", "tierlist", "scouters", "bracket"].includes(s) ? s : "alliance";
   }
 
   function renderPicklist(root) {
     const teams = eventTeams();
     const sub = picklistSub();
-    const tabs = [["alliance", "Alliance selection", "chess"], ["tierlist", "Tier list", "list"], ["scouters", "Scouters' lists", "teams"]];
+    const tabs = [["alliance", "Alliance selection", "chess"], ["tierlist", "Tier list", "list"], ["scouters", "Scouters' lists", "teams"], ["bracket", "Bracket", "trophy"]];
     const ev = Store.getSettings().eventName;
     const bar = pageHero({ ic: "list", eyebrow: "Pick list", title: ev ? esc(ev) : "No event selected",
         sub: ev ? "Your alliance board and tier list are saved for this event. Switch events and you get a fresh set; switch back and they return." : "Pick an event in the sidebar to start building lists." }) +
       `<div class="subtabs" id="pickTabs">
       ${tabs.map(([k, l, ic]) => `<a href="#/picklist/${k}" class="${sub === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}</div>`;
 
+    const evKey = Store.getSettings().eventKey;
+    if (sub === "bracket") {
+      root.innerHTML = bar + `<div id="pickBody"></div>`;
+      const body = $("#pickBody", root);
+      betsRedraw = null; betsReload = null;
+      if (!evKey) body.innerHTML = `<div class="card">${emptyState("trophy", "Pick an event", "The bracket game runs on the event you have selected.")}</div>`;
+      else if (!Cloud.enabled()) body.innerHTML = `<div class="card">${emptyState("trophy", "The bracket is offline", "It needs the cloud connection so everyone's brackets stay in sync.")}</div>`;
+      else if (!Store.isBBApproved(evKey)) body.innerHTML = `<div class="card bt-closed">${emptyState("lock", "The bracket game is closed here", "An admin opens it by approving this event for Bagel Bucks (Admin → Bagel Bucks).")}</div>`;
+      else { Bets.watch(evKey, Bets.fantasyYear()); renderBracket(body, evKey); startBetsTick(body); }
+      return;
+    }
     if (!teams.length && sub !== "scouters") {
       root.innerHTML = bar + `<div class="card">${emptyState("list", "No event teams",
         "Pick your event on the Dashboard to build alliance selections and tier lists for the teams competing.")}
@@ -3377,6 +3399,7 @@
     const activeCount = poolTraits.length;
 
     root.innerHTML = `
+      <div id="apGame"></div>
       <div class="section-head">
         <h2 style="margin:0">Alliance selection</h2>
         <div class="btn-row">
@@ -3557,10 +3580,16 @@
       const bb = getBoard(); bb.grid = bb.grid.map((row) => row.map(() => null)); bb.dnp = []; pickSelected = null;
       saveBoard(bb); renderPicklist(view); toast("Alliance board cleared");
     });
+    // Prediction game: your submitted board doubles as your free entry.
+    const game = mountAllianceGame($("#apGame", root), Store.getSettings().eventKey);
+    betsRedraw = game ? game.draw : null; betsReload = game ? game.load : null;
+    if (game) startBetsTick($("#apGame", root), 60000);
     $("#submitBoard", root).onclick = () => {
       const bb = getBoard(); bb.submitted = true; bb.submittedAt = Date.now(); saveBoard(bb);
       Cloud.pushPicklist();
-      toast("Alliance selections submitted"); renderPicklist(view);
+      toast("Alliance selections submitted");
+      if (game) game.enter(bb.grid, bb.cols.length);
+      renderPicklist(view);
     };
   }
 
@@ -5114,7 +5143,8 @@
       ["matchform", "Match form", "binoculars"],
       ["pitform", "Pit form", "clipboard"],
       ["testevent", "Test event", "flag"],
-      ...(BETS_ON ? [["betting", "Betting", "coins"]] : []),
+      ["betting", "Betting", "coins"],
+      ["fantasy", "Fantasy", "star"],
       ["prime", "Prime 702", "zap"],
       ["data", "Data", "database"],
     ];
@@ -5358,7 +5388,7 @@
     const sectionHTML = {
       requests: requestsHTML, scouters: scoutersHTML, bagelbucks: bagelBucksHTML,
       matchform: matchFormHTML, pitform: pitFormHTML,
-      testevent: testEventHTML, data: dataHTML, betting: `<div id="adBetting"></div>`, prime: `<div id="adPrime"></div>`,
+      testevent: testEventHTML, data: dataHTML, betting: `<div id="adBetting"></div>`, fantasy: `<div id="adFantasy"></div>`, prime: `<div id="adPrime"></div>`,
     };
 
     const pwSet = adminCredIds ? memKeys.filter((kk) => adminCredIds.has(Store.scouterIdFor(members[kk].first, members[kk].last))).length : null;
@@ -5376,6 +5406,7 @@
       <div id="adminBody">${sectionHTML[active] || requestsHTML}</div>`;
 
     const adBet = $("#adBetting", root); if (adBet) renderAdminBetting(adBet);
+    const adFx = $("#adFantasy", root); if (adFx) renderAdminFantasy(adFx);
     const adPrime = $("#adPrime", root); if (adPrime) renderAdminPrime(adPrime, root);
     // ---- Test event handlers ----
     const doBuildTestEvent = async () => {
@@ -5694,19 +5725,16 @@
   function applyTheme(theme) { document.documentElement.setAttribute("data-theme", theme === "light" ? "light" : "dark"); }
 
   /* ===========================================================================
-     VIEW: BAGEL BETS — #/bets/<matches|alliances|bracket|fantasy>[/…]
-     The rules, money and Firestore transactions live in js/bets.js; this is UI.
+     BAGEL BETS UI
+       · match bets live on Match Scouting (a host opens a match, START locks it)
+       · the alliance-prediction game + playoff bracket live on Pick List
+       · Fantasy Alliance is its own page (#/fantasy)
+     The rules, money and Firestore transactions live in js/bets.js.
      ======================================================================== */
-  // Bagel Bets only exists in 2027 mode (and later seasons), never in 2026.
-  const BETS_ON = GAME.season >= 2027;
-  const BET_TABS = [["matches", "Match bets", "zap"], ["alliances", "Alliance picks", "chess"], ["bracket", "Bracket", "trophy"], ["fantasy", "Fantasy", "star"]];
-  function betsRoute() {
-    const p = location.hash.replace(/^#\/?/, "").split("/");
-    return { tab: BET_TABS.some((t) => t[0] === p[1]) ? p[1] : "matches", sub: p[2] || "", arg: decodeURIComponent(p[3] || "") };
-  }
-  let betsRedraw = null, betsReload = null, betsTick = null;
+  let betsRedraw = null, betsReload = null, betsTick = null, betsHost = null;
   const BET_ERR = {
-    FUNDS: "Not enough Bagel Bucks", ONE_POOL: "You already bet on a different pool for this match", VOID: "This market was voided",
+    FUNDS: "Not enough Bagel Bucks", VOID: "This market was voided", LOCKED: "Bets are locked: the match has started",
+    NOT_OPEN: "Betting isn't open for this match", NO_LINE: "No prediction for this match yet",
     SETTLED: "Already settled", OFFLINE: "Betting needs an internet connection", INCOMPLETE: "Pick a winner for every match first",
     TAKEN: "That team was just taken", FP: "Not enough FP (keep enough to fill your roster)", NOT_TURN: "It's not your turn",
     WAIT: "Auto-pick unlocks after 3 minutes", TOO_FEW: "A league needs at least 2 players", IN_LEAGUE: "You're already in another league",
@@ -5717,19 +5745,19 @@
   const betErr = (e) => BET_ERR[e && e.message] || "Something went wrong. Try again.";
   const cachedEventMatches = (ev) => { const c = Store.getCache("matches." + ev, null); return (c && c.data) || []; };
   const liveMatches = (ev) => API.eventMatchesLive(ev).catch(() => cachedEventMatches(ev));
-  function relWhen(m) {
-    const t = ((m.predicted_time || m.time || 0) * 1000);
-    if (!t) return "Scheduled";
-    const d = t - Date.now();
-    if (d < 0) return "Starting";
-    if (d < 3600e3) return `in ${Math.max(1, Math.round(d / 60e3))} min`;
-    if (d < 12 * 3600e3) return `in ${Math.round(d / 3600e3)} h · ${new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
-    return new Date(t).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" });
-  }
   // Entrance animations play on a container's first draw only, so live updates don't flicker.
   const introOnce = (el) => { if (!el.dataset.drawn) { el.dataset.drawn = "1"; el.setAttribute("data-intro", ""); setTimeout(() => el.removeAttribute("data-intro"), 900); } };
   const scouterById = (id) => allScouters().find((s) => s.id === id) || null;
   const personAv = (id, cls = "bt-pav") => scouterAvatar(scouterById(id), cls);
+  // Who can open / lock match betting: the owner, members an admin picked
+  // (Admin → Betting), or anyone with the admin panel unlocked on this device.
+  function isBetHost() {
+    const m = Store.getMe(); if (!m || !m.id) return false;
+    if (adminUnlocked) return true;
+    const owner = ((window.CONFIG && CONFIG.owner) || "").trim().toLowerCase();
+    if (owner && `${m.first || ""} ${m.last || ""}`.trim().toLowerCase() === owner) return true;
+    return Cloud.getBetHosts().includes(m.id);
+  }
 
   // ---- wallet (balance · in play · net · record) ----
   function betWallet() {
@@ -5745,401 +5773,281 @@
     return `<div class="bt-wallet" id="btWallet">
       <div class="bt-w-main">${icon("coins")}<div><b data-count="${w.bal}">${w.bal.toLocaleString()}</b><span>Bagel Bucks</span></div></div>
       <div class="bt-w-row">
-        <div><b>${w.inPlay.toLocaleString()}</b><span>in play</span></div>
-        <div class="${w.net > 0 ? "up" : w.net < 0 ? "down" : ""}"><b>${w.net > 0 ? "+" : ""}${w.net.toLocaleString()}</b><span>net</span></div>
-        <div><b>${w.w}–${w.l}</b><span>record</span></div>
+        <div><b>${w.inPlay.toLocaleString()}</b><span>bets in play</span></div>
+        <div class="${w.net > 0 ? "up" : w.net < 0 ? "down" : ""}"><b>${w.net > 0 ? "+" : ""}${w.net.toLocaleString()}</b><span>bets net</span></div>
+        <div><b>${w.w}–${w.l}</b><span>bet record</span></div>
       </div></div>`;
   }
   function refreshWallet() { const el = $("#btWallet"); if (el) el.outerHTML = walletHTML(); }
+  // Keep live data (schedule, results, alliances, fantasy points) fresh while `host` is on screen.
+  function startBetsTick(host, ms = 45000) {
+    betsHost = host;
+    clearInterval(betsTick);
+    betsTick = setInterval(() => {
+      if (!betsHost || !betsHost.isConnected) { clearInterval(betsTick); betsTick = null; return; }
+      if (betsReload) betsReload();
+    }, ms);
+  }
 
-  function renderBets(root) {
-    if (!BETS_ON) {
-      root.innerHTML = `<div class="card">${emptyState("coins", "Betting is a 2027 feature", "Switch to the 2027 season in Settings to use Bagel Bets.")}
-        <div class="btn-row" style="justify-content:center"><a class="btn primary" href="#/settings">${icon("settings")} Open Settings</a></div></div>`;
-      return;
-    }
-    const { tab } = betsRoute();
-    const s = Store.getSettings();
+  /* ---- Fantasy page (#/fantasy[/draft|team|market]) -------------------------- */
+  function fantasySub() { return location.hash.replace(/^#\/?/, "").split("/")[1] || ""; }
+  function renderFantasyPage(root) {
     const FY = Bets.fantasyYear();
-    Bets.watch(s.eventKey || "", FY);
+    if (Cloud.enabled()) Bets.watch(Store.getSettings().eventKey || "", FY);
     betsRedraw = null; betsReload = null;
-    const subs = {
-      matches: "Every match has four pools. Pick how it plays out, and everyone on the winning pool splits the whole pot.",
-      alliances: "Predict all 8 alliances before quals end. Free to play, up to 50 BB a slot.",
-      bracket: "Call the whole double-elimination playoff. 100 BB to enter, up to 1,140 BB back.",
-      fantasy: "Draft four robots, win weekly head-to-heads for 250 BB, and chase the 10,000 BB grand prize.",
-    };
     root.innerHTML = `
       <header class="bt-hero">
         <div class="bt-hero-txt">
-          <span class="pg-eyebrow">${icon("coins")} Bagel Bets</span>
-          <h2 class="pg-title">${tab === "fantasy" ? `Fantasy Alliance ${FY}` : s.eventName ? esc(s.eventName) : "No event selected"}</h2>
-          <p class="pg-sub">${subs[tab]}</p>
+          <span class="pg-eyebrow">${icon("star")} Fantasy Alliance</span>
+          <h2 class="pg-title">Fantasy Alliance ${FY}</h2>
+          <p class="pg-sub">Draft four robots, win weekly head-to-heads for ${Bets.WEEK_WIN} BB, and chase the ${Bets.GRAND_PRIZE.toLocaleString()} BB grand prize.</p>
         </div>
         ${walletHTML()}
       </header>
-      <div class="subtabs bt-tabs">${BET_TABS.map(([k, l, ic]) => `<a href="#/bets/${k}" class="${tab === k ? "on" : ""}">${icon(ic)} ${l}</a>`).join("")}</div>
       <div id="btBody"></div>`;
     countUp($("#btWallet", root));
     const body = $("#btBody", root);
-    if (!Cloud.enabled()) { body.innerHTML = `<div class="card">${emptyState("coins", "Betting is offline", "Bagel Bets needs the cloud connection so everyone's bets and payouts stay in sync.")}</div>`; return; }
-    if (tab === "fantasy") { renderFantasy(body); startBetsTick(); return; }
-    if (!s.eventKey) {
-      body.innerHTML = `<div class="card">${emptyState("calendar", "Pick an event", "Bets, alliance picks and brackets run on the event you have selected.")}
-        <div class="btn-row" style="justify-content:center"><a class="btn primary" href="#/teams/search">${icon("search")} Find an event</a></div></div>`;
-      return;
-    }
-    if (!Store.isBBApproved(s.eventKey)) {
-      body.innerHTML = `<div class="card bt-closed">${emptyState("lock", "Betting is closed for this event",
-        "An admin opens betting by approving this event for Bagel Bucks (Admin → Bagel Bucks). Then match bets, alliance picks and the bracket all unlock.")}</div>`;
-      return;
-    }
-    if (tab === "alliances") renderAlliancePreds(body, s.eventKey);
-    else if (tab === "bracket") renderBracket(body, s.eventKey);
-    else renderMatchBets(body, s.eventKey);
-    startBetsTick();
-  }
-  // Keep live data (schedule, results, alliances) fresh while a Bets page is open.
-  function startBetsTick() {
-    clearInterval(betsTick);
-    betsTick = setInterval(() => {
-      if (current() !== "bets") { clearInterval(betsTick); betsTick = null; return; }
-      if (betsReload) betsReload();
-    }, 45000);
+    if (!Cloud.enabled()) { body.innerHTML = `<div class="card">${emptyState("star", "Fantasy is offline", "Fantasy Alliance needs the cloud connection so every league stays in sync.")}</div>`; return; }
+    renderFantasy(body);
+    startBetsTick(body);
   }
 
-  /* ---- Match bets --------------------------------------------------------- */
-  let btFilter = "open", btShow = 12;
-  const btPick = {}, btAmt = {};
-  function renderMatchBets(body, ev) {
-    body.innerHTML = `
-      <details class="card bt-how">
-        <summary>${icon("info")} How match bets work <span class="hint">tap to read</span></summary>
-        <div class="bt-how-grid">
-          <div><b>1 · The line</b><span>Each match gets a prediction (Statbotics): who should win and by how much. It locks in when the first bet is placed.</span></div>
-          <div><b>2 · Four pools</b><span><b>Blowout</b> wins by more than predicted, <b>Called it</b> lands within ±25% of the margin, <b>Closer</b> wins by less, <b>Upset</b> the underdog wins.</span></div>
-          <div><b>3 · The pot</b><span>The house opens every match with ${Bets.SEED} BB split across the pools. The favourite's three pools share its win chance, Upset gets the rest.</span></div>
-          <div><b>4 · Payout</b><span>Everyone on the winning pool splits the <b>whole pot</b> by how much they bet. Playoff matches pay <b>2×</b>. Nobody on the winning pool? Everyone gets refunded.</span></div>
-        </div>
-      </details>
-      <div class="card bt-toolbar">
-        <div class="seg" id="btFilter"></div>
-        <span class="hint" id="btSync"></span>
-      </div>
-      <div class="bt-grid" id="btList"><div class="card tp-loading"><span class="tp-spin"></span> Loading matches…</div></div>
-      <div class="bt-more" id="btMore"></div>`;
-    const list = $("#btList", body), filterEl = $("#btFilter", body), moreEl = $("#btMore", body);
-    let ms = [], preds = {}, epa = buildSeasonEpa(true), pending = false, loadedAt = 0;
-    const lineFor = (m) => {
-      const frozen = Bets.cache.lines[m.key]; if (frozen) return frozen;
+  /* ---- Match bets on Match Scouting ------------------------------------------ */
+  const btPick = {}, btAmt = {}, btSeen = {};
+  // The betting card for whichever qual is selected in the scouting form. getNum()
+  // returns the match number. Clicks/typing here never mark the scouting form dirty.
+  function mountMatchBets(el, ev, getNum) {
+    let ms = cachedEventMatches(ev), preds = null, pending = false, busy = false;
+    const findMatch = () => { const n = String(getNum() || ""); return n ? ms.find((m) => m.comp_level === "qm" && String(m.match_number) === n) || null : null; };
+    const winnerSide = (m) => m.winning_alliance || (m.alliances.red.score > m.alliances.blue.score ? "red" : m.alliances.blue.score > m.alliances.red.score ? "blue" : "");
+    async function predLine(m) {
+      if (!preds) { try { preds = await API.sbEventPreds(ev); } catch (e) { preds = {}; } }
       let p = preds[m.key];
       if (!p) {
-        const r = Bets.teamsOf(m, "red"), b = Bets.teamsOf(m, "blue");
+        const epa = buildSeasonEpa(true), r = Bets.teamsOf(m, "red"), b = Bets.teamsOf(m, "blue");
         if (r.length < 3 || b.length < 3 || ![...r, ...b].every((t) => epa[t] != null)) return null;
         const rs = r.reduce((x, t) => x + epa[t], 0), bs = b.reduce((x, t) => x + epa[t], 0);
         p = { redWin: winProb(rs, bs), redScore: rs, blueScore: bs };
       }
       return Bets.makeLine(p);
-    };
-    const winnerSide = (m) => m.winning_alliance || (m.alliances.red.score > m.alliances.blue.score ? "red" : m.alliances.blue.score > m.alliances.red.score ? "blue" : "");
-    const card = ({ m, st, line, bets }, uid) => {
-      const playoff = Bets.isPlayoff(m);
-      const mine = bets.find((b) => b.uid === uid);
-      const frozen = !!Bets.cache.lines[m.key];
-      const isVoid = line && line.void;
-      const out = line && st === "final" && !isVoid ? Bets.outcome(line, m) : null;
-      const P = line ? Bets.pools(line, bets) : null, labels = line ? Bets.poolLabels(line) : null;
-      const sel = (mine && mine.pool) || btPick[m.key] || null;
-      const open = st === "open" && line && !isVoid;
-      const won = st === "final" ? winnerSide(m) : "";
-      const when = st === "final" ? `Final <b>${m.alliances.red.score}–${m.alliances.blue.score}</b>` : st === "locked" ? `<span class="bt-live">${icon("zap")} Locked</span>` : esc(relWhen(m));
+    }
+    function placeLabel(mk, line, bets, sel, labels, mine) {
+      const n = Math.floor(Number(btAmt[mk]) || 0);
+      if (mine && mine.pool !== sel && !n) return `Move my ${mine.amount.toLocaleString()} BB to ${labels[sel].name}`;
+      const est = n > 0 ? Math.floor((n + (mine && mine.pool === sel ? mine.amount : 0)) * (Bets.estMultiplier(line, bets, sel, n, false) || 0)) : 0;
+      return `${mine ? (mine.pool === sel ? "Add" : "Move + add") : "Bet"} ${n > 0 ? n.toLocaleString() + " " : ""}on ${labels[sel].name}${n > 0 ? `<small>wins ~${est.toLocaleString()} BB</small>` : ""}`;
+    }
+    function draw() {
+      if (!el.isConnected) return;
+      const a = document.activeElement;
+      if (a && a.classList && a.classList.contains("bt-amt") && el.contains(a)) { pending = true; return; }
+      pending = false;
+      const m = findMatch();
+      if (!m) { el.innerHTML = ""; return; }
+      const host = isBetHost(), line = Bets.cache.lines[m.key] || null, bets = Bets.betsOn(m.key);
+      const uid = Store.getMe().id, mine = bets.find((b) => b.uid === uid);
+      const label = Bets.matchLabel(m);
+      // a market just opened for the match I'm on → tell me (not the host who opened it)
+      const st = !line ? "none" : line.void ? "void" : Bets.played(m) ? "final" : line.status || "open";
+      if (btSeen[m.key] && btSeen[m.key] !== st && st === "open" && !(line.openedBy === uid)) toast(`Betting is open for ${label}!`);
+      btSeen[m.key] = st;
+      if (st === "none") {
+        el.innerHTML = host ? `<section class="card ms-bets host">
+            <div class="msb-head">${icon("coins")}<div><b>Match betting · ${esc(label)}</b><span>Open betting so scouts can bet on this match. Start the match to lock every bet in.</span></div>
+              <button type="button" class="btn primary sm" data-open>${icon("zap")} Open betting</button></div></section>` : "";
+        return;
+      }
+      const P = Bets.pools(line, bets), labels = Bets.poolLabels(line);
+      const open = st === "open", out = st === "final" ? Bets.outcome(line, m) : null, won = st === "final" ? winnerSide(m) : "";
+      const sel = btPick[m.key] || (mine && mine.pool) || null;
+      const pill = { open: `<span class="msb-pill open">${icon("zap")} Open</span>`, locked: `<span class="msb-pill locked">${icon("lock")} Locked</span>`,
+        final: `<span class="msb-pill final">Final ${m.alliances.red.score}–${m.alliances.blue.score}</span>`, void: `<span class="msb-pill">Voided</span>` }[st];
       const side = (c) => {
         const ts = Bets.teamsOf(m, c);
-        return `<div class="bt-side ${c}${line && line.winner === c ? " fav" : ""}${won === c ? " won" : ""}">
+        return `<div class="bt-side ${c}${line.winner === c ? " fav" : ""}${won === c ? " won" : ""}">
           <div class="bt-avs">${ts.map((t) => `<img class="team-avatar" data-avatar="${esc(t)}" data-ally="${c}" alt="" title="${esc(t)} ${esc(nameFor(t))}" />`).join("")}</div>
           <div class="bt-nums">${ts.map((t) => `<span class="${t === OUR_TEAM ? "us" : ""}">${esc(t)}</span>`).join("")}</div>
-          ${line ? `<b class="bt-pred" title="Predicted score">${c === "red" ? line.redScore : line.blueScore}</b>` : ""}
-        </div>`;
+          <b class="bt-pred" title="Predicted score">${c === "red" ? line.redScore : line.blueScore}</b></div>`;
       };
       const pool = (p) => {
         const share = P.pot ? P.total[p] / P.pot * 100 : 0;
-        const mult = Bets.estMultiplier(line, bets, p, open ? (Number(btAmt[m.key]) || 10) : 0, playoff);
+        const mult = Bets.estMultiplier(line, bets, p, open ? (Number(btAmt[m.key]) || 10) : 0, false);
         const cls = ["bt-pool", p, sel === p ? "on" : "", mine && mine.pool === p ? "mine" : "", out ? (out.pool === p ? "win" : "lose") : ""].join(" ");
-        return `<button type="button" class="${cls}" data-pool="${p}" ${open && (!mine || mine.pool === p) ? "" : "disabled"}>
+        return `<button type="button" class="${cls}" data-pool="${p}" ${open ? "" : "disabled"}>
           <span class="bt-pool-top"><b>${labels[p].name}</b>${out ? (out.pool === p ? icon("check") : "") : `<em>${mult ? "×" + mult.toFixed(1) : "–"}</em>`}</span>
           <span class="bt-pool-cond">${esc(labels[p].cond)}</span>
           <span class="bt-pool-bar"><i style="width:${share.toFixed(1)}%"></i></span>
-          <span class="bt-pool-foot"><span>${Math.round(P.total[p]).toLocaleString()} BB</span><span>${P.count[p]} ${P.count[p] === 1 ? "bettor" : "bettors"}</span></span>
-        </button>`;
+          <span class="bt-pool-foot"><span>${Math.round(P.total[p]).toLocaleString()} BB</span><span>${P.count[p]} ${P.count[p] === 1 ? "bettor" : "bettors"}</span></span></button>`;
       };
       let stake = "";
-      if (open && sel && (!mine || mine.pool === sel)) {
+      if (open && sel) {
         const amt = btAmt[m.key] ?? "";
         stake = `<div class="bt-stake">
           <div class="bt-chips">${[10, 25, 50, 100].map((v) => `<button type="button" data-amt="${v}" class="${String(v) === String(amt) ? "on" : ""}">${v}</button>`).join("")}<button type="button" data-amt="all">All in</button></div>
-          <label class="bt-amt-wrap">${icon("coins")}<input class="bt-amt" type="number" min="1" step="1" inputmode="numeric" placeholder="Amount" value="${esc(amt)}" aria-label="Bet amount" /></label>
-          <button type="button" class="btn primary bt-place">${placeLabel(m.key, line, bets, sel, playoff, labels, !!mine)}</button>
-        </div>`;
+          <label class="bt-amt-wrap">${icon("coins")}<input class="bt-amt" type="number" min="0" step="1" inputmode="numeric" placeholder="${mine ? "Add BB (optional)" : "Amount"}" value="${esc(amt)}" aria-label="Bet amount" /></label>
+          <button type="button" class="btn primary bt-place">${placeLabel(m.key, line, bets, sel, labels, mine)}</button></div>`;
       }
       const mineRow = mine ? `<div class="bt-mine ${mine.settled ? (mine.refund ? "refund" : mine.payout > 0 ? "won" : "lost") : ""}">
-          ${icon("coins")}<span>You bet <b>${mine.amount.toLocaleString()}</b> on <b>${labels ? labels[mine.pool].name : mine.pool}</b></span>
+          ${icon(open ? "coins" : "lock")}<span>You ${open ? "have" : "locked in"} <b>${mine.amount.toLocaleString()}</b> on <b>${labels[mine.pool].name}</b></span>
           <b class="bt-mine-res">${mine.settled ? (mine.refund ? "Refunded" : mine.payout > 0 ? "+" + mine.payout.toLocaleString() + " BB" : "−" + mine.amount.toLocaleString() + " BB")
-            : "pays ~" + Math.floor(mine.amount * (Bets.estMultiplier(line, bets, mine.pool, 0, playoff) || 0)).toLocaleString() + " BB"}</b>
-          ${st === "open" && !mine.settled ? `<button type="button" class="bt-cancel" data-cancel>Cancel</button>` : ""}
-        </div>` : "";
-      return `<article class="card bt-card ${st}${mine ? " has-mine" : ""}${playoff ? " po" : ""}" data-mk="${esc(m.key)}">
-        <header class="bt-head"><span class="bt-label">${esc(Bets.matchLabel(m))}</span>${playoff ? `<span class="bt-2x">2× payout</span>` : ""}<span class="bt-when">${when}</span></header>
-        <div class="bt-teams">${side("red")}
-          <div class="bt-mid">${line ? `<span class="bt-conf">${Math.round(line.conf * 100)}%</span><span class="bt-line">${line.winner === "red" ? "Red" : "Blue"} by ${line.diff}</span>
-            <span class="bt-lock">${frozen ? icon("lock") + " line set" : "live line"}</span>` : `<span class="bt-line">No line yet</span>`}</div>
-          ${side("blue")}</div>
-        ${line ? `<div class="bt-prob"><i style="width:${((line.winner === "red" ? line.conf : 1 - line.conf) * 100).toFixed(1)}%"></i></div>` : ""}
-        ${isVoid ? `<div class="bt-void">${icon("x")} Voided by an admin. Every stake was refunded.</div>` : line ? `<div class="bt-pools">${Bets.POOLS.map(pool).join("")}</div>` : `<p class="hint bt-noline">Bets open once there's a prediction for all six robots.</p>`}
-        ${stake}${mineRow}
-      </article>`;
-    };
-    function placeLabel(mk, line, bets, sel, playoff, labels, adding) {
-      const n = Math.floor(Number(btAmt[mk]) || 0);
-      const est = n > 0 ? Math.floor(n * (Bets.estMultiplier(line, bets, sel, n, playoff) || 0)) : 0;
-      return `${adding ? "Add" : "Bet"} ${n > 0 ? n.toLocaleString() + " " : ""}on ${labels[sel].name}${n > 0 ? `<small>wins ~${est.toLocaleString()} BB</small>` : ""}`;
+            : "pays ~" + Math.floor(mine.amount * (Bets.estMultiplier(line, bets, mine.pool, 0, false) || 0)).toLocaleString() + " BB"}</b>
+          ${open ? `<button type="button" class="bt-cancel" data-cancel>Cancel</button>` : ""}</div>` : "";
+      const hostBar = host && open ? `<div class="msb-host">${icon("shield")}<span><b>${bets.length}</b> ${bets.length === 1 ? "bet" : "bets"} · ${Math.round(P.pot).toLocaleString()} BB pot</span>
+          <button type="button" class="btn danger sm" data-lock>${icon("lock")} Start match · lock bets</button></div>` : "";
+      const note = st === "locked" ? `<p class="msb-note">${icon("lock")} Bets are locked in. Payouts land when the score posts.</p>`
+        : st === "open" && !mine ? `<p class="msb-note">${icon("info")} Pick a pool, then your amount. You can change your pick until the match starts.</p>` : "";
+      introOnce(el);
+      el.innerHTML = `<section class="card ms-bets ${st}">
+        <div class="msb-head">${icon("coins")}<div><b>Match betting · ${esc(label)}</b><span>${line.winner === "red" ? "Red" : "Blue"} by ${line.diff} · ${Math.round(line.conf * 100)}% · ${P.count.higher + P.count.accurate + P.count.lower + P.count.upset} bettors</span></div>${pill}</div>
+        <div class="bt-teams">${side("red")}<div class="bt-mid"><span class="bt-conf">${Math.round(line.conf * 100)}%</span><span class="bt-line">${line.winner === "red" ? "Red" : "Blue"} by ${line.diff}</span></div>${side("blue")}</div>
+        <div class="bt-prob"><i style="width:${((line.winner === "red" ? line.conf : 1 - line.conf) * 100).toFixed(1)}%"></i></div>
+        ${st === "void" ? `<div class="bt-void">${icon("x")} Voided by an admin. Every stake was refunded.</div>` : `<div class="bt-pools">${Bets.POOLS.map(pool).join("")}</div>`}
+        ${stake}${mineRow}${note}${hostBar}
+      </section>`;
+      paintAvatars(el, [...Bets.teamsOf(m, "red"), ...Bets.teamsOf(m, "blue")]);
     }
-    const draw = () => {
-      if (!list.isConnected) return;
-      const a = document.activeElement;
-      if (a && a.classList && a.classList.contains("bt-amt") && list.contains(a)) { pending = true; return; }
-      pending = false;
-      const uid = Store.getMe().id;
-      const all = ms.slice().sort(Bets.matchOrder);
-      const rows = all.map((m) => ({ m, st: Bets.matchState(m, all), line: lineFor(m), bets: Bets.betsOn(m.key) })).filter((r) => r.st !== "tbd");
-      const isMine = (r) => r.bets.some((b) => b.uid === uid);
-      const groups = {
-        open: rows.filter((r) => r.st === "open"),
-        live: rows.filter((r) => r.st === "locked"),
-        done: rows.filter((r) => r.st === "final" && Bets.cache.lines[r.m.key]).reverse(),
-        mine: rows.filter((r) => isMine(r) && r.st !== "final").concat(rows.filter((r) => isMine(r) && r.st === "final").reverse()),
-      };
-      filterEl.innerHTML = [["open", "Open"], ["live", "Locked"], ["done", "Settled"], ["mine", "My bets"]]
-        .map(([k, l]) => `<button data-f="${k}" class="${btFilter === k ? "on" : ""}">${l} <span class="bt-count">${groups[k].length}</span></button>`).join("");
-      const show = groups[btFilter] || [];
-      if (!ms.length) list.innerHTML = `<div class="card">${emptyState("calendar", "No schedule yet", "Match bets open once the schedule is posted on The Blue Alliance.")}</div>`;
-      else if (!show.length) list.innerHTML = `<div class="card">${emptyState(btFilter === "mine" ? "coins" : "zap",
-        { open: "No open matches", live: "Nothing locked right now", done: "No settled markets yet", mine: "No bets yet" }[btFilter],
-        { open: "Every scheduled match has started or finished.", live: "Matches lock about a minute before they start.", done: "Markets show up here once a match with bets has a final score.", mine: "Pick a pool on any open match to place your first bet." }[btFilter])}</div>`;
-      else list.innerHTML = show.slice(0, btShow).map((r) => card(r, uid)).join("");
-      introOnce(list);
-      moreEl.innerHTML = show.length > btShow ? `<button class="btn ghost sm" id="btMoreBtn">${icon("plus")} Show more (${show.length - btShow})</button>` : "";
-      const mb = $("#btMoreBtn", moreEl); if (mb) mb.onclick = () => { btShow += 12; draw(); };
-      const ts = [...new Set(show.slice(0, btShow).flatMap((r) => [...Bets.teamsOf(r.m, "red"), ...Bets.teamsOf(r.m, "blue")]))];
-      paintAvatars(list, ts);
-      $("#btSync", body).textContent = loadedAt ? `Updated ${new Date(loadedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : "";
-    };
-    filterEl.onclick = (e) => { const b = e.target.closest("[data-f]"); if (!b) return; btFilter = b.dataset.f; btShow = 12; draw(); };
-    list.addEventListener("click", async (e) => {
-      const cardEl = e.target.closest(".bt-card"); if (!cardEl) return;
-      const mk = cardEl.dataset.mk, m = ms.find((x) => x.key === mk); if (!m) return;
+    // ---- events (never bubble up to the scouting form) ----
+    const stop = (e) => e.stopPropagation();
+    el.addEventListener("input", (e) => {
+      stop(e);
+      if (!e.target.classList.contains("bt-amt")) return;
+      const m = findMatch(); if (!m) return;
+      btAmt[m.key] = e.target.value;
+      const line = Bets.cache.lines[m.key], bets = Bets.betsOn(m.key), mine = bets.find((b) => b.uid === Store.getMe().id);
+      const btn = $(".bt-place", el), sel = btPick[m.key] || (mine && mine.pool);
+      if (btn && line && sel) btn.innerHTML = placeLabel(m.key, line, bets, sel, Bets.poolLabels(line), mine);
+      $$(".bt-chips [data-amt]", el).forEach((c) => c.classList.toggle("on", c.dataset.amt === e.target.value));
+    });
+    el.addEventListener("change", stop);
+    el.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && e.target.classList.contains("bt-amt")) { e.preventDefault(); e.stopPropagation(); const b = $(".bt-place", el); e.target.blur(); if (b) b.click(); }
+    });
+    el.addEventListener("focusout", () => setTimeout(() => { if (pending) draw(); }, 0));
+    el.addEventListener("click", async (e) => {
+      stop(e);
+      const m = findMatch(); if (!m || busy) return;
+      const mk = m.key;
+      const run = async (fn) => { busy = true; try { await fn(); } catch (err) { toast(betErr(err), "err"); } busy = false;
+        const fa = document.activeElement; if (fa && fa.classList && fa.classList.contains("bt-amt")) fa.blur(); draw(); refreshWallet(); };
+      if (e.target.closest("[data-open]")) {
+        const btn = e.target.closest("[data-open]"); btn.disabled = true;
+        return run(async () => {
+          const line = await predLine(m);
+          if (!line) throw new Error("NO_LINE");
+          await Bets.openMarket({ event: ev, match: m, line });
+          toast(`Betting is open for ${Bets.matchLabel(m)}`);
+        });
+      }
+      if (e.target.closest("[data-lock]")) {
+        return confirmDialog(`Start ${Bets.matchLabel(m)} and lock every bet in? Nobody can change or cancel after this.`, () => run(async () => {
+          await Bets.lockMarket(mk); toast("Bets locked. Good luck!");
+        }));
+      }
       const pb = e.target.closest("[data-pool]");
-      if (pb) { if (pb.disabled) return; btPick[mk] = btPick[mk] === pb.dataset.pool ? null : pb.dataset.pool; draw(); const i = $(`.bt-card[data-mk="${mk}"] .bt-amt`, list); if (i) i.focus(); return; }
+      if (pb) { if (pb.disabled) return; btPick[mk] = btPick[mk] === pb.dataset.pool ? null : pb.dataset.pool; draw(); const i = $(".bt-amt", el); if (i) i.focus(); return; }
       const chip = e.target.closest("[data-amt]");
       if (chip) {
         btAmt[mk] = chip.dataset.amt === "all" ? String(Store.getMe().bb || 0) : chip.dataset.amt;
-        const inp = $(".bt-amt", cardEl);
+        const inp = $(".bt-amt", el);
         if (inp) { inp.value = btAmt[mk]; inp.dispatchEvent(new Event("input", { bubbles: true })); } else draw();
         return;
       }
       if (e.target.closest(".bt-place")) {
-        const amount = Math.floor(Number(btAmt[mk]) || 0), pool = btPick[mk] || ((Bets.betsOn(mk).find((b) => b.uid === Store.getMe().id) || {}).pool);
-        if (amount <= 0) { toast("Enter an amount", "err"); return; }
+        const mine = Bets.betsOn(mk).find((b) => b.uid === Store.getMe().id);
+        const amount = Math.floor(Number(btAmt[mk]) || 0), pool = btPick[mk] || (mine && mine.pool);
+        if (!pool) return;
+        if (!amount && !(mine && mine.pool !== pool)) { toast("Enter an amount", "err"); return; }
         if (amount > (Store.getMe().bb || 0)) { toast("Not enough Bagel Bucks", "err"); return; }
-        const line = lineFor(m), btn = e.target.closest(".bt-place");
-        btn.disabled = true; btn.classList.add("loading");
-        try {
-          const ln = await Bets.placeBet({ event: ev, match: m, line, pool, amount });
-          toast(`${amount.toLocaleString()} BB on ${Bets.poolLabels(ln)[pool].name} · ${Bets.matchLabel(m)}`);
-          if (ln && line && ln.diff !== line.diff) toast(`Heads up: the line was already set at ${ln.winner === "red" ? "Red" : "Blue"} by ${ln.diff}`);
+        return run(async () => {
+          const ln = await Bets.placeBet({ event: ev, match: m, pool, amount });
+          toast(mine && mine.pool !== pool ? `Moved to ${Bets.poolLabels(ln)[pool].name}` : `${amount.toLocaleString()} BB on ${Bets.poolLabels(ln)[pool].name} · ${Bets.matchLabel(m)}`);
           btAmt[mk] = ""; btPick[mk] = null;
-        } catch (err) { toast(betErr(err), "err"); }
-        const fa = document.activeElement; if (fa && fa.classList && fa.classList.contains("bt-amt")) fa.blur();
-        draw(); refreshWallet();
-        return;
+        });
       }
       if (e.target.closest("[data-cancel]")) {
-        confirmDialog(`Cancel your ${Bets.matchLabel(m)} bet and get your Bagel Bucks back?`, async () => {
-          try { const n = await Bets.cancelBet(mk); toast(`Refunded ${n} BB`); } catch (err) { toast(betErr(err), "err"); }
-          draw(); refreshWallet();
-        });
-        return;
+        return confirmDialog(`Cancel your ${Bets.matchLabel(m)} bet and get your Bagel Bucks back?`, () => run(async () => {
+          const n = await Bets.cancelBet(mk); toast(`Refunded ${n} BB`); btPick[mk] = null;
+        }));
       }
-      const av = e.target.closest(".team-avatar[data-avatar]"); if (av) openTeam(av.dataset.avatar);
     });
-    list.addEventListener("input", (e) => {
-      if (!e.target.classList.contains("bt-amt")) return;
-      const cardEl = e.target.closest(".bt-card"), mk = cardEl.dataset.mk, m = ms.find((x) => x.key === mk);
-      btAmt[mk] = e.target.value;
-      const line = lineFor(m), bets = Bets.betsOn(mk), mine = bets.find((b) => b.uid === Store.getMe().id);
-      const btn = $(".bt-place", cardEl); if (btn && line) btn.innerHTML = placeLabel(mk, line, bets, (mine && mine.pool) || btPick[mk], Bets.isPlayoff(m), Bets.poolLabels(line), !!mine);
-      $$(".bt-chips [data-amt]", cardEl).forEach((c) => c.classList.toggle("on", c.dataset.amt === e.target.value));
-    });
-    list.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.classList.contains("bt-amt")) { const b = $(".bt-place", e.target.closest(".bt-card")); e.target.blur(); if (b) b.click(); } });
-    list.addEventListener("focusout", () => setTimeout(() => { if (pending) draw(); }, 0));
-    const load = async () => {
-      ms = await liveMatches(ev);
-      try { preds = await API.sbEventPreds(ev); } catch (e) { /* EPA fallback */ }
-      epa = buildSeasonEpa(true); loadedAt = Date.now();
-      draw();
-      Bets.settleEvent(ms).then((n) => { if (n) draw(); });
-      Bets.settleMyOtherEvents((k) => API.eventMatchesLive(k)).catch(() => {});
-    };
-    betsRedraw = draw; betsReload = load;
+    // fresh results (and payouts) while the scouting page is open
+    const load = async () => { ms = await liveMatches(ev); draw(); Bets.settleEvent(ms).then((n) => { if (n) draw(); }); };
     load();
+    return { draw, load };
   }
 
-  /* ---- Alliance-selection predictions -------------------------------------- */
-  let apDraft = null, apCols = 3, apEvent = null, apSaveT = null, apState = "";
+  /* ---- Alliance-prediction game (lives on Pick List → Alliance selection) ----
+     Submitting your alliance board also enters it here (free). It locks once the
+     last qual starts; when TBA posts the real alliances each slot pays 50 / 25 / 10. */
   const AP_COLS = ["Captain", "1st pick", "2nd pick", "3rd pick"];
-  function renderAlliancePreds(body, ev) {
+  function mountAllianceGame(el, ev) {
+    if (!el || !ev || !Cloud.enabled() || !Store.isBBApproved(ev)) { if (el) el.innerHTML = ""; return null; }
+    Bets.watch(ev, Bets.fantasyYear());
     const uid = Store.getMe().id, myId = ev + "__" + uid;
-    let alliances = [], ms = cachedEventMatches(ev), ranks = null;
-    if (apEvent !== ev) {
-      const doc = Bets.cache.apreds[myId];
-      apEvent = ev; apCols = (doc && doc.cols) || 3; apDraft = doc ? Bets.gridOf(doc) : Array.from({ length: 8 }, () => Array(apCols).fill(""));
-    }
-    body.innerHTML = `<div id="apWrap"><div class="card tp-loading"><span class="tp-spin"></span> Loading alliances…</div></div>`;
-    const wrap = $("#apWrap", body);
+    let alliances = [], ms = cachedEventMatches(ev), loaded = false;
     const posted = () => alliances.length >= 8 && alliances.every((a) => (a.picks || []).length >= 3);
-    const lockedNow = () => {
+    const locked = () => {
       if (posted()) return true;
       const quals = ms.filter((m) => m.comp_level === "qm").sort(Bets.matchOrder);
-      if (!quals.length) return false;
-      const last = quals[quals.length - 1];
-      return Bets.matchState(last, ms) !== "open";
+      return quals.length > 0 && Bets.matchState(quals[quals.length - 1], ms) !== "open";
     };
-    const save = () => {
-      clearTimeout(apSaveT); apState = "saving"; paintSave();
-      apSaveT = setTimeout(async () => {
-        try { await Bets.saveAlliancePred(ev, apDraft, apCols); apState = "saved"; }
-        catch (e) { apState = "error"; toast(betErr(e), "err"); }
-        paintSave();
-      }, 500);
-    };
-    const paintSave = () => { const el = $("#apSave", wrap); if (el) el.innerHTML = apState === "saving" ? `<span class="tp-spin"></span> Saving…` : apState === "saved" ? `${icon("check")} Saved` : apState === "error" ? "Not saved" : ""; };
-    const rankOf = () => { const m = {}; ((ranks && ranks.rankings) || []).forEach((r) => { m[String(r.team_key).replace("frc", "")] = r; }); return m; };
-    const draw = () => {
-      if (!wrap.isConnected) return;
-      const doc = Bets.cache.apreds[myId];
-      const locked = lockedNow(), done = posted();
-      const grid = done || (locked && doc) ? Bets.gridOf(doc || { cols: apCols, slots: [] }) : apDraft;
-      const cols = done || (locked && doc) ? ((doc && doc.cols) || 3) : apCols;
-      const sc = done ? Bets.scoreAlliances(grid, alliances) : null;
-      const cellOf = {}; if (sc) sc.cells.forEach((c) => { cellOf[c.a + "-" + c.c] = c; });
-      const filled = grid.flat().filter(Boolean).length, slots = 8 * cols, max = slots * Bets.AP_PAY.exact;
-      const R = rankOf();
+    function draw() {
+      if (!el.isConnected) return;
+      const doc = Bets.cache.apreds[myId], done = posted(), lk = locked();
       const entries = Object.values(Bets.cache.apreds);
+      const grid = doc ? Bets.gridOf(doc) : null, cols = (doc && doc.cols) || 3;
+      const sc = done && grid ? Bets.scoreAlliances(grid, alliances) : null;
+      const max = 8 * cols * Bets.AP_PAY.exact;
       const status = doc && doc.settled ? { cls: "ok", ic: "check", txt: `Alliances announced. You were paid <b>${(doc.payout || 0).toLocaleString()} BB</b>.` }
-        : done ? { cls: "ok", ic: "check", txt: "Alliances announced! Payouts are being processed." }
-        : locked ? { cls: "warn", ic: "lock", txt: "Quals are wrapping up, so predictions are locked. Waiting for alliance selection…" }
-        : { cls: "", ic: "clock", txt: `Fill the grid before the last qualification match starts. It's free, and saves automatically.` };
-      introOnce(wrap);
-      wrap.innerHTML = `
-        <section class="card ap-head">
-          <div class="ap-title">${icon("chess")}<div><h3>Alliance selection prediction</h3><span class="hint">Predict all 8 alliances. Each slot pays when the real alliances are announced.</span></div></div>
-          <div class="ap-legend">
-            <div class="exact"><b>${Bets.AP_PAY.exact} BB</b><span>Exact slot</span></div>
-            <div class="role"><b>${Bets.AP_PAY.role} BB</b><span>Right role, wrong alliance</span></div>
-            <div class="on"><b>${Bets.AP_PAY.on} BB</b><span>On a real alliance</span></div>
-            <div class="none"><b>0 BB</b><span>Not on any alliance</span></div>
-          </div>
-          <div class="ap-status ${status.cls}">${icon(status.ic)}<span>${status.txt}</span></div>
-        </section>
-        <section class="ap-hero${sc ? " scored" : ""}">
-          <div class="ap-hero-l">${sc ? ringSVG(sc.accuracy, "Accuracy") : `<span class="ap-hero-ic">${icon("target")}</span>`}
-            <div><span>${sc ? "Your accuracy" : "Slots filled"}</span><b>${sc ? `${sc.exact} exact <small>of ${sc.filled}</small>` : `${filled} / ${slots}`}</b></div></div>
-          <div class="ap-hero-r"><span>${sc ? "Payout" : "Up to"}</span><b>${sc ? `${sc.total.toLocaleString()} / ${max.toLocaleString()} BB` : `${max.toLocaleString()} BB`}</b></div>
-        </section>
-        <details class="card ap-ranks"${locked && !done ? " open" : ""}>
-          <summary>${icon("star")} Current event rankings <span class="hint">tap to ${locked && !done ? "hide" : "expand"}</span></summary>
-          <div class="ap-rank-list">${((ranks && ranks.rankings) || []).slice(0, 40).map((r) => { const t = String(r.team_key).replace("frc", ""); return `
-            <button class="ap-rank" data-team="${esc(t)}" data-tfill="${esc(t)}"><span class="ap-rk">${r.rank}</span><img class="team-avatar" data-avatar="${esc(t)}" alt="" />
-              <span class="ap-rt"><b>${esc(t)}</b><span>${esc(nameFor(t))}</span></span><span class="ap-rr">${r.record ? `${r.record.wins}-${r.record.losses}-${r.record.ties}` : ""}</span></button>`; }).join("")
-            || `<p class="hint">Rankings appear once quals start.</p>`}</div>
-        </details>
-        <section class="card flush ap-grid-card">
-          ${!locked ? `<div class="ap-tools">
-            <button class="btn ghost sm" id="apAddCol" ${apCols >= 4 ? "disabled" : ""}>${icon("plus")} Add pick column</button>
-            <button class="btn ghost sm" id="apDelCol" ${apCols <= 3 ? "disabled" : ""}>Remove last column</button>
-            <button class="btn ghost sm" id="apImport">${icon("list")} Copy my pick list</button>
-            <button class="btn ghost sm" id="apClear">${icon("trash")} Clear</button>
-            <span class="ap-save" id="apSave"></span></div>` : ""}
-          <div class="table-wrap"><table class="ap-table">
-            <thead><tr><th>#</th>${AP_COLS.slice(0, cols).map((c) => `<th>${c}</th>`).join("")}</tr></thead>
-            <tbody>${grid.map((row, a) => `<tr><td class="ap-num">${a + 1}</td>${row.map((t, c) => {
-              const cell = cellOf[a + "-" + c];
-              if (sc) return `<td><div class="ap-cell ${cell ? cell.kind : "empty"}">
-                  ${t ? `<span class="ap-ct"><img class="team-avatar" data-avatar="${esc(t)}" alt="" /><b>${esc(t)}</b></span>` : `<span class="ap-ct muted">–</span>`}
-                  <span class="ap-pts">${cell && cell.pts ? "+" + cell.pts : "+0"}</span>
-                  <span class="ap-actual">Actual: ${esc((cell && cell.actual) || (alliances[a] && (alliances[a].picks || [])[c] || "").replace("frc", "") || "–")}</span></div></td>`;
-              if (t) return `<td><button class="ap-slot filled" data-a="${a}" data-c="${c}" data-tfill="${esc(t)}" ${locked ? "disabled" : ""}>
-                  <img class="team-avatar" data-avatar="${esc(t)}" alt="" /><span class="ap-tn"><b>${esc(t)}</b><span>${esc(nameFor(t))}</span></span>
-                  ${R[t] ? `<span class="ap-trk">#${R[t].rank}</span>` : ""}${locked ? "" : `<span class="ap-x" data-x="${a}-${c}" title="Clear">${icon("x")}</span>`}</button></td>`;
-              return `<td><button class="ap-slot empty" data-a="${a}" data-c="${c}" ${locked ? "disabled" : ""}>${locked ? "–" : icon("plus") + " Pick"}</button></td>`;
-            }).join("")}</tr>`).join("")}</tbody>
-          </table></div>
-          <div class="ap-foot"><span>${filled} / ${slots} slots filled</span><span>${entries.length} ${entries.length === 1 ? "person has" : "people have"} predicted</span></div>
-        </section>
-        ${done && entries.length ? `<section class="card ap-board"><div class="sr-head"><h3>${icon("trophy")} Prediction leaderboard</h3></div>
-          ${entries.map((d) => ({ d, s: Bets.scoreAlliances(Bets.gridOf(d), alliances) })).sort((x, y) => y.s.total - x.s.total).map(({ d, s }, i) => `
+        : done ? { cls: "ok", ic: "check", txt: doc ? "Alliances announced! Your payout is on its way." : "Alliances announced. You didn't enter this time." }
+        : lk ? { cls: "warn", ic: "lock", txt: doc ? "Quals are wrapping up, so your entry is locked in. Waiting for alliance selection…" : "Quals are wrapping up, so entries are closed." }
+        : doc ? { cls: "", ic: "check", txt: `Entered ${new Date(doc.ts).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })} with ${grid.flat().filter(Boolean).length} teams. Submit your board again to update it.` }
+        : { cls: "", ic: "info", txt: "Fill your board below and tap <b>Submit selections</b> to enter. It's free." };
+      const cellOf = {}; if (sc) sc.cells.forEach((c) => { cellOf[c.a + "-" + c.c] = c; });
+      introOnce(el);
+      el.innerHTML = `<section class="card ap-head ap-game">
+        <div class="ap-title">${icon("chess")}<div><h3>Alliance prediction game</h3><span class="hint">Your submitted board is your prediction. Each slot pays when the real alliances are announced.</span></div>
+          ${sc ? `<div class="ap-score"><b>${sc.total.toLocaleString()}</b><span>of ${max.toLocaleString()} BB · ${sc.exact} exact</span></div>` : ""}</div>
+        <div class="ap-legend">
+          <div class="exact"><b>${Bets.AP_PAY.exact} BB</b><span>Exact slot</span></div>
+          <div class="role"><b>${Bets.AP_PAY.role} BB</b><span>Right role, wrong alliance</span></div>
+          <div class="on"><b>${Bets.AP_PAY.on} BB</b><span>On a real alliance</span></div>
+          <div class="none"><b>0 BB</b><span>Not on any alliance</span></div>
+        </div>
+        <div class="ap-status ${status.cls}">${icon(status.ic)}<span>${status.txt}</span></div>
+        ${sc ? `<details class="ap-results"><summary>${icon("target")} How your prediction scored <span class="hint">${Math.round(sc.accuracy * 100)}% exact</span></summary>
+          <div class="table-wrap"><table class="ap-table"><thead><tr><th>#</th>${AP_COLS.slice(0, cols).map((c) => `<th>${c}</th>`).join("")}</tr></thead>
+            <tbody>${grid.map((row, a) => `<tr><td class="ap-num">${a + 1}</td>${row.map((t, c) => { const cell = cellOf[a + "-" + c]; return `<td><div class="ap-cell ${cell ? cell.kind : "empty"}">
+              ${t ? `<span class="ap-ct"><img class="team-avatar" data-avatar="${esc(t)}" alt="" /><b>${esc(t)}</b></span>` : `<span class="ap-ct muted">–</span>`}
+              <span class="ap-pts">${cell && cell.pts ? "+" + cell.pts : "+0"}</span>
+              <span class="ap-actual">Actual: ${esc((cell && cell.actual) || String((alliances[a] && (alliances[a].picks || [])[c]) || "").replace("frc", "") || "–")}</span></div></td>`; }).join("")}</tr>`).join("")}</tbody></table></div></details>` : ""}
+        ${done && entries.length ? `<div class="ap-board"><div class="sr-head"><h4>${icon("trophy")} Leaderboard</h4></div>
+          ${entries.map((d) => ({ d, s: Bets.scoreAlliances(Bets.gridOf(d), alliances) })).sort((x, y) => y.s.total - x.s.total).slice(0, 10).map(({ d, s }, i) => `
             <div class="ap-brow${d.uid === uid ? " me" : ""}"><span class="ap-bpos">${i + 1}</span>${personAv(d.uid)}<b>${esc(d.name || "Scout")}</b>
-              <span class="hint">${s.exact} exact · ${s.filled} filled</span><span class="ap-bbb">${s.total.toLocaleString()} BB</span></div>`).join("")}</section>` : ""}`;
-      const ts = [...new Set([...grid.flat().filter(Boolean), ...((ranks && ranks.rankings) || []).slice(0, 40).map((r) => String(r.team_key).replace("frc", ""))])];
-      paintAvatars(wrap, ts); paintTeamFills(wrap, ts);
-      paintSave();
-      $$(".ap-rank", wrap).forEach((b) => b.onclick = () => openTeam(b.dataset.team));
-      if (locked) return;
-      $$(".ap-slot", wrap).forEach((b) => b.onclick = (e) => {
-        const a = +b.dataset.a, c = +b.dataset.c;
-        if (e.target.closest("[data-x]")) { apDraft[a][c] = ""; save(); draw(); return; }
-        pickTeamFor(a, c);
-      });
-      $("#apAddCol", wrap).onclick = () => { apCols = 4; apDraft = apDraft.map((r) => r.concat([""]).slice(0, 4)); save(); draw(); };
-      $("#apDelCol", wrap).onclick = () => { apCols = 3; apDraft = apDraft.map((r) => r.slice(0, 3)); save(); draw(); };
-      $("#apClear", wrap).onclick = () => confirmDialog("Clear your whole alliance prediction?", () => { apDraft = apDraft.map((r) => r.map(() => "")); save(); draw(); });
-      $("#apImport", wrap).onclick = () => {
-        const b = getBoard();
-        const g = (b.grid || []).slice(0, 8).map((r) => (r || []).slice(0, apCols).map((t) => t ? String(t) : ""));
-        if (!g.flat().some(Boolean)) { toast("Your pick list board is empty", "err"); return; }
-        while (g.length < 8) g.push(Array(apCols).fill(""));
-        apDraft = g.map((r) => r.concat(Array(Math.max(0, apCols - r.length)).fill("")));
-        save(); draw(); toast("Copied from your pick list");
-      };
-    };
-    function pickTeamFor(a, c) {
-      const R = rankOf();
-      const teams = eventTeams().map((t) => String(t.team_number)).sort((x, y) => ((R[x] && R[x].rank) || 999) - ((R[y] && R[y].rank) || 999) || x - y);
-      const where = {}; apDraft.forEach((row, ra) => row.forEach((t, rc) => { if (t) where[t] = `A${ra + 1} ${AP_COLS[rc]}`; }));
-      modal(`Alliance ${a + 1} · ${AP_COLS[c]}`, `
-        <label class="ds-search ap-pick-search">${icon("search")}<input type="search" id="apQ" placeholder="Team # or name…" autocomplete="off" /></label>
-        <div class="ap-pick-list" id="apPL">${teams.map((t) => `
-          <button class="ap-pick${where[t] ? " used" : ""}" data-t="${esc(t)}" data-tfill="${esc(t)}" data-q="${esc((t + " " + nameFor(t)).toLowerCase())}">
-            <span class="ap-rk">${R[t] ? "#" + R[t].rank : "–"}</span><img class="team-avatar" data-avatar="${esc(t)}" alt="" />
-            <span class="ap-rt"><b>${esc(t)}</b><span>${esc(nameFor(t))}</span></span>${where[t] ? `<span class="badge">${esc(where[t])}</span>` : ""}</button>`).join("")
-          || `<p class="hint">No team list for this event yet.</p>`}</div>`, (mb, close) => {
-        paintAvatars(mb, teams); paintTeamFills(mb, teams);
-        const q = $("#apQ", mb); setTimeout(() => q.focus(), 30);
-        q.oninput = () => { const v = q.value.trim().toLowerCase(); $$(".ap-pick", mb).forEach((b) => { b.hidden = !!v && !b.dataset.q.includes(v); }); };
-        $$(".ap-pick", mb).forEach((b) => b.onclick = () => {
-          const t = b.dataset.t;
-          apDraft = apDraft.map((row) => row.map((x) => x === t ? "" : x)); // a team can only be in one slot
-          apDraft[a][c] = t; close(); save(); draw();
-        });
-      });
+              <span class="hint">${s.exact} exact · ${s.filled} filled</span><span class="ap-bbb">${s.total.toLocaleString()} BB</span></div>`).join("")}</div>`
+          : `<p class="hint ap-count">${entries.length} ${entries.length === 1 ? "person has" : "people have"} entered.</p>`}
+      </section>`;
+      if (grid) paintAvatars(el, grid.flat().filter(Boolean));
     }
     const load = async () => {
-      const [al, m2, rk] = await Promise.all([API.eventAlliances(ev).catch(() => alliances), liveMatches(ev), API.eventRankingsLive(ev, 120000).catch(() => ranks)]);
-      alliances = al || []; ms = m2 || ms; ranks = rk;
+      const [al, m2] = await Promise.all([API.eventAlliances(ev).catch(() => alliances), liveMatches(ev)]);
+      alliances = al || []; ms = m2 || ms; loaded = true;
       draw();
       if (posted()) Bets.settleAlliancePreds(alliances).catch(() => {});
     };
-    betsRedraw = draw; betsReload = load;
-    load();
+    draw(); load();
+    // Called by "Submit selections" with the board.
+    async function enter(grid, cols) {
+      if (!loaded) await load().catch(() => {});
+      if (locked()) { toast("Predictions are locked for this event", "err"); return; }
+      const g = (grid || []).slice(0, 8).map((r) => (r || []).slice(0, cols).map((t) => t ? String(t) : ""));
+      while (g.length < 8) g.push(Array(cols).fill(""));
+      if (!g.flat().some(Boolean)) return;
+      try { await Bets.saveAlliancePred(ev, g.map((r) => r.concat(Array(Math.max(0, cols - r.length)).fill(""))), cols); toast("Entered in the alliance prediction game"); }
+      catch (e) { toast(betErr(e), "err"); }
+      draw();
+    }
+    return { draw, load, enter };
   }
 
   /* ---- Playoff bracket ----------------------------------------------------- */
@@ -6270,9 +6178,10 @@
     }
   }
   // RP per team per week for every rostered team (TBA rankings → "Total Ranking Points").
-  async function fxLoadPoints(L, FY) {
-    const started = fxWeeks.filter((w) => Date.now() >= w.lock);
-    if (!started.length) return false;
+  // RP per team per week (TBA rankings → "Total Ranking Points") for the weeks that started.
+  async function loadFantasyPoints(teams, year, weeks) {
+    const started = (weeks || []).filter((w) => Date.now() >= w.lock);
+    if (!started.length) return {};
     const evWeek = {}; started.forEach((w) => w.events.forEach((k) => { evWeek[k] = w.idx; }));
     const rk = {};
     const rpOf = (r, t) => {
@@ -6281,10 +6190,10 @@
       if (i >= 0 && row.extra_stats && row.extra_stats[i] != null) return Number(row.extra_stats[i]) || 0;
       return Math.round(((row.sort_orders && row.sort_orders[0]) || 0) * (row.matches_played || 0));
     };
-    const teams = [...Bets.takenIn(L)], next = {};
+    const next = {};
     for (let i = 0; i < teams.length; i += 8) {
       await Promise.all(teams.slice(i, i + 8).map(async (t) => {
-        const keys = await API.teamEventKeys(t, FY).catch(() => []);
+        const keys = await API.teamEventKeys(t, year).catch(() => []);
         next[t] = {};
         for (const k of keys) {
           if (evWeek[k] == null) continue;
@@ -6293,7 +6202,11 @@
         }
       }));
     }
-    fxPts = next; fxPtsAt = Date.now();
+    return next;
+  }
+  async function fxLoadPoints(L, FY) {
+    if (!(fxWeeks || []).some((w) => Date.now() >= w.lock)) return false;
+    fxPts = await loadFantasyPoints([...Bets.takenIn(L)], FY, fxWeeks); fxPtsAt = Date.now();
     return true;
   }
   const fxP = (t, w) => (fxPts[t] && fxPts[t][w]) || 0;
@@ -6304,7 +6217,7 @@
   }
   function renderFantasy(body) {
     const FY = Bets.fantasyYear();
-    const { sub } = betsRoute();
+    const sub = fantasySub();
     body.innerHTML = `<div id="fxWrap"><div class="card tp-loading"><span class="tp-spin"></span> Loading Fantasy Alliance…</div></div>`;
     const wrap = $("#fxWrap", body);
     let busy = false, ticking = null;
@@ -6313,7 +6226,7 @@
       if (!wrap.isConnected) { clearInterval(ticking); return; }
       const L = Bets.myLeague(FY);
       if (!L || sub === "leagues") return drawLeagues(L);
-      const tabs = `<div class="seg fx-tabs">${FX_TABS.map(([k, l, ic]) => `<a href="#/bets/fantasy${k ? "/" + k : ""}" class="${sub === k ? "on" : ""}">${icon(ic)} ${l}</a>`).join("")}</div>`;
+      const tabs = `<div class="seg fx-tabs">${FX_TABS.map(([k, l, ic]) => `<a href="#/fantasy${k ? "/" + k : ""}" class="${sub === k ? "on" : ""}">${icon(ic)} ${l}</a>`).join("")}</div>`;
       const lgName = (Bets.LEAGUES.find((x) => x[0] === L.league) || [0, L.league])[1];
       const dr = L.draft || {};
       const pill = dr.status === "live" ? `<span class="fx-pill live">${icon("zap")} Draft live</span>` : dr.status === "done" ? `<span class="fx-pill">${icon("check")} Drafted</span>` : `<span class="fx-pill wait">${icon("clock")} Draft at kickoff</span>`;
@@ -6357,12 +6270,12 @@
             <div class="fx-lh"><b>${l}</b><span class="hint">${ms.length} ${ms.length === 1 ? "player" : "players"}</span></div>
             <div class="fx-faces">${ms.slice(0, 8).map((m) => personAv(m.id, "fx-face")).join("") || `<span class="hint">Be the first to join</span>`}</div>
             <div class="fx-lstat">${D && D.draft && D.draft.status === "live" ? `<span class="fx-pill live">${icon("zap")} Drafting</span>` : D && D.draft && D.draft.status === "done" ? `<span class="fx-pill">Season on</span>` : `<span class="fx-pill wait">Open</span>`}</div>
-            ${inIt ? `<a class="btn ghost sm" href="#/bets/fantasy">${icon("arrow-right")} Go to league</a>` : `<button class="btn primary sm" data-join="${k}" ${L ? "disabled" : ""}>${icon("plus")} Join ${l}</button>`}
+            ${inIt ? `<a class="btn ghost sm" href="#/fantasy">${icon("arrow-right")} Go to league</a>` : `<button class="btn primary sm" data-join="${k}" ${L ? "disabled" : ""}>${icon("plus")} Join ${l}</button>`}
           </article>`;
         }).join("")}</div>`;
       $$("[data-join]", wrap).forEach((b) => b.onclick = async () => {
         b.disabled = true;
-        try { await Bets.joinLeague(FY, b.dataset.join); toast("You're in! The draft starts at kickoff."); location.hash = "#/bets/fantasy"; }
+        try { await Bets.joinLeague(FY, b.dataset.join); toast("You're in! The draft starts at kickoff."); location.hash = "#/fantasy"; }
         catch (e) { toast(betErr(e), "err"); b.disabled = false; }
       });
       clearInterval(ticking);
@@ -6380,7 +6293,7 @@
       if (dr.status !== "done") {
         const ko = Bets.kickoffAt(L.year);
         top = `<section class="card fx-callout ${dr.status === "live" ? "live" : ""}">
-          ${dr.status === "live" ? `${icon("zap")}<div><b>The draft is live!</b><span>${esc(nameOf((Bets.draftTurn(L) || {}).uid))} is on the clock.</span></div><a class="btn primary" href="#/bets/fantasy/draft">${icon("arrow-right")} Go to the draft</a>`
+          ${dr.status === "live" ? `${icon("zap")}<div><b>The draft is live!</b><span>${esc(nameOf((Bets.draftTurn(L) || {}).uid))} is on the clock.</span></div><a class="btn primary" href="#/fantasy/draft">${icon("arrow-right")} Go to the draft</a>`
             : `${icon("clock")}<div><b>Draft opens at kickoff</b><span>${new Date(ko).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })} · <span id="fxKo">${fxCountdown(ko - now)}</span></span></div>
                <button class="btn ghost sm" id="fxLeave">Leave league</button>`}
         </section>`;
@@ -6477,7 +6390,7 @@
     function drawTeam(L) {
       const r = (L.rosters || {})[uid], weeks = fxWeeks || [];
       if (!r || !(r.teams || []).length) return `<section class="card">${emptyState("user", "No robots yet", L.draft && L.draft.status === "done" ? "You joined after the draft, so sign 4 free agents in the Market with your 200 FP." : "Your robots show up here after the draft.")}
-        ${L.draft && L.draft.status === "done" ? `<div class="btn-row" style="justify-content:center"><a class="btn primary" href="#/bets/fantasy/market">${icon("swap")} Go to the Market</a></div>` : ""}</section>`;
+        ${L.draft && L.draft.status === "done" ? `<div class="btn-row" style="justify-content:center"><a class="btn primary" href="#/fantasy/market">${icon("swap")} Go to the Market</a></div>` : ""}</section>`;
       const ow = Bets.openWeek(weeks), wk = weeks.find((w) => w.idx === ow);
       const bench = Bets.benchFor(r, ow);
       const started = weeks.filter((w) => Date.now() >= w.lock);
@@ -6648,36 +6561,199 @@
     };
   }
 
-  /* ---- Admin → Betting ----------------------------------------------------- */
+  /* ---- Admin → Betting: who can run match betting + live markets ----------- */
   function renderAdminBetting(el) {
-    const s = Store.getSettings(), FY = Bets.fantasyYear();
-    Bets.watch(s.eventKey || "", FY);
+    const s = Store.getSettings();
+    if (Cloud.enabled()) Bets.watch(s.eventKey || "", Bets.fantasyYear());
+    const owner = ((window.CONFIG && CONFIG.owner) || "").trim().toLowerCase();
+    let q = "";
     const draw = () => {
       if (!el.isConnected) return;
-      const lines = Object.values(Bets.cache.lines).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+      const hosts = new Set(Cloud.getBetHosts());
+      const mem = Store.getMembers();
+      const people = Object.values(mem).map((m) => ({ id: Store.scouterIdFor(m.first, m.last), name: `${m.first || ""} ${m.last || ""}`.trim() }))
+        .filter((p) => p.name).sort((a, b) => (hosts.has(b.id) - hosts.has(a.id)) || a.name.localeCompare(b.name));
+      const lines = Object.values(Bets.cache.lines).sort((a, b) => (a.openedAt || a.createdAt || 0) - (b.openedAt || b.createdAt || 0));
       el.innerHTML = `
-        <div class="card"><div class="sr-head"><h3>${icon("star")} Fantasy Alliance ${FY}</h3><span class="hint">drafts open automatically at kickoff</span></div>
-          <div class="table-wrap"><table class="fx-table"><thead><tr><th>League</th><th class="num">Players</th><th>Draft</th><th></th></tr></thead><tbody>
-          ${Bets.LEAGUES.map(([k, l]) => { const D = Bets.leagueDoc(FY, k), n = Bets.members(D).length, st = (D && D.draft && D.draft.status) || "waiting"; return `
-            <tr><td><b>${l}</b></td><td class="num">${n}</td><td>${st === "live" ? `<span class="badge cyan dot">live</span>` : st === "done" ? `<span class="badge green dot">done</span>` : `<span class="badge">waiting</span>`}</td>
-              <td>${st === "waiting" ? `<button class="btn ghost sm" data-start="${k}" ${n >= 2 ? "" : "disabled"}>${icon("zap")} Start draft now</button>` : ""}</td></tr>`; }).join("")}
-          </tbody></table></div></div>
-        <div class="card"><div class="sr-head"><h3>${icon("coins")} Match markets</h3><span class="hint">${esc(s.eventName || "no event")} · ${Store.isBBApproved(s.eventKey) ? "betting open" : "betting closed (approve the event in Bagel Bucks)"}</span></div>
-          ${lines.length ? `<div class="table-wrap"><table class="fx-table"><thead><tr><th>Match</th><th>Line</th><th class="num">Bets</th><th class="num">Pot</th><th></th></tr></thead><tbody>
+        <div class="card"><div class="sr-head"><h3>${icon("shield")} Who can run match betting</h3><span class="hint">${hosts.size} picked</span></div>
+          <p class="hint" style="margin-top:0">These members get <b>Open betting</b> and <b>Start match · lock bets</b> on Match Scouting. The owner, and anyone with this admin panel unlocked, always can.</p>
+          <label class="ds-search ab-hostq">${icon("search")}<input type="search" id="hostQ" placeholder="Find a member…" value="${esc(q)}" autocomplete="off" /></label>
+          <div class="ab-hosts">${people.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase())).map((p) => {
+            const isOwner = owner && p.name.toLowerCase() === owner;
+            return `<label class="ab-host${hosts.has(p.id) || isOwner ? " on" : ""}">${personAv(p.id)}<span>${esc(p.name)}${isOwner ? ` <span class="badge yellow">owner</span>` : ""}</span>
+              <span class="switch sm"><input type="checkbox" data-host="${esc(p.id)}" ${hosts.has(p.id) || isOwner ? "checked" : ""} ${isOwner || !Cloud.enabled() ? "disabled" : ""}><span class="slider"></span></span></label>`;
+          }).join("") || `<p class="hint">No members match.</p>`}</div></div>
+        <div class="card"><div class="sr-head"><h3>${icon("coins")} Match markets</h3><span class="hint">${esc(s.eventName || "no event selected")}</span></div>
+          ${lines.length ? `<div class="table-wrap"><table class="fx-table"><thead><tr><th>Match</th><th>Status</th><th>Line</th><th class="num">Bets</th><th class="num">Pot</th><th></th></tr></thead><tbody>
             ${lines.map((ln) => { const bs = Bets.betsOn(ln.match), P = Bets.pools(ln, bs), open = bs.some((b) => !b.settled); return `
-              <tr><td><b>${esc((bs[0] && bs[0].label) || ln.match)}</b></td><td>${ln.void ? `<span class="badge red">void</span>` : `${ln.winner === "red" ? "Red" : "Blue"} by ${ln.diff} (${Math.round(ln.conf * 100)}%)`}</td>
+              <tr><td><b>${esc(ln.label || (bs[0] && bs[0].label) || ln.match)}</b></td>
+                <td>${ln.void ? `<span class="badge red">void</span>` : ln.status === "open" ? `<span class="badge green dot">open</span>` : `<span class="badge">${esc(ln.status || "locked")}</span>`}</td>
+                <td>${ln.void ? "–" : `${ln.winner === "red" ? "Red" : "Blue"} by ${ln.diff} (${Math.round(ln.conf * 100)}%)`}</td>
                 <td class="num">${bs.length}</td><td class="num">${Math.round(P.pot)}</td>
                 <td>${!ln.void && open ? `<button class="btn ghost sm" data-void="${esc(ln.match)}">${icon("x")} Void &amp; refund</button>` : ""}</td></tr>`; }).join("")}
-          </tbody></table></div>` : `<p class="hint">No bets at this event yet.</p>`}
+          </tbody></table></div>` : `<p class="hint">No match betting at this event yet. Open it from Match Scouting.</p>`}
           <p class="hint">Voiding refunds every unsettled stake on that match, for a replayed match or bad data.</p></div>`;
-      $$("[data-start]", el).forEach((b) => b.onclick = () => confirmDialog(`Start the ${b.dataset.start} league draft now? The order is randomized.`, async () => {
-        try { await Bets.startDraft(FY, b.dataset.start); toast("Draft started"); } catch (e) { toast(betErr(e), "err"); }
-      }));
+      const qi = $("#hostQ", el);
+      qi.oninput = () => { q = qi.value; const pos = qi.selectionStart; draw(); const n = $("#hostQ", el); n.focus(); n.setSelectionRange(pos, pos); };
+      $$("[data-host]", el).forEach((cb) => cb.onchange = async () => {
+        const ids = new Set(Cloud.getBetHosts());
+        if (cb.checked) ids.add(cb.dataset.host); else ids.delete(cb.dataset.host);
+        try { await Cloud.setBetHosts([...ids]); toast(cb.checked ? "Can run match betting" : "Access removed"); } catch (e) { toast("Couldn't save", "err"); }
+        draw();
+      });
       $$("[data-void]", el).forEach((b) => b.onclick = () => confirmDialog("Void this market and refund every stake?", async () => {
         try { const n = await Bets.voidMarket(b.dataset.void, s.eventKey); toast(`Voided: ${n} refund${n === 1 ? "" : "s"}`); } catch (e) { toast(betErr(e), "err"); }
       }));
     };
-    const off = Bets.onChange(() => { if (!el.isConnected) { off(); return; } draw(); });
+    const off = Bets.onChange(() => { if (!el.isConnected) { off(); return; } const a = document.activeElement; if (a && a.id === "hostQ") return; draw(); });
+    draw();
+  }
+
+  /* ---- Admin → Fantasy: real leagues + a practice simulator with bots ------- */
+  // The simulator replays a finished season with you + bots: a real snake draft
+  // (bots pick for themselves), then week-by-week matchups scored from that
+  // season's actual ranking points. It's local only: nothing is saved or paid.
+  let sim = null;
+  const BOT_NAMES = ["Bot Bagel", "Bot Byte", "Bot Sesame", "Bot Poppy", "Bot Everything", "Bot Onion", "Bot Cinnamon", "Bot Asiago", "Bot Pumpernickel"];
+  function renderAdminFantasy(el) {
+    const FY = Bets.fantasyYear();
+    if (Cloud.enabled()) Bets.watch(Store.getSettings().eventKey || "", FY);
+    let simQ = "", busyMsg = "";
+    const me = Store.getMe();
+    const nameOf = (id) => ((sim && sim.L.members[id]) || {}).name || "?";
+    const isBot = (id) => String(id).startsWith("bot");
+    const simAv = (id) => isBot(id) ? `<span class="sim-bot">${icon("zap")}</span>` : personAv(id);
+    async function start(year, n) {
+      busyMsg = `Loading ${year} teams and weeks…`; draw();
+      try {
+        const prev = (await API.sbYearLeaderboard(year - 1, 864e5, true)).rows;
+        const table = Bets.priceTable(prev);
+        const weeks = Bets.seasonWeeks(await API.eventsFullYear(year));
+        if (!weeks.length) throw new Error("no weeks");
+        const ids = [me.id].concat(Array.from({ length: n }, (_, i) => "bot" + (i + 1)));
+        const members = {}; ids.forEach((id, i) => { members[id] = { name: i ? BOT_NAMES[i - 1] : `${me.first || "You"} ${me.last || ""}`.trim(), joinedAt: i }; });
+        const order = ids.slice(); for (let i = order.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [order[i], order[j]] = [order[j], order[i]]; }
+        const rosters = {}; ids.forEach((id) => { rosters[id] = { teams: [], fp: Bets.FP_START, lineups: {} }; });
+        sim = { year, table, weeks, pts: null, played: 0, L: { year, league: "sim", members, rosters, weeks: {}, snaps: {}, draft: { status: "live", order, picks: [], turnStartedAt: Date.now() } } };
+      } catch (e) { toast("Couldn't load that season", "err"); }
+      busyMsg = ""; draw();
+    }
+    function pick(team, auto) {
+      const L = sim.L, turn = Bets.draftTurn(L); if (!turn) return;
+      const r = L.rosters[turn.uid], taken = Bets.takenIn(L), cap = Bets.maxSpend(r);
+      if (auto) {
+        const cands = Object.entries(sim.table).filter(([t, v]) => !taken.has(t) && v.price <= cap).sort((a, b) => b[1].price - a[1].price || a[1].rank - b[1].rank).slice(0, 6);
+        if (!cands.length) return;
+        team = cands[Math.floor(Math.pow(Math.random(), 1.6) * cands.length)][0]; // bots usually take the best, sometimes reach
+      }
+      team = String(team);
+      const price = Bets.priceOf(sim.table, team);
+      if (taken.has(team) || price > cap) { toast(price > cap ? "Not enough FP" : "Already taken", "err"); return; }
+      r.teams.push(team); r.fp -= price;
+      L.draft.picks.push({ uid: turn.uid, team, price, auto: !!auto });
+      if (!Bets.draftTurn(L)) { L.draft.status = "done"; Object.values(L.rosters).forEach((x) => { x.bench = x.teams[Bets.ROSTER - 1]; }); loadPts(); }
+    }
+    async function loadPts() {
+      busyMsg = `Scoring ${sim.year}: looking up every drafted robot's ranking points…`; draw();
+      try { sim.pts = await loadFantasyPoints([...Bets.takenIn(sim.L)], sim.year, sim.weeks); } catch (e) { sim.pts = {}; }
+      busyMsg = ""; draw();
+    }
+    function playWeek() {
+      const w = sim.weeks[sim.played]; if (!w) return;
+      const L = sim.L;
+      L.snaps[w.idx] = {}; Object.entries(L.rosters).forEach(([id, r]) => { L.snaps[w.idx][id] = Bets.activeFor(r, w.idx); });
+      L.weeks[w.idx] = { settled: true, label: w.label, results: Bets.weekScores(L, w, (t) => (sim.pts[t] && sim.pts[t][w.idx]) || 0) };
+      sim.played++;
+    }
+    function draw() {
+      if (!el.isConnected) return;
+      const leagues = `<div class="card"><div class="sr-head"><h3>${icon("star")} Leagues · ${FY}</h3><span class="hint">drafts open automatically at kickoff</span></div>
+        <div class="table-wrap"><table class="fx-table"><thead><tr><th>League</th><th class="num">Players</th><th>Draft</th><th></th></tr></thead><tbody>
+        ${Bets.LEAGUES.map(([k, l]) => { const D = Bets.leagueDoc(FY, k), n = Bets.members(D).length, st = (D && D.draft && D.draft.status) || "waiting"; return `
+          <tr><td><b>${l}</b></td><td class="num">${n}</td><td>${st === "live" ? `<span class="badge cyan dot">live</span>` : st === "done" ? `<span class="badge green dot">done</span>` : `<span class="badge">waiting</span>`}</td>
+            <td>${st === "waiting" ? `<button class="btn ghost sm" data-start="${k}" ${n >= 2 ? "" : "disabled"}>${icon("zap")} Start draft now</button>` : ""}</td></tr>`; }).join("")}
+        </tbody></table></div></div>`;
+      let simHTML;
+      const lastYear = FY - 1;
+      if (busyMsg) simHTML = `<div class="tp-loading"><span class="tp-spin"></span> ${esc(busyMsg)}</div>`;
+      else if (!sim) simHTML = `
+        <p class="hint" style="margin-top:0">Run a practice league against bots on a finished season: draft for real, then play it week by week with that season's actual ranking points. <b>Nothing is saved and no Bagel Bucks move.</b></p>
+        <div class="sim-setup">
+          <label class="ch-sel"><span>Season</span><select id="simYear">${[lastYear, lastYear - 1, lastYear - 2, lastYear - 3].map((y) => `<option>${y}</option>`).join("")}</select></label>
+          <label class="ch-sel"><span>Bots</span><select id="simBots">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `<option ${n === 5 ? "selected" : ""}>${n}</option>`).join("")}</select></label>
+          <button class="btn primary" id="simStart">${icon("zap")} Start simulation</button>
+        </div>`;
+      else {
+        const L = sim.L, dr = L.draft, turn = Bets.draftTurn(L), order = dr.order, n = order.length;
+        const board = `<div class="table-wrap"><table class="fx-board"><thead><tr><th>Rd</th>${order.map((id) => `<th class="${turn && turn.uid === id ? "clock" : ""}">${simAv(id)}<span>${esc(nameOf(id).replace("Bot ", ""))}</span></th>`).join("")}</tr></thead>
+          <tbody>${[0, 1, 2, 3].map((rd) => `<tr><td class="fx-pos">${rd + 1}</td>${order.map((id, pos) => {
+            const idx = rd * n + (rd % 2 === 0 ? pos : n - 1 - pos), p = dr.picks[idx];
+            return `<td>${p ? `<span class="fx-pick" data-tfill="${esc(p.team)}"><img class="team-avatar" data-avatar="${esc(p.team)}" alt="" /><b>${esc(p.team)}</b><em>${p.price} FP</em></span>`
+              : turn && idx === turn.pick - 1 ? `<span class="fx-pick now">${icon("clock")} on the clock</span>` : `<span class="fx-pick empty">#${idx + 1}</span>`}</td>`; }).join("")}</tr>`).join("")}</tbody></table></div>`;
+        let body = "";
+        if (dr.status === "live") {
+          const mine = turn && turn.uid === me.id, r = L.rosters[me.id], cap = Bets.maxSpend(r), taken = Bets.takenIn(L);
+          let pool = Object.entries(sim.table).filter(([t]) => !taken.has(t)).map(([t, v]) => Object.assign({ t }, v));
+          if (simQ) pool = pool.filter((x) => x.t.includes(simQ) || (x.name || "").toLowerCase().includes(simQ.toLowerCase()));
+          pool.sort((a, b) => b.price - a.price || a.rank - b.rank);
+          body = `<div class="sim-clock ${mine ? "mine" : ""}">${simAv(turn.uid)}<b>${mine ? "Your pick!" : esc(nameOf(turn.uid)) + " is picking…"}</b><span>Round ${turn.round} · pick ${turn.pick} of ${turn.of} · you have ${r.fp} FP (max ${cap} now)</span>
+              ${mine ? `<button class="btn ghost sm" id="simAuto">${icon("zap")} Auto-pick for me</button>` : ""}</div>
+            ${board}
+            ${mine ? `<label class="ds-search sim-q">${icon("search")}<input type="search" id="simQ" placeholder="Search team # or name…" value="${esc(simQ)}" autocomplete="off" /></label>
+              <div class="fx-list">${pool.slice(0, 30).map((x) => `<div class="fx-row" data-tfill="${esc(x.t)}"><img class="team-avatar" data-avatar="${esc(x.t)}" alt="" />
+                <span class="fx-rn"><b>${esc(x.t)}</b><span>${esc(x.name || "")}</span></span><span class="fx-rk">#${x.rank}<small>${fmt(x.epa)} EPA</small></span>
+                <span class="fx-price${x.price > cap ? " over" : ""}">${x.price}<small>FP</small></span>
+                <button class="btn primary sm" data-simpick="${esc(x.t)}" ${x.price <= cap ? "" : "disabled"}>Draft</button></div>`).join("")}</div>` : ""}`;
+        } else {
+          const st = Bets.standings(L), total = sim.weeks.length, next = sim.weeks[sim.played];
+          const my = L.rosters[me.id], benchNext = next ? Bets.benchFor(my, next.idx) : null;
+          const last = sim.played ? sim.weeks[sim.played - 1] : null, lastRes = last ? L.weeks[last.idx] : null;
+          const champ = sim.played >= total && st[0];
+          body = `${champ ? `<div class="sim-champ">${icon("trophy")}<div><b>${esc(champ.name)} wins the league!</b><span>${champ.w}-${champ.l}${champ.t ? "-" + champ.t : ""} · ${champ.pts} points · would earn ${Bets.GRAND_PRIZE.toLocaleString()} BB</span></div></div>` : ""}
+            <div class="sim-season">
+              <div class="sim-ctl">
+                <b>${next ? `Next: ${esc(next.label)}` : "Season complete"}</b><span class="hint">${sim.played} of ${total} weeks played</span>
+                ${next && my ? `<label class="ch-sel"><span>Your bench</span><select id="simBench">${my.teams.map((t) => `<option ${t === benchNext ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>` : ""}
+                ${next ? `<button class="btn primary sm" id="simPlay" ${sim.pts ? "" : "disabled"}>${icon("arrow-right")} Play ${esc(next.label)}</button>
+                  <button class="btn ghost sm" id="simAll" ${sim.pts ? "" : "disabled"}>Play the rest</button>` : ""}
+                <button class="btn ghost sm" id="simReset">${icon("x")} New simulation</button>
+              </div>
+              ${lastRes ? `<div class="sim-week"><h4>${esc(lastRes.label)} results</h4>${lastRes.results.map((g) => `
+                <div class="sim-game">${g.a ? `<span class="${g.winner === g.a ? "w" : ""}">${simAv(g.a)}${esc(nameOf(g.a))} <b>${g.pa}</b></span>` : `<span>bye</span>`}
+                  <em>vs</em>${g.b ? `<span class="${g.winner === g.b ? "w" : ""}"><b>${g.pb}</b> ${esc(nameOf(g.b))}${simAv(g.b)}</span>` : `<span>bye</span>`}
+                  <small>${g.winner === "tie" ? `tie · ${Bets.WEEK_WIN / 2} BB each` : g.a && g.b ? `+${Bets.WEEK_WIN} BB to ${esc(nameOf(g.winner))}` : "bye week"}</small></div>`).join("")}</div>` : ""}
+              <table class="fx-table"><thead><tr><th>#</th><th>Player</th><th class="num">W-L</th><th class="num">Pts</th><th>Roster</th></tr></thead><tbody>
+                ${st.map((r, i) => `<tr class="${r.id === me.id ? "me" : ""}"><td class="fx-pos">${i + 1}</td><td><span class="fx-who">${simAv(r.id)}${esc(r.name)}</span></td>
+                  <td class="num">${r.w}-${r.l}${r.t ? "-" + r.t : ""}</td><td class="num">${r.pts}</td>
+                  <td><span class="sim-roster">${(L.rosters[r.id].teams || []).map((t) => `<span class="fx-chip${next && t === Bets.benchFor(L.rosters[r.id], next.idx) ? " bench" : ""}" data-tfill="${esc(t)}"><img class="team-avatar" data-avatar="${esc(t)}" alt="" />${esc(t)}</span>`).join("")}</span></td></tr>`).join("")}
+              </tbody></table>
+            </div>
+            <details class="sim-draft"><summary>${icon("list")} Draft board</summary>${board}</details>`;
+        }
+        simHTML = `<div class="sim-top"><span class="badge yellow">Practice · ${sim.year}</span><span class="hint">${n} players · prices from ${sim.year - 1}</span></div>${body}`;
+      }
+      el.innerHTML = leagues + `<div class="card sim-card"><div class="sr-head"><h3>${icon("zap")} Fantasy simulator</h3><span class="hint">bots · nothing saved</span></div>${simHTML}</div>`;
+      const ts = [...new Set($$("[data-avatar]", el).map((i) => i.dataset.avatar))];
+      paintAvatars(el, ts); paintTeamFills(el, [...new Set($$("[data-tfill]", el).map((x) => x.dataset.tfill))]);
+      // wiring
+      $$("[data-start]", el).forEach((b) => b.onclick = () => confirmDialog(`Start the ${b.dataset.start} league draft now? The order is randomized.`, async () => {
+        try { await Bets.startDraft(FY, b.dataset.start); toast("Draft started"); } catch (e) { toast(betErr(e), "err"); }
+      }));
+      const sb = $("#simStart", el); if (sb) sb.onclick = () => start(Number($("#simYear", el).value), Number($("#simBots", el).value));
+      const rs = $("#simReset", el); if (rs) rs.onclick = () => { sim = null; draw(); };
+      const au = $("#simAuto", el); if (au) au.onclick = () => { pick(null, true); draw(); };
+      $$("[data-simpick]", el).forEach((b) => b.onclick = () => { pick(b.dataset.simpick, false); draw(); });
+      const qi = $("#simQ", el); if (qi) qi.oninput = () => { simQ = qi.value; const pos = qi.selectionStart; draw(); const n = $("#simQ", el); if (n) { n.focus(); n.setSelectionRange(pos, pos); } };
+      const bs = $("#simBench", el); if (bs) bs.onchange = () => { const nx = sim.weeks[sim.played]; sim.L.rosters[me.id].lineups[nx.idx] = bs.value; draw(); };
+      const pw = $("#simPlay", el); if (pw) pw.onclick = () => { playWeek(); draw(); };
+      const pa = $("#simAll", el); if (pa) pa.onclick = () => { while (sim.played < sim.weeks.length) playWeek(); draw(); };
+      // bots take their turns on their own
+      if (sim && !busyMsg && sim.L.draft.status === "live") {
+        const t = Bets.draftTurn(sim.L);
+        if (t && isBot(t.uid)) setTimeout(() => { if (sim && el.isConnected && Bets.draftTurn(sim.L) && isBot(Bets.draftTurn(sim.L).uid)) { pick(null, true); draw(); } }, 380);
+      }
+    }
+    const off = Bets.onChange(() => { if (!el.isConnected) { off(); return; } if (!sim || sim.L.draft.status !== "live") { const a = document.activeElement; if (!(a && a.id === "simQ")) draw(); } });
     draw();
   }
 
@@ -6885,7 +6961,7 @@
       applyCloudTestEvent();
       reconcileBB(); // keep my local BB mirror = the cloud total
       refreshChrome();
-      if (current() === "bets") refreshWallet();
+      refreshWallet();
       const formNow = (id, fields) => { const f = $("#" + id); return f && !f.dataset.dirty && f.dataset.sig !== formSig(fields); };
       if (current() === "match") { if (formNow("matchForm", matchFields())) router(); else refreshRobotClaims(); return; }
       if (current() === "pit") {
@@ -6912,9 +6988,9 @@
           else toast(`${b.label || "Match"} bet lost (−${b.amount} BB)`, "err");
         });
       }
-      if (current() === "bets") { refreshWallet(); if (betsRedraw) betsRedraw(); }
+      refreshWallet(); if (betsRedraw) betsRedraw();
     });
-    Cloud.onFirstSync(() => { if (Cloud.enabled() && BETS_ON) Bets.watch(Store.getSettings().eventKey || "", Bets.fantasyYear()); });
+    Cloud.onFirstSync(() => { if (Cloud.enabled()) Bets.watch(Store.getSettings().eventKey || "", Bets.fantasyYear()); });
     Cloud.onFirstSync(() => {
       const f = $("#matchForm") || $("#pitForm");
       const a = document.activeElement;

@@ -2867,3 +2867,90 @@ button.mu-trow.has-tc { box-shadow: inset 4px 0 0 var(--tc); padding-left: 10px;
 body.prime-on .bs-row.ours, body.prime-on .bs-pod.ours { box-shadow: inset 5px 0 0 var(--secondary), 0 0 0 1px var(--secondary), 0 10px 30px -16px var(--secondary); }
 @media (max-width: 760px) { .prime-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (prefers-reduced-motion: reduce) { .prime-badge, .prime-card.on .prime-crest { animation: none; } }
+
+/* ==== v92: match betting on Match Scouting, games on Pick List, Fantasy page + simulator ==== */
+.ms-bets { display: flex; flex-direction: column; gap: 12px; margin-bottom: 16px; border-color: color-mix(in srgb, var(--secondary) 45%, var(--border)); }
+.ms-bets.open { box-shadow: inset 0 3px 0 var(--secondary); }
+.ms-bets.locked { border-color: var(--border-strong); }
+.ms-bets.host { border-style: dashed; }
+.msb-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.msb-head > .ico { width: 38px; height: 38px; padding: 8px; border-radius: 11px; flex: none; color: var(--on-secondary); background: var(--secondary); }
+.msb-head > div { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.msb-head > div b { font-family: var(--font-display); font-weight: 800; font-size: 1rem; }
+.msb-head > div span { color: var(--text-dim); font-size: .86rem; font-weight: 600; }
+.msb-pill { display: inline-flex; align-items: center; gap: 5px; padding: 4px 11px; border-radius: 999px; font-family: var(--font-display); font-weight: 800;
+  font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--text-dim); background: var(--surface-2); }
+.msb-pill .ico { width: 13px; height: 13px; }
+.msb-pill.open { color: var(--success); background: color-mix(in srgb, var(--success) 14%, transparent); }
+.msb-pill.open .ico { animation: btBlink 1.4s ease-in-out infinite; }
+.msb-pill.locked { color: var(--warning); background: color-mix(in srgb, var(--warning) 13%, transparent); }
+.msb-pill.final { color: var(--secondary); background: color-mix(in srgb, var(--secondary) 13%, transparent); }
+.msb-note { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--text-dim); font-size: .88rem; font-weight: 600; }
+.msb-note .ico { width: 16px; height: 16px; flex: none; color: var(--primary); }
+.msb-host { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); border: 1px dashed var(--border-strong); }
+.msb-host > .ico { width: 18px; height: 18px; color: var(--primary); }
+.msb-host > span { flex: 1 1 180px; color: var(--text-dim); font-weight: 600; }
+.msb-host b { color: var(--text); }
+[data-intro] .ms-bets { animation: dsIn .35s ease both; }
+
+/* alliance prediction game on Pick List */
+.ap-game { margin-bottom: 16px; }
+.ap-game .ap-title { flex-wrap: wrap; }
+.ap-game .ap-title > div:not(.ap-score) { flex: 1 1 280px; }
+.ap-score { display: flex; flex-direction: column; align-items: flex-end; }
+.ap-score b { font-family: var(--font-display); font-weight: 900; font-size: 1.5rem; color: var(--secondary); line-height: 1; }
+.ap-score span { font-size: .78rem; color: var(--text-dim); font-weight: 700; }
+.ap-results { border-radius: 12px; border: 1px solid var(--border); overflow: hidden; }
+.ap-results summary { display: flex; align-items: center; gap: 8px; padding: 10px 12px; cursor: pointer; font-weight: 700; list-style: none; background: var(--surface-2); }
+.ap-results summary::-webkit-details-marker { display: none; }
+.ap-results summary .ico { width: 16px; height: 16px; color: var(--success); }
+.ap-results summary .hint { margin-left: auto; }
+.ap-game .ap-board h4 { margin: 4px 0; display: flex; align-items: center; gap: 6px; font-size: .9rem; }
+.ap-game .ap-board h4 .ico { width: 15px; height: 15px; color: var(--secondary); }
+.ap-count { margin: 0; }
+
+/* Admin → Betting: hosts */
+.ab-hostq { margin-bottom: 10px; }
+.ab-hostq input { min-height: 44px; font-size: 1rem; }
+.ab-hosts { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 6px; max-height: 420px; overflow-y: auto; }
+.ab-host { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 11px; background: var(--surface-2); border: 1px solid var(--border); cursor: pointer; font-weight: 600; }
+.ab-host > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ab-host.on { border-color: color-mix(in srgb, var(--success) 50%, var(--border)); background: color-mix(in srgb, var(--success) 8%, var(--surface-2)); }
+
+/* Admin → Fantasy: simulator */
+.sim-card .sr-head .ico { color: var(--secondary); }
+.sim-setup { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+.sim-setup .ch-sel select { min-height: 42px; }
+.sim-top { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.sim-bot { width: 26px; height: 26px; flex: none; display: inline-grid; place-items: center; border-radius: 50%; color: var(--on-primary); background: var(--primary); }
+.sim-bot .ico { width: 14px; height: 14px; }
+.fx-board th .sim-bot { margin: 0 auto; }
+.sim-clock { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px; margin-bottom: 12px; border-radius: 12px; background: var(--surface-2); }
+.sim-clock span { color: var(--text-dim); font-weight: 600; flex: 1 1 220px; }
+.sim-clock.mine { box-shadow: inset 0 0 0 1px var(--secondary); background: color-mix(in srgb, var(--secondary) 9%, var(--surface-2)); }
+.sim-q { margin: 12px 0 8px; }
+.sim-q input { min-height: 44px; }
+.sim-season { display: flex; flex-direction: column; gap: 12px; }
+.sim-ctl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px; border-radius: 12px; background: var(--surface-2); }
+.sim-ctl > b { font-family: var(--font-display); }
+.sim-ctl .ch-sel select { min-height: 36px; }
+.sim-week { padding: 12px; border-radius: 12px; border: 1px solid var(--border); }
+.sim-week h4 { margin: 0 0 8px; }
+.sim-game { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+.sim-game:last-child { border-bottom: 0; }
+.sim-game > span { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text-dim); min-width: 0; }
+.sim-game > span:nth-of-type(2) { justify-content: flex-end; }
+.sim-game > span.w { color: var(--text); }
+.sim-game > span.w b { color: var(--success); }
+.sim-game b { font-family: var(--font-display); }
+.sim-game em { font-style: normal; color: var(--text-mut); font-size: .8rem; }
+.sim-game small { grid-column: 1 / -1; text-align: center; color: var(--secondary); font-weight: 700; font-size: .76rem; }
+.sim-roster { display: flex; flex-wrap: wrap; gap: 4px; }
+.sim-champ { display: flex; align-items: center; gap: 12px; padding: 14px; margin-bottom: 12px; border-radius: 14px;
+  background: color-mix(in srgb, var(--secondary) 12%, var(--surface-2)); border: 1px solid color-mix(in srgb, var(--secondary) 55%, transparent); }
+.sim-champ > .ico { width: 40px; height: 40px; padding: 8px; border-radius: 12px; color: var(--on-secondary); background: var(--secondary); flex: none; }
+.sim-champ > div { display: flex; flex-direction: column; }
+.sim-champ span { color: var(--text-dim); font-weight: 600; }
+.sim-draft { margin-top: 12px; }
+.sim-draft summary { cursor: pointer; font-weight: 700; display: flex; align-items: center; gap: 6px; padding: 6px 0; }
+.sim-draft summary .ico { width: 16px; height: 16px; }

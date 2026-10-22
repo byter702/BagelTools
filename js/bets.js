@@ -173,38 +173,69 @@ const Bets = (() => {
     return res;
   }
 
-  async function placeBet({ event, match, line, pool, amount }) {
+  // Markets are run from Match Scouting: a host (admin or a member they trust) OPENS
+  // betting on a match (the line freezes then), scouts bet and may change their
+  // pick while it's open, and START MATCH locks every bet in. Results settle as usual.
+  async function openMarket({ event, match, line }) {
+    const d = db(); if (!d) throw new Error("OFFLINE");
+    if (!line) throw new Error("NO_LINE");
+    const ref = d.collection("betlines").doc(match.key);
+    return d.runTransaction(async (tx) => {
+      const s = await tx.get(ref), cur = s.exists ? s.data() : null;
+      if (cur && cur.status && cur.status !== "open") throw new Error("LOCKED");
+      if (cur && cur.void) throw new Error("VOID");
+      if (cur && cur.status === "open") return cur;
+      const ln = Object.assign({}, line, { event, match: match.key, comp: match.comp_level, label: matchLabel(match), status: "open",
+        openedAt: Date.now(), openedBy: me().id || "", openedByName: myName() });
+      tx.set(ref, ln);
+      return ln;
+    });
+  }
+  async function lockMarket(matchKey) {
+    const d = db(); if (!d) throw new Error("OFFLINE");
+    const ref = d.collection("betlines").doc(matchKey);
+    return d.runTransaction(async (tx) => {
+      const s = await tx.get(ref);
+      if (!s.exists) throw new Error("NOT_OPEN");
+      if (s.data().status !== "open") return false;
+      tx.update(ref, { status: "locked", lockedAt: Date.now(), lockedBy: me().id || "", lockedByName: myName() });
+      return true;
+    });
+  }
+  // Bet (or add to / switch) while the market is open. amount may be 0 when only switching pools.
+  async function placeBet({ event, match, pool, amount }) {
     const d = db(); if (!d) throw new Error("OFFLINE");
     const uid = me().id; amount = Math.floor(Number(amount) || 0);
     if (!uid) throw new Error("NO_USER");
-    if (amount <= 0) throw new Error("AMOUNT");
+    if (amount < 0) throw new Error("AMOUNT");
     if (!POOLS.includes(pool)) throw new Error("POOL");
     const lineRef = d.collection("betlines").doc(match.key);
     const betRef = d.collection("bets").doc(match.key + "__" + uid);
     const meRef = scRef(d, uid);
     return d.runTransaction(async (tx) => {
       const ls = await tx.get(lineRef), bs = await tx.get(betRef), ms = await tx.get(meRef);
-      const bal = (ms.exists && ms.data().bb) || 0;
-      if (bal < amount) throw new Error("FUNDS");
-      let ln = ls.exists ? ls.data() : null;
-      if (ln && ln.void) throw new Error("VOID");
-      if (!ln) { ln = Object.assign({}, line, { event, match: match.key, comp: match.comp_level, createdAt: Date.now(), by: uid }); tx.set(lineRef, ln); }
+      const ln = ls.exists ? ls.data() : null;
+      if (!ln || ln.status !== "open") throw new Error(ln && ln.status === "locked" ? "LOCKED" : "NOT_OPEN");
+      if (ln.void) throw new Error("VOID");
       const prev = bs.exists ? bs.data() : null;
       if (prev && prev.settled) throw new Error("SETTLED");
-      if (prev && prev.pool !== pool) throw new Error("ONE_POOL");
+      if (!amount && !(prev && prev.pool !== pool)) throw new Error("AMOUNT");
+      const bal = (ms.exists && ms.data().bb) || 0;
+      if (bal < amount) throw new Error("FUNDS");
       tx.set(betRef, { id: betRef.id, event, match: match.key, comp: match.comp_level, label: matchLabel(match), uid, name: myName(),
         pool, amount: (prev ? prev.amount || 0 : 0) + amount, ts: Date.now(), settled: false });
-      tx.set(meRef, { id: uid, bb: inc(-amount) }, { merge: true });
+      if (amount) tx.set(meRef, { id: uid, bb: inc(-amount) }, { merge: true });
       return ln;
     });
   }
   async function cancelBet(matchKey) {
     const d = db(); if (!d) throw new Error("OFFLINE");
     const uid = me().id;
-    const betRef = d.collection("bets").doc(matchKey + "__" + uid);
+    const betRef = d.collection("bets").doc(matchKey + "__" + uid), lineRef = d.collection("betlines").doc(matchKey);
     return d.runTransaction(async (tx) => {
-      const bs = await tx.get(betRef);
+      const bs = await tx.get(betRef), ls = await tx.get(lineRef);
       if (!bs.exists) throw new Error("NONE");
+      if (!ls.exists || ls.data().status !== "open") throw new Error("LOCKED");
       const b = bs.data();
       if (b.settled) throw new Error("SETTLED");
       tx.delete(betRef);
@@ -681,7 +712,7 @@ const Bets = (() => {
     POOLS, SEED, PLAYOFF_MULT, AP_PAY, ROUND_BB, BRACKET_FEE, DE8, FP_START, ROSTER, MIN_PRICE, WEEK_WIN, GRAND_PRIZE, AUTO_PICK_MS, LEAGUES,
     cache, watch, isReady, onChange: (cb) => { cbs.push(cb); return () => { cbs = cbs.filter((x) => x !== cb); }; }, _inject,
     played, teamsOf, isPlayoff, matchOrder, matchState, matchLabel,
-    makeLine, outcome, poolLabels, pools, betsOn, estMultiplier, payouts, placeBet, cancelBet, settleEvent, settleMyOtherEvents, voidMarket,
+    makeLine, outcome, poolLabels, pools, betsOn, estMultiplier, payouts, openMarket, lockMarket, placeBet, cancelBet, settleEvent, settleMyOtherEvents, voidMarket,
     scoreAlliances, gridOf, saveAlliancePred, settleAlliancePreds,
     bracketParticipants, cleanPicks, bracketActual, scoreBracket, bracketDone, saveBracket, settleBrackets,
     fantasyYear, kickoffAt, priceTable, priceOf, leagueDoc, myLeague, members, draftTurn, takenIn, maxSpend,

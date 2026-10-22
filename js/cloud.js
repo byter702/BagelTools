@@ -481,6 +481,14 @@
     },
 
     onFormChange: function (cb) { if (typeof cb === "function") formCbs.push(cb); },
+    // Members an admin trusts to open/lock match betting from Match Scouting (all seasons).
+    getBetHosts: function () { var d = cache.config.betHosts; return (d && Array.isArray(d.ids)) ? d.ids : []; },
+    setBetHosts: function (ids) {
+      if (!this.enabled()) return Promise.reject(new Error("cloud off"));
+      var doc = { ids: Array.from(new Set(ids || [])), updatedAt: Date.now() };
+      cache.config.betHosts = doc;
+      return db.collection("config").doc("betHosts").set(doc);
+    },
     // Prime 702: { on, seed, updatedAt, byId, byName } — purely visual, read by api.js.
     getPrime: function () { return cache.config.prime702 || null; },
     onPrimeChange: function (cb) { if (typeof cb === "function") primeCbs.push(cb); },
