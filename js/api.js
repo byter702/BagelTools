@@ -420,10 +420,16 @@ const API = (() => {
     memPreds[eventKey] = { at: Date.now(), map };
     return map;
   }
-  const eventMatchesLive = (key, ttlMs = 45000) => tbaTtl("/event/" + key + "/matches/simple", ttlMs).then((d) => Array.isArray(d) ? d : []);
-  const eventAlliances = (key, ttlMs = 60000) => tbaTtl("/event/" + key + "/alliances", ttlMs).then((d) => Array.isArray(d) ? d : []);
+  // The admin test event is built on the device: its schedule, alliances and info never touch TBA.
+  const testCached = (name) => { const c = Store.getCache(name, null); return (c && c.data) || []; };
+  const eventMatchesLive = (key, ttlMs = 45000) => key === TEST_EVENT_KEY ? Promise.resolve(testCached("matches." + key))
+    : tbaTtl("/event/" + key + "/matches/simple", ttlMs).then((d) => Array.isArray(d) ? d : []);
+  const eventAlliances = (key, ttlMs = 60000) => key === TEST_EVENT_KEY ? Promise.resolve(testCached("alliances." + key))
+    : tbaTtl("/event/" + key + "/alliances", ttlMs).then((d) => Array.isArray(d) ? d : []);
   const eventRankingsLive = (key, ttlMs = 300000) => tbaTtl("/event/" + key + "/rankings", ttlMs);
-  const eventInfo = (key) => tbaMem("/event/" + key);
+  const eventInfo = (key) => key === TEST_EVENT_KEY
+    ? Promise.resolve({ key, name: "Test event", year: Number(key.slice(0, 4)), event_type: 99, playoff_type: 10, playoff_type_string: "Double Elimination Bracket (8 Alliances)" })
+    : tbaMem("/event/" + key);
   const eventsFullYear = (year) => tbaMem("/events/" + year).then((d) => Array.isArray(d) ? d : []); // has official week numbers
   // A team's events in a year (fantasy scoring). Saved for 12h — it rarely changes.
   async function teamEventKeys(team, year) {

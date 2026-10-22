@@ -10,6 +10,14 @@
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const icon = (name, cls = "ico") => `<svg class="${cls}" aria-hidden="true"><use href="#ic-${name}"/></svg>`;
   const fmt = (n, d = 1) => (n == null || isNaN(n)) ? "–" : Number(n).toFixed(d).replace(/\.0$/, "");
+  // A match's ID in scouting records: quals keep their number ("12"), playoffs use
+  // "SF3" (double-elim match 3) or "F2" (finals game 2). qTag() is the short label.
+  const matchIdOf = (m) => m.comp_level === "qm" ? String(m.match_number)
+    : m.comp_level === "f" ? "F" + m.match_number
+    : m.comp_level.toUpperCase() + (m.set_number || "") + (m.comp_level === "sf" && m.match_number === 1 ? "" : "-" + m.match_number);
+  const qTag = (id) => (id == null || id === "") ? "Q?" : /^\d+$/.test(String(id)) ? "Q" + id : String(id);
+  const matchSortKey = (id) => { const t = String(id || ""); if (/^\d+$/.test(t)) return Number(t);
+    const n = Number((t.match(/\d+/) || [0])[0]); return (/^F/.test(t) ? 3000 : /^SF/.test(t) ? 2000 : 1000) + n; };
   // The scout's name is always the logged-in user (no manual field anymore).
   function scoutDisplayName() {
     const u = (window.Auth && Auth.currentUser && Auth.currentUser()) || null;
@@ -84,7 +92,7 @@
     if (!wrap) { wrap = document.createElement("div"); wrap.id = "scoutPops"; wrap.className = "scout-pops"; document.body.appendChild(wrap); }
     const name = a.scouterName || "Someone";
     const kind = a.type === "pit" ? "pit-scouted" : "scouted";
-    const where = a.type === "match" && a.matchNumber ? ` in Q${esc(a.matchNumber)}` : "";
+    const where = a.type === "match" && a.matchNumber ? ` in ${esc(qTag(a.matchNumber))}` : "";
     const bb = a.bb ? `<span class="sp-bb">+${a.bb} ${BB}</span>` : "";
     const el = document.createElement("div");
     el.className = "scout-pop";
@@ -443,16 +451,71 @@
     }
   }
 
-  // Re-derive the test event's cached matches so qual N is "about to start":
-  // quals < N are played (deterministic scores), quals >= N are upcoming.
-  function applyTestTime(n) {
-    const tpl = Store.getCache("testTemplate", null);
-    const quals = tpl ? tpl.data : [];
-    if (!quals.length) return;
+  // Test-event playoffs. When every qual is played, the top 8 seeds pick alliances
+  // (snake order off the qual rankings), then an 8-alliance double-elimination bracket
+  // plays out with seeded scores. All deterministic: moving the counter back and forth
+  // always replays the same alliances and results.
+  const testSeeded = (mn) => 30 + ((mn * 37 + 13) % 90); // stable 30..119 qual scores
+  function testAlliances(quals) {
+    const st = {};
+    quals.forEach((q) => {
+      const rs = testSeeded(q.match_number), bs = testSeeded(q.match_number * 7 + 3);
+      [["red", rs, bs], ["blue", bs, rs]].forEach(([c, my, op]) => (q.alliances[c].team_keys || []).forEach((k) => {
+        const x = st[k] || (st[k] = { k, rp: 0, pts: 0 });
+        x.rp += my > op ? 2 : my === op ? 1 : 0; x.pts += my;
+      }));
+    });
+    const ranked = Object.values(st).sort((a, b) => b.rp - a.rp || b.pts - a.pts || a.k.localeCompare(b.k)).map((x) => x.k);
+    if (ranked.length < 24) return [];
+    const al = ranked.slice(0, 8).map((c) => [c]), pool = ranked.slice(8);
+    for (let i = 0; i < 8; i++) al[i].push(pool.shift());
+    for (let i = 7; i >= 0; i--) al[i].push(pool.shift());
+    return al.map((picks, i) => ({ name: "Alliance " + (i + 1), picks, declines: [] }));
+  }
+  // The whole playoff in play order: sf1..sf13 then finals (best of 3).
+  function testPlayoffs(nAlliances) {
+    if (nAlliances < 8) return [];
+    const win = {}, part = {}, pos = {}, seq = [];
+    const seedOf = (sp) => sp.seed || (sp.W ? win[sp.W] : (part[sp.L].red === win[sp.L] ? part[sp.L].blue : part[sp.L].red));
+    const srcOf = (sp) => sp.seed ? [] : [sp.W || sp.L];
+    const score = (a, b, salt) => {
+      const rs = 70 + ((a * 53 + b * 29 + salt * 17) % 80) + (9 - a) * 4;
+      let bs = 70 + ((b * 53 + a * 31 + salt * 13) % 80) + (9 - b) * 4;
+      if (rs === bs) bs += 3;
+      return [rs, bs];
+    };
+    Bets.DE8.filter((d) => d.id !== "f").forEach((d, i) => {
+      const r = seedOf(d.red), b = seedOf(d.blue), [rs, bs] = score(r, b, i + 1);
+      part[d.id] = { red: r, blue: b }; win[d.id] = rs > bs ? r : b; pos[d.id] = seq.length;
+      seq.push({ comp: "sf", set: Number(d.id.slice(1)), mn: 1, red: r, blue: b, rs, bs, needs: srcOf(d.red).concat(srcOf(d.blue)) });
+    });
+    const fr = win.m11, fb = win.m13;
+    let wr = 0, wb = 0;
+    for (let g = 1; g <= 3 && wr < 2 && wb < 2; g++) {
+      const [rs, bs] = score(fr, fb, 20 + g);
+      if (rs > bs) wr++; else wb++;
+      seq.push({ comp: "f", set: 1, mn: g, red: fr, blue: fb, rs, bs, needs: g < 3 ? ["m11", "m13"] : ["f2"] });
+      pos["f" + g] = seq.length - 1;
+    }
+    seq.forEach((x) => { x.needAt = x.needs.map((id) => pos[id]); });
+    return seq;
+  }
+  // Quals count, playoff sequence and a label for any counter value.
+  function testTimeline() {
+    const tpl = Store.getCache("testTemplate", null), quals = tpl ? tpl.data : [];
+    const al = quals.length ? testAlliances(quals) : [], po = testPlayoffs(al.length);
     const total = quals.length;
-    n = Math.max(1, Math.min(total + 1, Number(n) || 1));
+    const labelOf = (n) => n <= total ? "Q" + n : n <= total + po.length
+      ? (po[n - total - 1].comp === "f" ? "Final " + po[n - total - 1].mn : "Playoff " + po[n - total - 1].set) : "Event over";
+    return { quals, total, al, po, max: total + po.length + 1, labelOf };
+  }
+  // Re-derive the test event's cached matches so match N of the whole event is "about
+  // to start": quals first, then (after alliance selection) the playoffs.
+  function applyTestTime(n) {
+    const { quals, total, al, po, max } = testTimeline();
+    if (!quals.length) return;
+    n = Math.max(1, Math.min(max, Number(n) || 1));
     const now = Math.floor(Date.now() / 1000);
-    const seeded = (mn) => 30 + ((mn * 37 + 13) % 90); // stable 30..119
     const data = quals.map((q) => {
       const mn = q.match_number;
       const m = {
@@ -463,8 +526,8 @@
         },
       };
       if (mn < n) {
-        m.alliances.red.score = seeded(mn);
-        m.alliances.blue.score = seeded(mn * 7 + 3);
+        m.alliances.red.score = testSeeded(mn);
+        m.alliances.blue.score = testSeeded(mn * 7 + 3);
         m.actual_time = m.time = now - (n - mn) * TEST_MATCH_ITV;
       } else {
         m.alliances.red.score = -1;
@@ -472,6 +535,24 @@
         m.predicted_time = m.time = now + (mn - n) * TEST_MATCH_ITV + 120;
       }
       return m;
+    });
+    // alliances are "announced" once the last qual is played
+    const selected = n > total && al.length >= 8;
+    Store.setCache("alliances." + TEST_EVENT_KEY, selected ? { data: al, ts: Date.now() } : null);
+    if (selected) po.forEach((p, i) => {
+      const at = total + 1 + i, played = at < n;
+      // like TBA, a playoff match only exists once both of its alliances are known
+      if (!played && p.needAt.some((j) => total + 1 + j >= n)) return;
+      const m = {
+        key: `${TEST_EVENT_KEY}_${p.comp}${p.set}m${p.mn}`, event_key: TEST_EVENT_KEY, comp_level: p.comp, set_number: p.set, match_number: p.mn,
+        alliances: {
+          red: { team_keys: al[p.red - 1].picks.slice(), score: played ? p.rs : -1 },
+          blue: { team_keys: al[p.blue - 1].picks.slice(), score: played ? p.bs : -1 },
+        },
+      };
+      if (played) { m.winning_alliance = p.rs > p.bs ? "red" : "blue"; m.actual_time = m.time = now - (n - at) * TEST_MATCH_ITV; }
+      else m.predicted_time = m.time = now + (at - n) * TEST_MATCH_ITV + 120;
+      data.push(m);
     });
     Store.setCache("matches." + TEST_EVENT_KEY, { data, ts: Date.now() });
     const te = Store.getSettings().testEvent || {};
@@ -1110,7 +1191,7 @@
     return `<div class="table-wrap"><table>
       <thead><tr><th>Match</th><th>Team</th><th>Notes</th></tr></thead>
       <tbody>${list.map((m) => `<tr data-team="${m.team}" style="cursor:pointer">
-        <td>Q${esc(m.matchNumber || "?")}</td>
+        <td>${esc(qTag(m.matchNumber))}</td>
         <td><span class="alliance-dot alliance-${m.alliance === "red" ? "red" : "blue"}"></span><span class="team-num">${esc(m.team)}</span></td>
         <td>${esc(m.notes || "—")}</td></tr>`).join("")}</tbody></table></div>`;
   }
@@ -1712,7 +1793,7 @@
     const fmtTime = (m) => { const u = m.actual_time || m.predicted_time || m.time; return u ? new Date(u * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""; };
     const teamsOf = (m, c) => (m.alliances[c].team_keys || []).map((k) => k.replace("frc", ""));
     const played = (m) => m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0;
-    const label = (m) => COMP_LABEL[m.comp_level] + (m.comp_level === "qm" ? m.match_number : (m.set_number || m.match_number));
+    const label = (m) => COMP_LABEL[m.comp_level] + (m.comp_level === "qm" || m.comp_level === "f" ? m.match_number : (m.set_number || m.match_number));
     const ev = currentEventEpa();
     const epaOf = (t) => (ev && ev.byTeam[t]) ? ev.byTeam[t].epa : null;
     const probOf = (m) => {
@@ -1968,7 +2049,7 @@
       </div>
       <div class="card flush" style="margin-top:14px"><h3>Notes from matches</h3>
         ${ms.filter((m) => m.notes).length ? ms.filter((m) => m.notes).map((m) =>
-          `<p class="hint">Q${esc(m.matchNumber || "?")}: ${esc(m.notes)}</p>`).join("") : `<p class="muted">No notes logged.</p>`}
+          `<p class="hint">${esc(qTag(m.matchNumber))}: ${esc(m.notes)}</p>`).join("") : `<p class="muted">No notes logged.</p>`}
       </div>
       <div class="btn-row" style="margin-top:16px">
         <button class="btn primary" data-act="match">${icon("plus")} Scout a match</button>
@@ -2538,7 +2619,8 @@
     const teams = eventTeams();
     // Live mode: the selected event has upcoming (unplayed) qual matches
     const cacheM = s.eventKey ? Store.getCache("matches." + s.eventKey, null) : null;
-    const upcomingQuals = (cacheM ? cacheM.data : []).filter((m) => m.comp_level === "qm" && m.alliances &&
+    const upcomingQuals = (cacheM ? cacheM.data : []).filter((m) => m.alliances &&
+        (m.alliances.red.team_keys || []).length >= 3 && (m.alliances.blue.team_keys || []).length >= 3 &&
         (m.alliances.red.score < 0 || m.alliances.blue.score < 0))
       .sort((a, b) => (a.predicted_time || a.time || 1e15) - (b.predicted_time || b.time || 1e15));
     const liveMode = upcomingQuals.length > 0 && !matchEditId;
@@ -2561,11 +2643,11 @@
     const fmtTime = (unix) => unix ? " · " + new Date(unix * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
     const topCard = liveMode ? `
       <section class="card ms-pre">
-        <div class="sr-head"><h3>${icon("flag")} Pre-Match</h3><span class="badge green dot">Live · ${upcomingQuals.length} quals left</span></div>
+        <div class="sr-head"><h3>${icon("flag")} Pre-Match</h3><span class="badge green dot">Live · ${upcomingQuals.length} ${upcomingQuals.some((m) => m.comp_level !== "qm") ? "matches" : "quals"} left</span></div>
         <div class="form-grid">
           <div class="field"><label>Match</label>
             <select id="mMatchSel"><option value="">Select match…</option>${upcomingQuals.map((m) =>
-              `<option value="${m.match_number}">Q${m.match_number}${esc(fmtTime(m.predicted_time || m.time))}</option>`).join("")}</select></div>
+              `<option value="${esc(matchIdOf(m))}">${m.comp_level === "qm" ? "Q" + m.match_number : esc(Bets.matchLabel(m))}${esc(fmtTime(m.predicted_time || m.time))}</option>`).join("")}</select></div>
         </div>
         <div id="robotPicker" class="robot-picker"><p class="hint">Pick a match above, then tap the robot you're scouting.</p></div>
         ${preHTML}
@@ -2574,7 +2656,7 @@
       <section class="card ms-pre">
         <div class="sr-head"><h3>${icon("flag")} Pre-Match</h3>${matchEditId ? `<span class="badge yellow">Editing a record</span>` : ""}</div>
         <div class="form-grid">
-          <div class="field"><label>Match #</label><input type="number" id="mNum" placeholder="e.g. 14" inputmode="numeric" /></div>
+          <div class="field"><label>Match #</label><input type="text" id="mNum" placeholder="e.g. 14" inputmode="numeric" autocomplete="off" /></div>
           <div class="field"><label>Team scouted</label>${teamControl}</div>
           <div class="field"><label>Alliance</label>
             <div class="pill-toggle ally" id="mAlliance">
@@ -2613,7 +2695,7 @@
       banner.dataset.tfill = team;
       banner.innerHTML = `<span class="ms-band" aria-hidden="true"></span>
         <img class="team-avatar thero-av" data-avatar="${esc(team)}" data-ally="${esc(ally || "")}" alt="" />
-        <div class="thero-id"><span class="ms-eyebrow">Now scouting${num ? " · Q" + esc(num) : ""}</span>
+        <div class="thero-id"><span class="ms-eyebrow">Now scouting${num ? " · " + esc(qTag(num)) : ""}</span>
           <span class="thero-num">${esc(team)}</span><span class="thero-name">${esc(nameFor(team)) || "&nbsp;"}</span></div>
         ${ally ? `<span class="ms-ally-pill ${ally}">${ally} alliance</span>` : ""}
         ${liveMode ? `<button type="button" class="ms-desel" id="msDesel" aria-label="Deselect this robot">${icon("x")}<span>Deselect</span></button>` : ""}`;
@@ -2625,7 +2707,7 @@
     if (liveMode) {
       const picker = $("#robotPicker", root);
       const renderRobots = (num) => {
-        const m = upcomingQuals.find((x) => String(x.match_number) === String(num));
+        const m = upcomingQuals.find((x) => matchIdOf(x) === String(num));
         setScouting(null);
         if (!m) { picker.innerHTML = `<p class="hint">Pick a match above, then tap the robot you're scouting.</p>`; return; }
         picker.innerHTML = ["red", "blue"].map((col) => `
@@ -2762,7 +2844,7 @@
       el.innerHTML = `<div class="table-wrap"><table>
         <thead><tr><th>Match</th><th>Team</th><th>Alliance</th>${statField ? `<th class="num">${esc(statLabel)}</th>` : ""}<th>Scout</th><th></th></tr></thead>
         <tbody>${list.map((m) => `<tr>
-          <td>Q${esc(m.matchNumber || "?")}</td>
+          <td>${esc(qTag(m.matchNumber))}</td>
           <td><span class="team-num">${esc(m.team)}</span></td>
           <td><span class="alliance-dot alliance-${m.alliance === "red" ? "red" : "blue"}"></span>${esc(m.alliance || "")}</td>
           ${statField ? `<td class="num">${statVal(m)}</td>` : ""}
@@ -4134,7 +4216,7 @@
         <div class="card"><h3>${icon("binoculars")} Match entries <span class="muted">${ms.length}</span></h3>
           ${ms.length ? `<div class="ds-feed">${ms.map((m) => `
             <button class="ds-feed-row" data-dteam="${esc(String(m.team))}">
-              <span class="ds-feed-q ${esc(m.alliance || "")}">Q${esc(m.matchNumber || "?")}</span>
+              <span class="ds-feed-q ${esc(m.alliance || "")}">${esc(qTag(m.matchNumber))}</span>
               <span class="ds-feed-t">${esc(String(m.team))} <span class="muted">${esc(nameFor(m.team))}</span></span>
               <span class="ds-feed-when">${m.ts ? esc(timeAgo(m.ts)) : ""}</span>
               ${m.notes ? `<span class="ds-feed-note">“${esc(m.notes)}”</span>` : ""}
@@ -4166,7 +4248,7 @@
     const pit = allPits()[team];
     const fields = matchFields();
     const ms = allMatches().filter((m) => String(m.team) === team)
-      .sort((a, b) => (Number(a.matchNumber) || 0) - (Number(b.matchNumber) || 0) || (a.ts || 0) - (b.ts || 0));
+      .sort((a, b) => matchSortKey(a.matchNumber) - matchSortKey(b.matchNumber) || (a.ts || 0) - (b.ts || 0));
 
     // --- Pit card ---
     const pFields = pitFields().filter((f) => f.key !== "photo");
@@ -4274,7 +4356,7 @@
     const timeline = ms.map((m) => `
       <details class="sr-match">
         <summary>
-          <span class="sr-q ${esc(m.alliance || "")}">Q${esc(m.matchNumber || "?")}</span>
+          <span class="sr-q ${esc(m.alliance || "")}">${esc(qTag(m.matchNumber))}</span>
           <span class="sr-mby">${esc(m.scout || "Scout")}${m.ts ? ` · ${esc(timeAgo(m.ts))}` : ""}</span>
           ${textKeys.some((k) => m[k]) ? `<span class="sr-note-flag" title="Has notes">${icon("edit")}</span>` : ""}
           ${icon("chevron-right")}
@@ -5374,22 +5456,26 @@
       const s = Store.getSettings();
       const te = s.testEvent;
       const isActive = s.eventKey === TEST_EVENT_KEY;
+      const tl = testTimeline();
       return `<div class="card">
         <div class="section-head"><div class="row" style="gap:10px">${icon("flag")}<h2 style="margin:0">Test event</h2></div>
           ${te ? `<span class="badge ${isActive ? "green" : ""} dot">${isActive ? "Active now" : "Ready"}</span>` : ""}</div>
-        <p class="hint">Builds a practice event that mirrors <b>CA Glendale (2026cagle)</b> — the same teams, with a synthesized qualification schedule — so you can rehearse the live match flow. Pick which qualification is <b>about to start</b>: earlier quals are marked played (with sample scores), later ones show as upcoming.</p>
+        <p class="hint">Builds a practice event that mirrors <b>CA Glendale (2026cagle)</b> with the same teams, a synthesized qualification schedule and a full playoff, so you can rehearse the live match flow. Pick which match is <b>about to start</b>: earlier ones are marked played (with sample scores), later ones show as upcoming. After the last qual the top 8 pick alliances and the 8-alliance double-elimination playoff begins.</p>
         ${te ? `
           <div class="row between" style="align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:16px">
-            <div><b>${esc(te.srcName || "CA Glendale")}</b> <span class="hint">· ${te.teams} teams · ${te.total} quals</span></div>
+            <div><b>${esc(te.srcName || "CA Glendale")}</b> <span class="hint">· ${te.teams} teams · ${te.total} quals · ${tl.po.length} playoff matches</span></div>
             ${isActive ? `<span class="badge green dot">Selected as current event</span>`
               : `<button class="btn primary sm" id="teActivate">Activate this event</button>`}
           </div>
           <div class="field" style="max-width:460px">
-            <label>Qualification about to start</label>
-            <span class="help">Q${te.currentQual} is next; Q1–Q${Math.max(0, te.currentQual - 1)} are marked played.</span>
+            <label>Match about to start</label>
+            <span class="help">${te.currentQual >= tl.max ? "The event is over: every playoff match has been played."
+              : te.currentQual > tl.total ? `Alliances are picked. <b>${tl.labelOf(te.currentQual)}</b> is next; all quals and earlier playoff matches are played.`
+              : `<b>Q${te.currentQual}</b> is next; Q1–Q${Math.max(0, te.currentQual - 1)} are marked played. Alliances are picked after Q${tl.total}.`}</span>
             <div class="row" style="gap:8px;align-items:center">
               <button class="btn ghost sm" id="teMinus" aria-label="Previous qual">−</button>
-              <input type="number" id="teQual" value="${te.currentQual}" min="1" max="${te.total + 1}" style="max-width:110px;text-align:center" />
+              <input type="number" id="teQual" value="${te.currentQual}" min="1" max="${tl.max}" style="max-width:110px;text-align:center" title="${esc(tl.labelOf(te.currentQual))}" />
+              <span class="badge cyan">${esc(tl.labelOf(te.currentQual))}</span>
               <button class="btn ghost sm" id="tePlus" aria-label="Next qual">+</button>
               <button class="btn secondary sm" id="teSetQual">${icon("check")} Set</button>
             </div>
@@ -5455,7 +5541,7 @@
       applyTestTime(v);
       const te2 = Store.getSettings().testEvent || {};
       if (window.Cloud && Cloud.enabled()) { lastTestEventTs = Date.now(); Cloud.pushTestQual(te2.currentQual, te2.total); }
-      toast("Q" + te2.currentQual + " is now up next"); renderAdmin(root);
+      toast(testTimeline().labelOf(te2.currentQual) + (te2.currentQual >= testTimeline().max ? "" : " is now up next")); renderAdmin(root);
     };
     const teSet = $("#teSetQual", root);
     if (teSet && teQual) teSet.onclick = () => setTestQual(teQual.value);
@@ -5857,7 +5943,7 @@
   function mountMatchBets(el, ev, getNum) {
     const keyed = (list) => keyMatches(list, ev);
     let ms = keyed(cachedEventMatches(ev)), preds = null, pending = false, busy = false;
-    const findMatch = () => { const n = String(getNum() || ""); return n ? ms.find((m) => m.comp_level === "qm" && String(m.match_number) === n) || null : null; };
+    const findMatch = () => { const n = String(getNum() || "").toUpperCase(); return n ? ms.find((m) => matchIdOf(m) === n) || null : null; };
     const winnerSide = (m) => m.winning_alliance || (m.alliances.red.score > m.alliances.blue.score ? "red" : m.alliances.blue.score > m.alliances.red.score ? "blue" : "");
     async function predLine(m) {
       if (!preds) { try { preds = await API.sbEventPreds(ev); } catch (e) { preds = {}; } }
@@ -5871,10 +5957,11 @@
       }
       return Bets.makeLine(p);
     }
+    let playoffNow = false;
     function placeLabel(mk, line, bets, sel, labels, mine) {
       const n = Math.floor(Number(btAmt[mk]) || 0);
       if (mine && mine.pool !== sel && !n) return `Move my ${mine.amount.toLocaleString()} BB to ${labels[sel].name}`;
-      const est = n > 0 ? Math.floor((n + (mine && mine.pool === sel ? mine.amount : 0)) * (Bets.estMultiplier(line, bets, sel, n, false) || 0)) : 0;
+      const est = n > 0 ? Math.floor((n + (mine && mine.pool === sel ? mine.amount : 0)) * (Bets.estMultiplier(line, bets, sel, n, playoffNow) || 0)) : 0;
       return `${mine ? (mine.pool === sel ? "Add" : "Move + add") : "Bet"} ${n > 0 ? n.toLocaleString() + " " : ""}on ${labels[sel].name}${n > 0 ? `<small>wins ~${est.toLocaleString()} BB</small>` : ""}`;
     }
     function draw() {
@@ -5887,6 +5974,7 @@
       const host = isBetHost(), line = Bets.cache.lines[m.key] || null, bets = Bets.betsOn(m.key);
       const uid = Store.getMe().id, mine = bets.find((b) => b.uid === uid);
       const label = Bets.matchLabel(m);
+      playoffNow = Bets.isPlayoff(m);
       // a market just opened for the match I'm on → tell me (not the host who opened it)
       const res = line && line.result;
       const st = !line ? "none" : line.void ? "void" : (line.status === "final" || Bets.played(m)) ? "final" : line.status || "open";
@@ -5915,7 +6003,7 @@
       };
       const pool = (p) => {
         const share = P.pot ? P.total[p] / P.pot * 100 : 0;
-        const mult = Bets.estMultiplier(line, bets, p, open ? (Number(btAmt[m.key]) || 10) : 0, false);
+        const mult = Bets.estMultiplier(line, bets, p, open ? (Number(btAmt[m.key]) || 10) : 0, playoffNow);
         const cls = ["bt-pool", p, sel === p ? "on" : "", mine && mine.pool === p ? "mine" : "", out ? (out.pool === p ? "win" : "lose") : ""].join(" ");
         return `<button type="button" class="${cls}" data-pool="${p}" ${open ? "" : "disabled"}>
           <span class="bt-pool-top"><b>${labels[p].name}</b>${out ? (out.pool === p ? icon("check") : "") : `<em>${mult ? "×" + mult.toFixed(1) : "–"}</em>`}</span>
@@ -5934,7 +6022,7 @@
       const mineRow = mine ? `<div class="bt-mine ${mine.settled ? (mine.refund ? "refund" : mine.payout > 0 ? "won" : "lost") : ""}">
           ${icon(open ? "coins" : "lock")}<span>You ${open ? "have" : "locked in"} <b>${mine.amount.toLocaleString()}</b> on <b>${labels[mine.pool].name}</b></span>
           <b class="bt-mine-res">${mine.settled ? (mine.refund ? "Refunded" : mine.payout > 0 ? "+" + mine.payout.toLocaleString() + " BB" : "−" + mine.amount.toLocaleString() + " BB")
-            : "pays ~" + Math.floor(mine.amount * (Bets.estMultiplier(line, bets, mine.pool, 0, false) || 0)).toLocaleString() + " BB"}</b>
+            : "pays ~" + Math.floor(mine.amount * (Bets.estMultiplier(line, bets, mine.pool, 0, playoffNow) || 0)).toLocaleString() + " BB"}</b>
           ${open ? `<button type="button" class="bt-cancel" data-cancel>Cancel</button>` : ""}</div>` : "";
       const hostBar = host && open ? `<div class="msb-host">${icon("shield")}<span><b>${bets.length}</b> ${bets.length === 1 ? "bet" : "bets"} · ${Math.round(P.pot).toLocaleString()} BB pot</span>
           <button type="button" class="btn danger sm" data-lock>${icon("lock")} Start match · lock bets</button></div>` : "";
@@ -5943,7 +6031,7 @@
         : st === "open" && !mine ? `<p class="msb-note">${icon("info")} Pick a pool, then your amount. You can change your pick until the match starts.</p>` : "";
       introOnce(el);
       el.innerHTML = `<section class="card ms-bets ${st}">
-        <div class="msb-head">${icon("coins")}<div><b>Match betting · ${esc(label)}</b><span>${line.winner === "red" ? "Red" : "Blue"} by ${line.diff} · ${Math.round(line.conf * 100)}% · ${P.count.higher + P.count.accurate + P.count.lower + P.count.upset} bettors</span></div>${pill}</div>
+        <div class="msb-head">${icon("coins")}<div><b>Match betting · ${esc(label)}${playoffNow ? ` <span class="bt-2x">2× payout</span>` : ""}</b><span>${line.winner === "red" ? "Red" : "Blue"} by ${line.diff} · ${Math.round(line.conf * 100)}% · ${P.count.higher + P.count.accurate + P.count.lower + P.count.upset} bettors</span></div>${pill}</div>
         <div class="bt-teams">${side("red")}<div class="bt-mid"><span class="bt-conf">${Math.round(line.conf * 100)}%</span><span class="bt-line">${line.winner === "red" ? "Red" : "Blue"} by ${line.diff}</span></div>${side("blue")}</div>
         <div class="bt-prob"><i style="width:${((line.winner === "red" ? line.conf : 1 - line.conf) * 100).toFixed(1)}%"></i></div>
         ${st === "void" ? `<div class="bt-void">${icon("x")} Voided by an admin. Every stake was refunded.</div>` : `<div class="bt-pools">${Bets.POOLS.map(pool).join("")}</div>`}

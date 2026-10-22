@@ -102,7 +102,8 @@ const Bets = (() => {
   function matchState(m, all) {
     if (played(m)) return "final";
     if (teamsOf(m, "red").length < 3 || teamsOf(m, "blue").length < 3) return "tbd";
-    const t = startAt(m);
+    // the admin test event's clock is made up, so it locks on results only
+    const t = /^\d{4}test_/.test(m.key || "") ? 0 : startAt(m);
     if (t && Date.now() >= t - 60 * 1000) return "locked";
     const later = (all || []).some((x) => x !== m && matchOrder(x, m) > 0 && played(x));
     return later ? "locked" : "open";
