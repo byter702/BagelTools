@@ -255,19 +255,44 @@ const Bets = (() => {
       return pay.payout;
     });
   }
-  // Settle every finished match of an event we're watching. `matches` = TBA list.
+  // Pay every unsettled bet on one finished market exactly once, then mark the market
+  // FINAL with its result saved. A final market can't reopen, so moving the test event
+  // back in time (scores disappear) never pays anyone twice.
+  async function settleLine(d, m, ln, bs) {
+    if (!ln || ln.void) return 0;
+    const res = ln.result || null;
+    let out;
+    if (res) out = { pool: res.pool, margin: res.margin };
+    else if (played(m)) out = outcome(ln, m);
+    else return 0;
+    const pay = payouts(ln, bs, out, (ln.comp || m.comp_level) !== "qm");
+    let n = 0;
+    const red = res ? res.red : m.alliances.red.score, blue = res ? res.blue : m.alliances.blue.score;
+    for (const b of bs) if (!b.settled) { await payBet(d, b.id, pay[b.id], { outcome: out.pool, red: red == null ? null : red, blue: blue == null ? null : blue }); n++; }
+    if (ln.status !== "final") {
+      const result = res || { pool: out.pool, margin: out.margin == null ? null : out.margin, red: m.alliances.red.score, blue: m.alliances.blue.score };
+      const ref = d.collection("betlines").doc(ln.match || m.key);
+      await d.runTransaction(async (tx) => {
+        const s = await tx.get(ref);
+        if (!s.exists || s.data().status === "final") return;
+        tx.update(ref, { status: "final", result, settledAt: Date.now() });
+      });
+    }
+    return n;
+  }
+  // Settle every finished match of the event we're watching. `matches` = TBA list.
   let settling = false;
   async function settleEvent(matches) {
     const d = db(); if (!d || settling || !isReady("lines", "bets")) return 0;
     settling = true; let n = 0;
     try {
       for (const m of matches || []) {
-        if (!played(m)) continue;
-        const ln = cache.lines[m.key]; const bs = betsOn(m.key);
-        if (!ln || !bs.some((b) => !b.settled)) continue;
-        const out = ln.void ? { pool: "void" } : outcome(ln, m);
-        const pay = ln.void ? Object.fromEntries(bs.map((b) => [b.id, { payout: b.amount || 0, refund: true }])) : payouts(ln, bs, out, isPlayoff(m));
-        for (const b of bs) if (!b.settled) { await payBet(d, b.id, pay[b.id], { outcome: out.pool }); n++; }
+        const ln = cache.lines[m.key];
+        if (!ln || ln.void) continue;
+        const bs = betsOn(m.key);
+        if (ln.status === "final" && !bs.some((b) => !b.settled)) continue;
+        if (!played(m) && !ln.result) continue;
+        n += await settleLine(d, m, ln, bs);
       }
     } catch (e) { console.warn("[Bets] settle failed", e); } finally { settling = false; }
     return n;
@@ -283,13 +308,12 @@ const Bets = (() => {
         const ms = await fetchMatches(ev);
         for (const b of open.filter((x) => x.event === ev)) {
           const m = (ms || []).find((x) => x.key === b.match);
-          if (!m || !played(m)) continue;
+          if (!m) continue;
           const [ls, bq] = await Promise.all([d.collection("betlines").doc(m.key).get(), d.collection("bets").where("match", "==", m.key).get()]);
           if (!ls.exists) continue;
-          const ln = ls.data(), bs = bq.docs.map((x) => x.data());
-          const out = ln.void ? { pool: "void" } : outcome(ln, m);
-          const pay = ln.void ? Object.fromEntries(bs.map((x) => [x.id, { payout: x.amount || 0, refund: true }])) : payouts(ln, bs, out, isPlayoff(m));
-          for (const x of bs) if (!x.settled) { await payBet(d, x.id, pay[x.id], { outcome: out.pool }); n++; }
+          const ln = ls.data();
+          if (!played(m) && !ln.result) continue;
+          n += await settleLine(d, m, ln, bq.docs.map((x) => x.data()));
         }
       } catch (e) { console.warn("[Bets] settle " + ev + " failed", e); }
     }

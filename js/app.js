@@ -48,6 +48,36 @@
     const act = $(".nb-act", el); if (act) act.onclick = () => { close(); opts.onAction && opts.onAction(); };
     if (!opts.action) setTimeout(close, 7000);
   }
+  // "You won / you lost" card for a settled match bet. Several queue up one at a time.
+  const betPopQueue = [];
+  function betResultPopup(b) { betPopQueue.push(b); if (betPopQueue.length === 1) showBetPop(); }
+  function showBetPop() {
+    const b = betPopQueue[0]; if (!b) return;
+    const ln = (window.Bets && Bets.cache.lines[b.match]) || null, res = ln && ln.result;
+    const NAMES = { higher: "Blowout", accurate: "Called it", lower: "Closer", upset: "Upset" };
+    const pn = (p) => (ln && Bets.poolLabels(ln)[p] ? Bets.poolLabels(ln)[p].name : NAMES[p] || p);
+    const kind = b.refund ? "refund" : b.payout > 0 ? "won" : "lost";
+    const sr = b.red != null ? b.red : res && res.red, sb = b.blue != null ? b.blue : res && res.blue;
+    const amt = (b.amount || 0).toLocaleString();
+    const back = document.createElement("div");
+    back.className = "bpop-back";
+    back.innerHTML = `<div class="bpop ${kind}" role="dialog" aria-modal="true" aria-label="Bet result">
+      <span class="bpop-ic">${icon(kind === "won" ? "trophy" : kind === "refund" ? "coins" : "x")}</span>
+      <span class="bpop-eyebrow">${esc(b.label || "Match")} · match bet</span>
+      <h3>${kind === "won" ? "You won!" : kind === "refund" ? "Refunded" : "Not this time"}</h3>
+      <b class="bpop-amt">${kind === "lost" ? "&minus;" + amt : "+" + (b.payout || 0).toLocaleString()} BB</b>
+      <p>${kind === "won" ? `Your ${amt} BB on <b>${esc(pn(b.pool))}</b> paid ${((b.payout || 0) / (b.amount || 1)).toFixed(1)}&times;. It's in your balance.`
+        : kind === "refund" ? (b.outcome === "void" ? `The market was voided, so your ${amt} BB came back.` : `Nobody picked the winning pool, so your ${amt} BB came back.`)
+        : `You had ${amt} BB on <b>${esc(pn(b.pool))}</b>${b.outcome && b.outcome !== b.pool && NAMES[b.outcome] ? `, but it ended <b>${esc(pn(b.outcome))}</b>` : ""}.`}</p>
+      ${sr != null ? `<span class="bpop-score"><i class="r">${sr}</i><em>&ndash;</em><i class="b">${sb}</i></span>` : ""}
+      <button class="btn primary" type="button">${kind === "won" ? "Collect" : "OK"}</button></div>`;
+    document.body.appendChild(back);
+    const close = () => { back.classList.add("out"); setTimeout(() => { back.remove(); betPopQueue.shift(); showBetPop(); }, 220); };
+    $("button", back).onclick = close;
+    back.onclick = (e) => { if (e.target === back) close(); };
+    back.addEventListener("keydown", (e) => { if (e.key === "Escape") close(); });
+    setTimeout(() => $("button", back).focus(), 50);
+  }
   function scoutPopup(a) {
     if (!a) return;
     let wrap = $("#scoutPops");
@@ -5749,6 +5779,9 @@
     return /permission/i.test(code) ? "The database blocked this (permission denied). Check the Firestore rules." : `Something went wrong (${String(code).slice(0, 80)}). Try again.`;
   };
   const cachedEventMatches = (ev) => { const c = Store.getCache("matches." + ev, null); return (c && c.data) || []; };
+  // Every match needs a TBA-style key ("2026test_qm12"); older test-event caches lack one.
+  const keyMatches = (list, ev) => (list || []).map((m) => m.key ? m : Object.assign({}, m, {
+    key: `${ev}_${m.comp_level}${m.comp_level === "qm" ? "" : (m.set_number || 1) + "m"}${m.match_number}` }));
   const liveMatches = (ev) => API.eventMatchesLive(ev).catch(() => cachedEventMatches(ev));
   // Entrance animations play on a container's first draw only, so live updates don't flicker.
   const introOnce = (el) => { if (!el.dataset.drawn) { el.dataset.drawn = "1"; el.setAttribute("data-intro", ""); setTimeout(() => el.removeAttribute("data-intro"), 900); } };
@@ -5822,9 +5855,7 @@
   // The betting card for whichever qual is selected in the scouting form. getNum()
   // returns the match number. Clicks/typing here never mark the scouting form dirty.
   function mountMatchBets(el, ev, getNum) {
-    // every match needs a TBA-style key ("2026test_qm12"); older test-event caches lack one
-    const keyed = (list) => (list || []).map((m) => m.key ? m : Object.assign({}, m, {
-      key: `${ev}_${m.comp_level}${m.comp_level === "qm" ? "" : (m.set_number || 1) + "m"}${m.match_number}` }));
+    const keyed = (list) => keyMatches(list, ev);
     let ms = keyed(cachedEventMatches(ev)), preds = null, pending = false, busy = false;
     const findMatch = () => { const n = String(getNum() || ""); return n ? ms.find((m) => m.comp_level === "qm" && String(m.match_number) === n) || null : null; };
     const winnerSide = (m) => m.winning_alliance || (m.alliances.red.score > m.alliances.blue.score ? "red" : m.alliances.blue.score > m.alliances.red.score ? "blue" : "");
@@ -5857,7 +5888,8 @@
       const uid = Store.getMe().id, mine = bets.find((b) => b.uid === uid);
       const label = Bets.matchLabel(m);
       // a market just opened for the match I'm on → tell me (not the host who opened it)
-      const st = !line ? "none" : line.void ? "void" : Bets.played(m) ? "final" : line.status || "open";
+      const res = line && line.result;
+      const st = !line ? "none" : line.void ? "void" : (line.status === "final" || Bets.played(m)) ? "final" : line.status || "open";
       if (btSeen[m.key] && btSeen[m.key] !== st && st === "open" && !(line.openedBy === uid)) toast(`Betting is open for ${label}!`);
       btSeen[m.key] = st;
       if (st === "none") {
@@ -5867,10 +5899,13 @@
         return;
       }
       const P = Bets.pools(line, bets), labels = Bets.poolLabels(line);
-      const open = st === "open", out = st === "final" ? Bets.outcome(line, m) : null, won = st === "final" ? winnerSide(m) : "";
+      const open = st === "open";
+      const out = st !== "final" ? null : res ? { pool: res.pool } : Bets.outcome(line, m);
+      const fRed = res ? res.red : m.alliances.red.score, fBlue = res ? res.blue : m.alliances.blue.score;
+      const won = st !== "final" ? "" : res ? (fRed > fBlue ? "red" : fBlue > fRed ? "blue" : "") : winnerSide(m);
       const sel = btPick[m.key] || (mine && mine.pool) || null;
       const pill = { open: `<span class="msb-pill open">${icon("zap")} Open</span>`, locked: `<span class="msb-pill locked">${icon("lock")} Locked</span>`,
-        final: `<span class="msb-pill final">Final ${m.alliances.red.score}–${m.alliances.blue.score}</span>`, void: `<span class="msb-pill">Voided</span>` }[st];
+        final: `<span class="msb-pill final">Final ${fRed}–${fBlue}</span>`, void: `<span class="msb-pill">Voided</span>` }[st];
       const side = (c) => {
         const ts = Bets.teamsOf(m, c);
         return `<div class="bt-side ${c}${line.winner === c ? " fav" : ""}${won === c ? " won" : ""}">
@@ -5903,7 +5938,8 @@
           ${open ? `<button type="button" class="bt-cancel" data-cancel>Cancel</button>` : ""}</div>` : "";
       const hostBar = host && open ? `<div class="msb-host">${icon("shield")}<span><b>${bets.length}</b> ${bets.length === 1 ? "bet" : "bets"} · ${Math.round(P.pot).toLocaleString()} BB pot</span>
           <button type="button" class="btn danger sm" data-lock>${icon("lock")} Start match · lock bets</button></div>` : "";
-      const note = st === "locked" ? `<p class="msb-note">${icon("lock")} Bets are locked in. Payouts land when the score posts.</p>`
+      const note = st === "locked" ? `<p class="msb-note">${icon("lock")} Bets are locked in. Payouts land the moment the official score posts.</p>`
+        : st === "final" && !(mine && mine.settled) && mine ? `<p class="msb-note"><span class="tp-spin"></span> Score is in. Paying out…</p>`
         : st === "open" && !mine ? `<p class="msb-note">${icon("info")} Pick a pool, then your amount. You can change your pick until the match starts.</p>` : "";
       introOnce(el);
       el.innerHTML = `<section class="card ms-bets ${st}">
@@ -6971,6 +7007,7 @@
       reconcileBB(); // keep my local BB mirror = the cloud total
       refreshChrome();
       refreshWallet();
+      if (Store.getSettings().eventKey === TEST_EVENT_KEY) settleBetsNow(); // test qual moved: pay out now
       const formNow = (id, fields) => { const f = $("#" + id); return f && !f.dataset.dirty && f.dataset.sig !== formSig(fields); };
       if (current() === "match") { if (formNow("matchForm", matchFields())) router(); else refreshRobotClaims(); return; }
       if (current() === "pit") {
@@ -6985,20 +7022,50 @@
     // …except once, right after the first full download, so a page opened by a
     // refresh/direct link doesn't stay empty. Skipped mid-form or mid-typing.
     // Bagel Bets: live markets + "your bet paid out" notices anywhere in the app.
-    let seenSettled = null;
+    // A popup for every one of my match bets that settles (win, loss or refund), shown
+    // once per bet even if it settled while I was away (remembered on this device).
+    const seenKey = () => "bb702.betSeen." + (Store.getMe().id || "");
+    const loadSeen = () => { try { return new Set(JSON.parse(localStorage.getItem(seenKey()) || "[]")); } catch (e) { return new Set(); } };
+    const saveSeen = (set) => { try { localStorage.setItem(seenKey(), JSON.stringify([...set].slice(-400))); } catch (e) { /* storage off */ } };
+    let seenBets = null;
     Bets.onChange(() => {
       if (Bets.isReady("mine")) {
-        const mine = Object.values(Bets.cache.mine);
-        if (!seenSettled) seenSettled = new Set(mine.filter((b) => b.settled).map((b) => b.id));
-        else mine.filter((b) => b.settled && !seenSettled.has(b.id)).forEach((b) => {
-          seenSettled.add(b.id);
-          if (b.refund) toast(`${b.label || "Match"} bet refunded: ${b.amount} BB`);
-          else if (b.payout > 0) notifyBanner(`Your ${b.label || "match"} bet hit! +${b.payout.toLocaleString()} BB`, { sub: `You bet ${b.amount} BB. Nice call.` });
-          else toast(`${b.label || "Match"} bet lost (−${b.amount} BB)`, "err");
-        });
+        if (!seenBets) seenBets = loadSeen();
+        const fresh = Object.values(Bets.cache.mine).filter((b) => b.settled && !seenBets.has(b.id));
+        if (fresh.length) {
+          fresh.sort((x, y) => (x.settledAt || 0) - (y.settledAt || 0)).forEach((b) => {
+            seenBets.add(b.id);
+            if (Date.now() - (b.settledAt || 0) < 7 * 864e5) betResultPopup(b);
+          });
+          saveSeen(seenBets);
+        }
       }
       refreshWallet(); if (betsRedraw) betsRedraw();
     });
+    // Settle finished match bets live, wherever you are in the app: real events are
+    // checked against TBA about every 30s; the test event (its scores are made on the
+    // device) right away when an admin moves its qual counter.
+    let settleBusy = false, lastNet = 0;
+    async function settleBetsNow() {
+      if (!Cloud.enabled() || settleBusy || !Bets.isReady("lines", "bets")) return;
+      const ev = Store.getSettings().eventKey || "", isTest = ev === TEST_EVENT_KEY;
+      const pending = Object.values(Bets.cache.lines).some((l) => l.event === ev && !l.void &&
+        (l.status !== "final" || Bets.betsOn(l.match).some((b) => !b.settled)));
+      const netOk = Date.now() - lastNet >= 25000;
+      const elsewhere = netOk && Bets.isReady("mine") && Object.values(Bets.cache.mine).some((b) => !b.settled && b.event !== ev);
+      const here = pending && (isTest || netOk);
+      if (!here && !elsewhere) return;
+      settleBusy = true;
+      try {
+        if (here) {
+          const ms = isTest ? cachedEventMatches(ev) : await API.eventMatchesLive(ev, 20000).catch(() => cachedEventMatches(ev));
+          await Bets.settleEvent(keyMatches(ms, ev));
+        }
+        if (elsewhere) await Bets.settleMyOtherEvents((k) => k === TEST_EVENT_KEY ? Promise.resolve(keyMatches(cachedEventMatches(k), k)) : API.eventMatchesLive(k, 20000));
+        if ((here && !isTest) || elsewhere) lastNet = Date.now();
+      } catch (e) { console.warn("[Bets] live settle failed", e); } finally { settleBusy = false; }
+    }
+    setInterval(settleBetsNow, 10000);
     Cloud.onFirstSync(() => { if (Cloud.enabled()) Bets.watch(Store.getSettings().eventKey || "", Bets.fantasyYear()); });
     Cloud.onFirstSync(() => {
       const f = $("#matchForm") || $("#pitForm");
