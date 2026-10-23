@@ -3459,13 +3459,13 @@
   function picklistSub() {
     const s = location.hash.replace(/^#\/?/, "").split("/")[1] || "alliance";
     if (s === "tierlist") return "mashup"; // the tier list became Mashup
-    return ["alliance", "mashup", "scouters", "bracket"].includes(s) ? s : "alliance";
+    return ["alliance", "mashup", "bracket"].includes(s) ? s : "alliance";
   }
 
   function renderPicklist(root) {
     const teams = eventTeams();
     const sub = picklistSub();
-    const tabs = [["alliance", "Alliance selection", "chess"], ["mashup", "Mashup", "compare"], ["scouters", "Scouters' lists", "teams"], ["bracket", "Bracket", "trophy"]];
+    const tabs = [["alliance", "Alliance selection", "chess"], ["mashup", "Mashup", "compare"], ["bracket", "Bracket", "trophy"]];
     const ev = Store.getSettings().eventName;
     const bar = pageHero({ ic: "list", eyebrow: "Pick list", title: ev ? esc(ev) : "No event selected",
         sub: ev ? "Your alliance board is saved for this event, and Mashup ranks every robot from head-to-head picks. Switch events and you get a fresh set; switch back and they return." : "Pick an event in the sidebar to start building lists." }) +
@@ -3483,7 +3483,7 @@
       else { Bets.watch(evKey, Bets.fantasyYear()); renderBracket(body, evKey); startBetsTick(body); }
       return;
     }
-    if (!teams.length && sub !== "scouters") {
+    if (!teams.length) {
       root.innerHTML = bar + `<div class="card">${emptyState("list", "No event teams",
         "Pick your event on the Dashboard to build alliance selections and mashups for the teams competing.")}
         <div class="btn-row" style="justify-content:center"><button class="btn primary" data-go="dashboard">${icon("calendar")} Choose event</button></div></div>`;
@@ -3494,7 +3494,6 @@
     const body = $("#pickBody", root);
     betsRedraw = null; betsReload = null;
     if (sub === "mashup") renderMashup(body, evKey, teams);
-    else if (sub === "scouters") renderScoutersLists(body);
     else renderAllianceSelection(body, teams);
   }
 
@@ -4083,63 +4082,6 @@
       const tl = getTiers(); tl.submitted = true; tl.submittedAt = Date.now(); saveTiers(tl);
       Cloud.pushTierlist(); toast("Tier list submitted");
     };
-  }
-
-  /* ---- Sub: Scouters lists (what everyone submitted) ---------------------- */
-  function sharedBoards() {
-    const me = Store.getMe(), out = [];
-    const myB = getBoard();
-    if (myB.submitted) out.push({ scouterId: me.id, name: scouterName(me), cols: myB.cols, grid: myB.grid, submittedAt: myB.submittedAt });
-    const ek = Store.getSettings().eventKey;
-    (Cloud.getSharedBoards() || []).forEach((b) => {
-      if (b.scouterId === me.id || (b.event && b.event !== ek)) return; // only this event's boards
-      // Cloud stores the grid as row maps ({cells}); rebuild the 2D grid for display.
-      const grid = b.grid || (b.rows || []).map((r) => (r && r.cells) || []);
-      out.push({ ...b, grid });
-    });
-    return out.sort((a, z) => (z.submittedAt || 0) - (a.submittedAt || 0));
-  }
-  function sharedTierlists() {
-    const me = Store.getMe(), out = [];
-    const myT = Store.getTierlist();
-    if (myT && myT.submitted) out.push({ scouterId: me.id, name: scouterName(me), tiers: myT.tiers, submittedAt: myT.submittedAt });
-    const ek = Store.getSettings().eventKey;
-    (Cloud.getSharedTierlists() || []).forEach((t) => { if (t.scouterId !== me.id && (!t.event || t.event === ek)) out.push(t); });
-    return out.sort((a, z) => (z.submittedAt || 0) - (a.submittedAt || 0));
-  }
-  function renderScoutersLists(root) {
-    const boards = sharedBoards();
-    const tls = sharedTierlists();
-    const stamp = (ts) => ts ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "";
-
-    const boardCard = (b) => `
-      <div class="card">
-        <div class="section-head" style="margin-bottom:8px"><h3 style="margin:0">${esc(b.name || "Scout")}</h3><span class="hint">${esc(stamp(b.submittedAt))}</span></div>
-        <div class="table-wrap"><table class="ab-table sl-table">
-          <thead><tr><th>#</th>${(b.cols || []).map((c) => `<th>${esc(c)}</th>`).join("")}</tr></thead>
-          <tbody>${(b.grid || []).map((row, a) => row.some(Boolean) ? `<tr><td class="ab-num">${a + 1}</td>${row.map((t) => `<td>${t ? `<span class="team-num" data-team="${esc(t)}" style="cursor:pointer">${esc(t)}</span>` : "·"}</td>`).join("")}</tr>` : "").join("")}</tbody>
-        </table></div>
-      </div>`;
-    const tierCard = (t) => `
-      <div class="card">
-        <div class="section-head" style="margin-bottom:8px"><h3 style="margin:0">${esc(t.name || "Scout")}</h3><span class="hint">${esc(stamp(t.submittedAt))}</span></div>
-        ${TIERS.map((tier) => { const arr = (t.tiers && t.tiers[tier]) || []; return arr.length ? `
-          <div class="tier-row static"><div class="tier-label tier-${tier}">${tier}</div>
-          <div class="tier-slots">${arr.map((tm) => `<span class="team-num" data-team="${esc(tm)}" style="cursor:pointer">${esc(tm)}</span>`).join(" ")}</div></div>` : ""; }).join("")}
-      </div>`;
-
-    root.innerHTML = `
-      <p class="hint" style="margin-top:0">Lists other scouts submitted for this event.</p>
-      ${Cloud.enabled() ? "" : `<div class="card cloud-note">${icon("globe")}<span>Cloud sync is off, so this shows only your own submitted lists. Enable it in <b>js/config.js</b> to see everyone's.</span></div>`}
-      <div class="section">
-        <div class="section-head"><h3 style="margin:0">${icon("chess")} Alliance predictions</h3><span class="hint">${boards.length} submitted</span></div>
-        ${boards.length ? `<div class="grid cols-2">${boards.map(boardCard).join("")}</div>` : emptyState("chess", "No submissions yet", "Submit an alliance board to share it here.")}
-      </div>
-      <div class="section">
-        <div class="section-head"><h3 style="margin:0">${icon("list")} Tier lists</h3><span class="hint">${tls.length} submitted</span></div>
-        ${tls.length ? `<div class="grid cols-2">${tls.map(tierCard).join("")}</div>` : emptyState("list", "No submissions yet", "Submit a tier list to share it here.")}
-      </div>`;
-    $$("[data-team]", root).forEach((el) => el.onclick = () => openTeam(el.dataset.team));
   }
 
   /* ===========================================================================
