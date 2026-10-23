@@ -427,6 +427,9 @@ const API = (() => {
   const eventAlliances = (key, ttlMs = 60000) => key === TEST_EVENT_KEY ? Promise.resolve(testCached("alliances." + key))
     : tbaTtl("/event/" + key + "/alliances", ttlMs).then((d) => Array.isArray(d) ? d : []);
   const eventRankingsLive = (key, ttlMs = 300000) => tbaTtl("/event/" + key + "/rankings", ttlMs);
+  // TBA's OPR for an event (TBA → event → Insights) as { frc254: 61.2, … }, or null.
+  const eventOprs = (key) => key === TEST_EVENT_KEY ? Promise.resolve(null)
+    : tbaTtl("/event/" + key + "/oprs", 600000).then((d) => (d && d.oprs) || null).catch(() => null);
   const eventInfo = (key) => key === TEST_EVENT_KEY
     ? Promise.resolve({ key, name: "Test event", year: Number(key.slice(0, 4)), event_type: 99, playoff_type: 10, playoff_type_string: "Double Elimination Bracket (8 Alliances)" })
     : tbaMem("/event/" + key);
@@ -721,7 +724,7 @@ const API = (() => {
   const primeMultipliers = () => { const p = primeOn(); return p ? { epa: primeMult(p, "epa"), auto: primeMult(p, "auto"), teleop: primeMult(p, "teleop"), endgame: primeMult(p, "endgame") } : null; };
 
   return { teamKey, verifyKey, hasKey, effectiveKey, getEvents, getEventTeams, getEventMatches, getTeamColors, getTeamAvatar, sbEpa,
-    getTeamInfo, getTeamYears, eventsForYear, sbEventPreds, eventMatchesLive, eventsFullYear, eventAlliances, eventInfo, teamEventKeys,
+    getTeamInfo, getTeamYears, eventsForYear, sbEventPreds, eventMatchesLive, eventsFullYear, eventAlliances, eventInfo, teamEventKeys, eventOprs,
     hasNexusKey, nexusPitMap,
     // Prime 702-aware reads (pass raw = true for the real numbers: betting, fantasy)
     sbYearLeaderboard: (year, maxAgeMs, raw) => sbYearLeaderboard(year, maxAgeMs).then((r) => raw ? r : Object.assign({}, r, { rows: primeRows(r.rows) })),

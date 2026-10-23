@@ -3458,16 +3458,17 @@
 
   function picklistSub() {
     const s = location.hash.replace(/^#\/?/, "").split("/")[1] || "alliance";
-    return ["alliance", "tierlist", "scouters", "bracket"].includes(s) ? s : "alliance";
+    if (s === "tierlist") return "mashup"; // the tier list became Mashup
+    return ["alliance", "mashup", "scouters", "bracket"].includes(s) ? s : "alliance";
   }
 
   function renderPicklist(root) {
     const teams = eventTeams();
     const sub = picklistSub();
-    const tabs = [["alliance", "Alliance selection", "chess"], ["tierlist", "Tier list", "list"], ["scouters", "Scouters' lists", "teams"], ["bracket", "Bracket", "trophy"]];
+    const tabs = [["alliance", "Alliance selection", "chess"], ["mashup", "Mashup", "compare"], ["scouters", "Scouters' lists", "teams"], ["bracket", "Bracket", "trophy"]];
     const ev = Store.getSettings().eventName;
     const bar = pageHero({ ic: "list", eyebrow: "Pick list", title: ev ? esc(ev) : "No event selected",
-        sub: ev ? "Your alliance board and tier list are saved for this event. Switch events and you get a fresh set; switch back and they return." : "Pick an event in the sidebar to start building lists." }) +
+        sub: ev ? "Your alliance board is saved for this event, and Mashup ranks every robot from head-to-head picks. Switch events and you get a fresh set; switch back and they return." : "Pick an event in the sidebar to start building lists." }) +
       `<div class="subtabs" id="pickTabs">
       ${tabs.map(([k, l, ic]) => `<a href="#/picklist/${k}" class="${sub === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}</div>`;
 
@@ -3484,16 +3485,285 @@
     }
     if (!teams.length && sub !== "scouters") {
       root.innerHTML = bar + `<div class="card">${emptyState("list", "No event teams",
-        "Pick your event on the Dashboard to build alliance selections and tier lists for the teams competing.")}
+        "Pick your event on the Dashboard to build alliance selections and mashups for the teams competing.")}
         <div class="btn-row" style="justify-content:center"><button class="btn primary" data-go="dashboard">${icon("calendar")} Choose event</button></div></div>`;
       const g = $("[data-go]", root); if (g) g.onclick = () => go("dashboard");
       return;
     }
     root.innerHTML = bar + `<div id="pickBody"></div>`;
     const body = $("#pickBody", root);
-    if (sub === "tierlist") renderTierlist(body, teams);
+    betsRedraw = null; betsReload = null;
+    if (sub === "mashup") renderMashup(body, evKey, teams);
     else if (sub === "scouters") renderScoutersLists(body);
     else renderAllianceSelection(body, teams);
+  }
+
+  /* ---- Pick List → Mashup ------------------------------------------------------
+     #/picklist/mashup              two robots head to head: pick the better one
+     #/picklist/mashup/leaderboard  everyone's (or just your) picks → a ranked list
+     Votes + ratings (Bradley–Terry) live in js/bets.js. */
+  let mxPair = null, mxEvent = null, mxScope = "all", mxBusy = false, mxKeys = null;
+  const mashupSub = () => location.hash.replace(/^#\/?/, "").split("/")[2] === "leaderboard" ? "leaderboard" : "duel";
+  // OPR by least squares from qual scores (alliance score = sum of its 3 robots), for
+  // events where TBA has no OPR yet (and the test event).
+  function computeOpr(matches) {
+    const qm = (matches || []).filter((m) => m.comp_level === "qm" && m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0);
+    const idx = {}, teams = [];
+    const num = (k) => String(k).replace("frc", "");
+    qm.forEach((m) => ["red", "blue"].forEach((c) => (m.alliances[c].team_keys || []).forEach((k) => { const t = num(k); if (idx[t] == null) { idx[t] = teams.length; teams.push(t); } })));
+    const n = teams.length;
+    if (n < 6 || qm.length * 2 < n) return {};
+    const A = Array.from({ length: n }, () => new Float64Array(n)), b = new Float64Array(n);
+    qm.forEach((m) => ["red", "blue"].forEach((c) => {
+      const ts = (m.alliances[c].team_keys || []).map((k) => idx[num(k)]), sc = m.alliances[c].score;
+      ts.forEach((i) => { b[i] += sc; ts.forEach((j) => { A[i][j] += 1; }); });
+    }));
+    for (let i = 0; i < n; i++) A[i][i] += 1e-3; // tiny ridge keeps it solvable early in an event
+    for (let c = 0; c < n; c++) {
+      let piv = c; for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[piv][c])) piv = r;
+      if (piv !== c) { const t = A[c]; A[c] = A[piv]; A[piv] = t; const u = b[c]; b[c] = b[piv]; b[piv] = u; }
+      const d = A[c][c]; if (!d) continue;
+      for (let r = c + 1; r < n; r++) { const f = A[r][c] / d; if (!f) continue; for (let k = c; k < n; k++) A[r][k] -= f * A[c][k]; b[r] -= f * b[c]; }
+    }
+    const x = new Float64Array(n);
+    for (let i = n - 1; i >= 0; i--) { let s = b[i]; for (let k = i + 1; k < n; k++) s -= A[i][k] * x[k]; x[i] = A[i][i] ? s / A[i][i] : 0; }
+    const out = {}; teams.forEach((t, i) => { out[t] = x[i]; });
+    return out;
+  }
+  // Everything we know about each robot at this event, for the comparison rows.
+  async function mashupData(ev, nums) {
+    const [rk, oprs, ms] = await Promise.all([
+      API.getEventRankings(ev).catch(() => ({ rankings: [] })), API.eventOprs(ev).catch(() => null), liveMatches(ev)]);
+    let lb = API.sbCachedLeaderboard(GAME.season);
+    if (!lb) { try { lb = (await API.sbYearLeaderboard(GAME.season, 15 * 60000)).rows; } catch (e) { lb = []; } }
+    const rank = {}; (rk.rankings || []).forEach((r) => { rank[String(r.team_key).replace("frc", "")] = r; });
+    let opr = {};
+    if (oprs && Object.keys(oprs).length) Object.entries(oprs).forEach(([k, v]) => { opr[k.replace("frc", "")] = v; });
+    else opr = computeOpr(ms);
+    const epa = {}; (lb || []).forEach((r) => { epa[String(r.team)] = r; });
+    // our scouting at this event
+    const fields = matchFields();
+    const driverF = fields.find((f) => f.key === "driverSkill") || fields.find((f) => f.type === "rating" && /driver/i.test(f.label));
+    const bpsF = fields.find((f) => f.key === "bps") || fields.find((f) => /\bbps\b|balls per second/i.test(f.label));
+    const numF = fields.filter((f) => ["counter", "number", "rating"].includes(f.type) && f !== driverF && f !== bpsF);
+    const boolF = fields.filter((f) => f.type === "bool");
+    const recs = allMatches().filter((m) => String(m.event) === String(ev));
+    const scout = {};
+    nums.forEach((t) => {
+      const ms2 = recs.filter((m) => String(m.team) === t), n = ms2.length;
+      const avgOf = (f, pos) => { const v = ms2.map((m) => Number(m[f.key])).filter((x) => !isNaN(x) && (!pos || x > 0)); return v.length ? v.reduce((a, c) => a + c, 0) / v.length : null; };
+      scout[t] = { n, driver: driverF ? avgOf(driverF, true) : null, bps: bpsF ? avgOf(bpsF) : null,
+        num: Object.fromEntries(numF.map((f) => [f.key, avgOf(f, f.type === "rating")])),
+        bool: Object.fromEntries(boolF.map((f) => [f.key, n ? ms2.filter((m) => m[f.key] === true || m[f.key] === "true" || m[f.key] === "Yes").length / n * 100 : null])) };
+    });
+    const rankBy = (get) => { const m = {}; nums.filter((t) => get(t) != null).sort((a, b) => get(b) - get(a)).forEach((t, i) => { m[t] = i + 1; }); return m; };
+    return { rank, opr, epa, scout, driverF, bpsF, numF, boolF,
+      driverRank: rankBy((t) => scout[t].driver), bpsRank: rankBy((t) => scout[t].bps), oprRank: rankBy((t) => opr[t] == null ? null : opr[t]) };
+  }
+
+  function renderMashup(body, ev, teams) {
+    const sub = mashupSub(), uid = Store.getMe().id;
+    const nums = teams.map((t) => String(t.team_number));
+    if (Cloud.enabled()) Bets.watch(ev, Bets.fantasyYear());
+    body.innerHTML = `
+      <div class="mx-head">
+        <div class="seg mx-tabs"><a href="#/picklist/mashup" class="${sub === "duel" ? "on" : ""}">${icon("compare")} Mashup</a>
+          <a href="#/picklist/mashup/leaderboard" class="${sub === "leaderboard" ? "on" : ""}">${icon("trophy")} Leaderboard</a></div>
+        <span class="mx-count" id="mxCount"></span>
+      </div>
+      <div id="mxBody"><div class="card tp-loading"><span class="tp-spin"></span> Gathering every robot's numbers…</div></div>`;
+    const wrap = $("#mxBody", body);
+    let D = null;
+    const myVotes = () => Bets.mashupVotes(ev, uid);
+    const paintCount = () => {
+      const el = $("#mxCount", body); if (!el) return;
+      const mine = myVotes().length, all = Bets.mashupVotes(ev).length;
+      el.innerHTML = `${icon("check")} <b>${mine}</b> your votes · <b>${all}</b> total`;
+    };
+    if (!Cloud.enabled()) { wrap.innerHTML = `<div class="card">${emptyState("compare", "Mashup is offline", "It needs the cloud connection so everyone's votes add up.")}</div>`; return; }
+    if (nums.length < 2) { wrap.innerHTML = `<div class="card">${emptyState("compare", "Not enough robots", "This event needs at least two teams.")}</div>`; return; }
+    const draw = () => { if (!wrap.isConnected) return; paintCount(); if (!D) return; if (sub === "leaderboard") drawBoard(); else drawDuel(); };
+    // ---------------- head to head ----------------
+    function drawDuel() {
+      if (mxEvent !== ev || !mxPair || !nums.includes(mxPair[0]) || !nums.includes(mxPair[1]) || mxPair[0] === mxPair[1]) {
+        mxEvent = ev; mxPair = Bets.nextMashupPair(nums, myVotes());
+      }
+      const [a, b] = mxPair, R = Bets.mashupRatings(Bets.mashupVotes(ev));
+      const pits = allPits();
+      const v = (t) => {
+        const r = D.rank[t], e = D.epa[t], sc = D.scout[t] || {};
+        return { rank: r ? r.rank : null, rec: r && r.record ? `${r.record.wins}-${r.record.losses}-${r.record.ties}` : null,
+          rs: r && r.sort_orders ? r.sort_orders[0] : null, opr: D.opr[t] != null ? D.opr[t] : null,
+          epa: e ? e.epa : null, epaRank: e ? e.worldRank : null, power: R[t] ? R[t].power : null, sc };
+      };
+      const A = v(a), B = v(b);
+      const card = (t, x, side) => {
+        const pit = pits[t] || {}, photo = pit.photo;
+        return `<article class="mx-card ${side}" data-tfill="${esc(t)}">
+          <button type="button" class="mx-photo${photo ? "" : " none"}" data-zoom="${esc(t)}" aria-label="${photo ? `View team ${esc(t)}'s robot photo` : `Team ${esc(t)} has no pit photo`}">
+            ${photo ? `<img src="${esc(photo)}" alt="Team ${esc(t)} robot" />` : `<span class="mx-nophoto"><img class="team-avatar" data-avatar="${esc(t)}" alt="" />${icon("image")}<b>No pit photo yet</b><small>Add one on Pit Scouting</small></span>`}
+            ${x.rank ? `<span class="mx-rankpill">#${x.rank}<small>at event</small></span>` : ""}
+            ${photo ? `<span class="mx-zoom">${icon("search")}</span>` : ""}
+          </button>
+          <div class="mx-id"><img class="team-avatar" data-avatar="${esc(t)}" alt="" />
+            <div><b>${esc(t)}</b><span>${esc(nameFor(t)) || "&nbsp;"}</span></div>
+            <span class="mx-power" title="Mashup Power: the chance this robot beats an average robot, from everyone's votes">${x.power != null ? Math.round(x.power) : "–"}<small>power</small></span></div>
+          <div class="mx-chips">
+            <span>${icon("chart")} ${x.epa != null ? fmt(x.epa) : "–"} EPA</span>
+            <span>${icon("globe")} ${x.epaRank ? "#" + x.epaRank : "–"} world</span>
+            <span>${icon("linegraph")} ${x.opr != null ? fmt(x.opr) : "–"} OPR</span>
+          </div>
+          <button type="button" class="mx-pick" data-pick="${esc(t)}">${side === "left" ? icon("chevron-left") : ""}<span><b>${esc(t)}</b> is better</span>${side === "right" ? icon("chevron-right") : ""}</button>
+        </article>`;
+      };
+      // rows: [label, aVal, bVal, display fn, better: 1 higher / -1 lower / 0 none, rank suffix]
+      const fv = (x, d = 1) => x == null ? "–" : fmt(x, d);
+      const rows = [];
+      const group = (title, ic) => rows.push({ group: title, ic });
+      const row = (label, x, y, show, better, sub) => rows.push({ label, x, y, show: show || ((z) => fv(z)), better: better == null ? 1 : better, sub });
+      group("At this event", "calendar");
+      row("Event rank", A.rank, B.rank, (z) => z ? "#" + z : "–", -1);
+      row("Record", A.rec ? Number(A.rec.split("-")[0]) : null, B.rec ? Number(B.rec.split("-")[0]) : null, (z, i) => [A.rec, B.rec][i] || "–", 1);
+      row("Ranking score", A.rs, B.rs, (z) => fv(z, 2), 1);
+      row("OPR", A.opr, B.opr, (z) => fv(z), 1, [D.oprRank[a] ? "#" + D.oprRank[a] : "", D.oprRank[b] ? "#" + D.oprRank[b] : ""]);
+      group("Statbotics", "chart");
+      row("EPA", A.epa, B.epa, (z) => fv(z), 1);
+      row("EPA world rank", A.epaRank, B.epaRank, (z) => z ? "#" + z.toLocaleString() : "–", -1);
+      group("Our scouting", "binoculars");
+      row("Matches scouted", A.sc.n, B.sc.n, (z) => z == null ? "–" : String(z), 0);
+      if (D.driverF) row("Driver skill", A.sc.driver, B.sc.driver, (z) => z == null ? "–" : fv(z, 1) + "★", 1, [D.driverRank[a] ? "#" + D.driverRank[a] + " driver" : "", D.driverRank[b] ? "#" + D.driverRank[b] + " driver" : ""]);
+      if (D.bpsF) row("BPS", A.sc.bps, B.sc.bps, (z) => fv(z, 1), 1, [D.bpsRank[a] ? "#" + D.bpsRank[a] + " BPS" : "", D.bpsRank[b] ? "#" + D.bpsRank[b] + " BPS" : ""]);
+      const moreRows = [];
+      D.numF.forEach((f) => moreRows.push({ label: f.label, x: A.sc.num ? A.sc.num[f.key] : null, y: B.sc.num ? B.sc.num[f.key] : null,
+        show: (z) => z == null ? "–" : fv(z, 1) + (f.type === "rating" ? "★" : ""), better: /foul|penalt|died|tipped/i.test(f.label) ? -1 : 1 }));
+      D.boolF.forEach((f) => moreRows.push({ label: f.label, x: A.sc.bool ? A.sc.bool[f.key] : null, y: B.sc.bool ? B.sc.bool[f.key] : null,
+        show: (z) => z == null ? "–" : Math.round(z) + "%", better: /died|tipped|disabled|foul|defended against/i.test(f.label) ? -1 : 1 }));
+      const pitRows = pitFields().filter((f) => f.key !== "photo" && f.type !== "text").map((f) => {
+        const pa = (pits[a] || {})[f.key], pb = (pits[b] || {})[f.key];
+        const sh = (z) => z == null || z === "" ? "–" : z === true ? "Yes" : z === false ? "No" : esc(String(z));
+        const isNum = f.type === "number" || f.type === "counter" || f.type === "rating";
+        return { label: f.label, x: isNum ? Number(pa) : pa, y: isNum ? Number(pb) : pb, show: (z, i) => sh(i ? pb : pa), better: isNum ? (/weight/i.test(f.label) ? 0 : 1) : 0 };
+      });
+      const rowHTML = (r) => {
+        if (r.group) return `<div class="mx-grp">${icon(r.ic)} ${esc(r.group)}</div>`;
+        const ok = (z) => z != null && !isNaN(z);
+        let wa = "", wb = "";
+        if (r.better && ok(r.x) && ok(r.y) && r.x !== r.y) { const aBetter = r.better > 0 ? r.x > r.y : r.x < r.y; wa = aBetter ? "win" : ""; wb = aBetter ? "" : "win"; }
+        const sa = r.show(r.x, 0), sb = r.show(r.y, 1);
+        const subA = r.sub ? r.sub[0] : "", subB = r.sub ? r.sub[1] : "";
+        const mx = Math.max(Math.abs(Number(r.x) || 0), Math.abs(Number(r.y) || 0)) || 1;
+        const bar = (z) => r.better > 0 && ok(z) ? `<i style="width:${Math.max(4, Math.abs(z) / mx * 100).toFixed(0)}%"></i>` : "";
+        return `<div class="mx-row">
+          <span class="mx-v a ${wa}">${bar(r.x)}<b>${sa}</b>${subA ? `<small>${esc(subA)}</small>` : ""}</span>
+          <span class="mx-lbl">${esc(r.label)}</span>
+          <span class="mx-v b ${wb}">${bar(r.y)}<b>${sb}</b>${subB ? `<small>${esc(subB)}</small>` : ""}</span></div>`;
+      };
+      const opts = (sel) => nums.slice().sort((x, y) => x - y).map((t) => `<option value="${esc(t)}" ${t === sel ? "selected" : ""}>${esc(t)}${nameFor(t) ? " · " + esc(nameFor(t)) : ""}</option>`).join("");
+      introOnce(wrap);
+      wrap.innerHTML = `
+        <section class="card mx-bar">
+          <div class="mx-sel">
+            <label class="mx-s red">${icon("search")}<select id="mxA" aria-label="First robot">${opts(a)}</select></label>
+            <span class="mx-svs">vs</span>
+            <label class="mx-s blue">${icon("search")}<select id="mxB" aria-label="Second robot">${opts(b)}</select></label>
+          </div>
+          <div class="mx-acts">
+            <button type="button" class="btn ghost sm" id="mxRoll">${icon("zap")} New pair</button>
+            <button type="button" class="btn ghost sm" id="mxUndo" ${myVotes().length ? "" : "disabled"}>${icon("chevron-left")} Undo</button>
+          </div>
+        </section>
+        <section class="mx-arena">${card(a, A, "left")}<div class="mx-vs"><span>VS</span><small>pick the better robot</small></div>${card(b, B, "right")}</section>
+        <section class="card mx-table">
+          <div class="mx-thead"><span data-tfill="${esc(a)}">${esc(a)}</span><span></span><span data-tfill="${esc(b)}">${esc(b)}</span></div>
+          ${rows.map(rowHTML).join("")}
+          ${moreRows.length ? `<details class="mx-more"><summary>${icon("list")} All match scouting <span class="hint">${moreRows.length} stats</span></summary>${moreRows.map(rowHTML).join("")}</details>` : ""}
+          ${pitRows.length ? `<div class="mx-grp">${icon("clipboard")} Pit scouting</div>${pitRows.map(rowHTML).join("")}` : ""}
+        </section>
+        <p class="hint mx-keys">${icon("info")} Keys: <kbd>←</kbd> / <kbd>→</kbd> pick · <kbd>R</kbd> new pair · <kbd>U</kbd> undo</p>`;
+      paintAvatars(wrap, [a, b]); paintTeamFills(wrap, [a, b]);
+      $("#mxA", wrap).onchange = (e) => { if (e.target.value === mxPair[1]) { toast("Pick two different robots", "err"); e.target.value = mxPair[0]; return; } mxPair = [e.target.value, mxPair[1]]; drawDuel(); };
+      $("#mxB", wrap).onchange = (e) => { if (e.target.value === mxPair[0]) { toast("Pick two different robots", "err"); e.target.value = mxPair[1]; return; } mxPair = [mxPair[0], e.target.value]; drawDuel(); };
+      $("#mxRoll", wrap).onclick = () => { mxPair = Bets.nextMashupPair(nums, myVotes()); drawDuel(); };
+      $("#mxUndo", wrap).onclick = undo;
+      $$("[data-pick]", wrap).forEach((btn) => btn.onclick = () => vote(btn.dataset.pick));
+      $$("[data-zoom]", wrap).forEach((btn) => btn.onclick = () => {
+        const t = btn.dataset.zoom, ph = (allPits()[t] || {}).photo;
+        if (ph) modal(`Team ${t} · ${nameFor(t) || "robot"}`, `<img class="mx-big" src="${esc(ph)}" alt="Team ${esc(t)} robot" />`);
+        else openTeam(t);
+      });
+    }
+    async function vote(w) {
+      if (mxBusy || !mxPair) return;
+      const [a, b] = mxPair; mxBusy = true;
+      $$(".mx-card", wrap).forEach((c) => c.classList.add(c.dataset.tfill === w ? "won" : "lost"));
+      try { await Bets.addMashupVote(ev, a, b, w); }
+      catch (e) { toast(betErr(e), "err"); mxBusy = false; drawDuel(); return; }
+      setTimeout(() => { mxBusy = false; mxPair = Bets.nextMashupPair(nums, myVotes()); if (wrap.isConnected) { paintCount(); drawDuel(); } }, 420);
+    }
+    async function undo() {
+      const last = myVotes().slice(-1)[0]; if (!last || mxBusy) return;
+      try { await Bets.undoMashupVote(ev); mxPair = [last.a, last.b]; toast(`Undid ${last.w} over ${last.w === last.a ? last.b : last.a}`); }
+      catch (e) { toast(betErr(e), "err"); }
+      paintCount(); drawDuel();
+    }
+    // ---------------- leaderboard ----------------
+    function drawBoard() {
+      const votes = mxScope === "me" ? myVotes() : Bets.mashupVotes(ev);
+      const R = Bets.mashupRatings(votes);
+      const rows = Object.values(R).filter((r) => nums.includes(r.team)).sort((x, y) => y.p - x.p || y.n - x.n);
+      const voters = new Set(Object.values(Bets.cache.mashups).filter((d) => d.event === ev && (d.votes || []).length && (mxScope !== "me" || d.uid === uid)).map((d) => d.uid)).size;
+      const unranked = nums.filter((t) => !R[t]);
+      const ep = (t) => D.epa[t] ? fmt(D.epa[t].epa) : "–";
+      const medal = ["gold", "silver", "bronze"];
+      introOnce(wrap);
+      wrap.innerHTML = `
+        <section class="card mx-lbhead">
+          <div class="seg" id="mxScope"><button data-s="all" class="${mxScope === "all" ? "on" : ""}">${icon("teams")} Everyone</button><button data-s="me" class="${mxScope === "me" ? "on" : ""}">${icon("user")} My votes</button></div>
+          <div class="mx-lbstats"><div><b>${votes.length.toLocaleString()}</b><span>votes</span></div><div><b>${voters}</b><span>${voters === 1 ? "voter" : "voters"}</span></div>
+            <div><b>${rows.length}<small>/${nums.length}</small></b><span>robots ranked</span></div></div>
+        </section>
+        ${!rows.length ? `<div class="card">${emptyState("trophy", mxScope === "me" ? "You haven't voted yet" : "No votes yet", "Head to Mashup and pick the better robot a few times. The leaderboard builds itself.")}
+            <div class="btn-row" style="justify-content:center"><a class="btn primary" href="#/picklist/mashup">${icon("compare")} Start a mashup</a></div></div>` : `
+        ${rows.length >= 3 ? `<section class="bs-podium mx-podium">${[1, 0, 2].map((i) => { const r = rows[i]; return `
+          <button class="bs-pod ${medal[i]}" data-tteam="${esc(r.team)}" data-tfill="${esc(r.team)}" style="animation-delay:${[1, 0, 2].indexOf(i) * 90}ms">
+            <span class="bs-pod-medal">${i + 1}</span><img class="team-avatar" data-avatar="${esc(r.team)}" alt="" />
+            <b class="bs-pod-num">${esc(r.team)}</b><span class="bs-pod-name">${esc(nameFor(r.team))}</span>
+            <span class="bs-pod-epa"><b>${Math.round(r.power)}</b> power · ${ep(r.team)} EPA</span></button>`; }).join("")}</section>` : ""}
+        <section class="card bs-card mx-list">
+          <div class="mx-lhead"><span>#</span><span></span><span>Robot</span><span>Mashup Power</span><span>EPA</span><span>Record</span></div>
+          ${rows.map((r, i) => `
+          <button class="mx-lrow${r.team === OUR_TEAM ? " ours" : ""}" data-tteam="${esc(r.team)}" data-tfill="${esc(r.team)}" style="animation-delay:${Math.min(i, 20) * 14}ms">
+            <span class="bs-rank">${i + 1}</span><img class="team-avatar" data-avatar="${esc(r.team)}" alt="" />
+            <span class="bs-id"><b>${esc(r.team)}</b><span>${esc(nameFor(r.team))}</span></span>
+            <span class="mx-pw"><span class="mx-pwbar"><i style="width:${r.power.toFixed(1)}%"></i><em></em></span><b>${Math.round(r.power)}</b></span>
+            <span class="mx-ep"><b>${ep(r.team)}</b><small>${D.epa[r.team] && D.epa[r.team].worldRank ? "#" + D.epa[r.team].worldRank : ""}</small></span>
+            <span class="mx-rc">${r.w}-${r.l}<small>${r.n} ${r.n === 1 ? "vote" : "votes"}</small></span>
+          </button>`).join("")}
+          ${unranked.length ? `<p class="hint mx-unr">${unranked.length} ${unranked.length === 1 ? "robot hasn't" : "robots haven't"} been compared yet: ${unranked.slice(0, 12).map(esc).join(", ")}${unranked.length > 12 ? "…" : ""}</p>` : ""}
+        </section>
+        <p class="hint mx-keys">${icon("info")} Mashup Power is the chance a robot beats an average robot (50 = average), from ${mxScope === "me" ? "your" : "everyone's"} votes. Every head-to-head counts at once, so the order you vote in doesn't matter.</p>`}`;
+      const ts = rows.map((r) => r.team);
+      paintAvatars(wrap, ts); paintTeamFills(wrap, ts);
+      $$("#mxScope button", wrap).forEach((b) => b.onclick = () => { mxScope = b.dataset.s; drawBoard(); });
+      $$("[data-tteam]", wrap).forEach((b) => b.onclick = () => openTeam(b.dataset.tteam));
+    }
+    // keyboard: ←/→ pick, R new pair, U undo (only while the head-to-head is on screen)
+    if (mxKeys) document.removeEventListener("keydown", mxKeys);
+    mxKeys = (e) => {
+      if (!wrap.isConnected) { document.removeEventListener("keydown", mxKeys); mxKeys = null; return; }
+      if (sub !== "duel" || !mxPair || e.ctrlKey || e.metaKey || e.altKey) return;
+      const tg = e.target, tag = tg && tg.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || $("#modalRoot .modal")) return;
+      if (e.key === "ArrowLeft") { e.preventDefault(); vote(mxPair[0]); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); vote(mxPair[1]); }
+      else if (e.key === "r" || e.key === "R") { mxPair = Bets.nextMashupPair(nums, myVotes()); drawDuel(); }
+      else if (e.key === "u" || e.key === "U") undo();
+    };
+    document.addEventListener("keydown", mxKeys);
+    betsRedraw = () => { if (!wrap.isConnected) return; if (sub === "leaderboard") draw(); else { paintCount(); const u = $("#mxUndo", wrap); if (u) u.disabled = !myVotes().length; } };
+    betsReload = null;
+    mashupData(ev, nums).then((d) => { D = d; draw(); }).catch(() => { wrap.innerHTML = `<div class="card">${emptyState("compare", "Couldn't load the numbers", "Check your connection and try again.")}</div>`; });
+    paintCount();
   }
 
   /* ---- Sub: Alliance selection -------------------------------------------- */

@@ -54,7 +54,7 @@ const Bets = (() => {
   const myName = () => { const m = me(); return `${m.first || ""} ${m.last || ""}`.trim(); };
   const scRef = (d, uid) => d.collection("scouters").doc(uid);
 
-  const cache = { lines: {}, bets: {}, mine: {}, apreds: {}, brackets: {}, fantasy: {} };
+  const cache = { lines: {}, bets: {}, mine: {}, apreds: {}, brackets: {}, fantasy: {}, mashups: {} };
   const ready = {};
   const subs = {};
   let cbs = [];
@@ -77,7 +77,7 @@ const Bets = (() => {
       watchedEvent = eventKey;
       const q = (c) => eventKey ? d.collection(c).where("event", "==", eventKey) : null;
       listen("lines", q("betlines")); listen("bets", q("bets"));
-      listen("apreds", q("apreds")); listen("brackets", q("brackets"));
+      listen("apreds", q("apreds")); listen("brackets", q("brackets")); listen("mashups", q("mashups"));
     }
     const uid = me().id;
     if (uid && uid !== watchedUser) { watchedUser = uid; listen("mine", d.collection("bets").where("uid", "==", uid)); }
@@ -733,6 +733,73 @@ const Bets = (() => {
     });
   }
 
+  /* ---- 5. Mashup (Pick List → Mashup): "which robot is better?" -------------
+     One doc per person per event: mashups/{event}__{uid} { votes: [{a, b, w, ts}] }.
+     Ratings use Bradley–Terry (every head-to-head counts at once, so the order of
+     votes doesn't matter). Each robot also gets one virtual win and one virtual
+     loss against an average robot, so a robot with a couple of lucky votes stays
+     near the middle until there's real evidence. Mashup Power = the chance it beats
+     an average robot (50 = average). */
+  const mashId = (event, uid) => event + "__" + uid;
+  function mashTx(event, fn) {
+    const d = db(); if (!d) return Promise.reject(new Error("OFFLINE"));
+    const uid = me().id; if (!uid) return Promise.reject(new Error("NO_USER"));
+    const ref = d.collection("mashups").doc(mashId(event, uid));
+    return d.runTransaction(async (tx) => {
+      const s = await tx.get(ref), cur = s.exists ? s.data() : { id: ref.id, event, uid, votes: [] };
+      const votes = fn((cur.votes || []).slice());
+      tx.set(ref, { id: ref.id, event, uid, name: myName(), votes, updatedAt: Date.now() });
+      return votes;
+    });
+  }
+  const addMashupVote = (event, a, b, w) => mashTx(event, (v) => v.concat([{ a: String(a), b: String(b), w: String(w), ts: Date.now() }]));
+  const undoMashupVote = (event) => mashTx(event, (v) => v.slice(0, -1));
+  const mashupVotes = (event, uid) => {
+    const docs = Object.values(cache.mashups).filter((d) => d.event === event && (!uid || d.uid === uid));
+    return [].concat(...docs.map((d) => d.votes || []));
+  };
+  function mashupRatings(votes) {
+    const W = {}, G = {}, N = {};
+    (votes || []).forEach((v) => {
+      const a = String(v.a), b = String(v.b), w = String(v.w);
+      if (!a || !b || a === b || (w !== a && w !== b)) return;
+      W[w] = (W[w] || 0) + 1; G[a] = (G[a] || 0) + 1; G[b] = (G[b] || 0) + 1;
+      const k = a < b ? a + "|" + b : b + "|" + a; N[k] = (N[k] || 0) + 1;
+    });
+    const ids = Object.keys(G), pairs = Object.entries(N).map(([k, n]) => k.split("|").concat([n]));
+    const p = {}; ids.forEach((t) => { p[t] = 1; });
+    for (let it = 0; it < 300 && ids.length; it++) {
+      const den = {}; ids.forEach((t) => { den[t] = 2 / (p[t] + 1); }); // the virtual win + loss vs an average robot
+      pairs.forEach(([x, y, n]) => { const d = n / (p[x] + p[y]); den[x] += d; den[y] += d; });
+      let logSum = 0; const np = {};
+      ids.forEach((t) => { np[t] = ((W[t] || 0) + 1) / den[t]; logSum += Math.log(np[t]); });
+      const g = Math.exp(logSum / ids.length); let delta = 0;
+      ids.forEach((t) => { const v = np[t] / g; delta = Math.max(delta, Math.abs(v - p[t])); p[t] = v; });
+      if (delta < 1e-7) break;
+    }
+    const out = {};
+    ids.forEach((t) => { out[t] = { team: t, p: p[t], power: 100 * p[t] / (p[t] + 1), w: W[t] || 0, l: G[t] - (W[t] || 0), n: G[t] }; });
+    return out;
+  }
+  // Next pair to show: a robot you've compared least, against one rated close to it
+  // (the most informative matchup), never a pair you just saw.
+  function nextMashupPair(teams, votes) {
+    const ids = (teams || []).map(String); if (ids.length < 2) return null;
+    const R = mashupRatings(votes), cnt = {}; ids.forEach((t) => { cnt[t] = (R[t] && R[t].n) || 0; });
+    const recent = new Set((votes || []).slice(-Math.min(40, ids.length * 2)).map((v) => [v.a, v.b].sort().join("|")));
+    const byCount = ids.slice().sort((x, y) => cnt[x] - cnt[y] || Math.random() - 0.5);
+    const a = byCount[Math.floor(Math.random() * Math.max(1, Math.ceil(ids.length * 0.25)))];
+    const la = Math.log((R[a] && R[a].p) || 1);
+    let best = null, bestScore = Infinity;
+    ids.forEach((b) => {
+      if (b === a) return;
+      const sc = Math.abs(Math.log((R[b] && R[b].p) || 1) - la) + 0.35 * cnt[b] / Math.max(1, cnt[a] + 1)
+        + Math.random() * 0.6 + (recent.has([a, b].sort().join("|")) ? 5 : 0);
+      if (sc < bestScore) { bestScore = sc; best = b; }
+    });
+    return Math.random() < 0.5 ? [a, best] : [best, a];
+  }
+
   return {
     POOLS, SEED, PLAYOFF_MULT, AP_PAY, ROUND_BB, BRACKET_FEE, DE8, FP_START, ROSTER, MIN_PRICE, WEEK_WIN, GRAND_PRIZE, AUTO_PICK_MS, LEAGUES,
     cache, watch, isReady, onChange: (cb) => { cbs.push(cb); return () => { cbs = cbs.filter((x) => x !== cb); }; }, _inject,
@@ -740,6 +807,7 @@ const Bets = (() => {
     makeLine, outcome, poolLabels, pools, betsOn, estMultiplier, payouts, openMarket, lockMarket, placeBet, cancelBet, settleEvent, settleMyOtherEvents, voidMarket,
     scoreAlliances, gridOf, saveAlliancePred, settleAlliancePreds,
     bracketParticipants, cleanPicks, bracketActual, scoreBracket, bracketDone, saveBracket, settleBrackets,
+    addMashupVote, undoMashupVote, mashupVotes, mashupRatings, nextMashupPair,
     fantasyYear, kickoffAt, priceTable, priceOf, leagueDoc, myLeague, members, draftTurn, takenIn, maxSpend,
     joinLeague, leaveLeague, startDraft, draftPick, setBench, freeAgent, proposeTrade, answerTrade, benchFor, activeFor,
     seasonWeeks, openWeek, pairings, weekScores, standings, settleWeek, payChampion, snapWeek, lineupFor,
