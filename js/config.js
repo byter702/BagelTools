@@ -72,7 +72,7 @@ window.CONFIG = {
   countdowns: [
     { label: "2027 Kickoff", sub: "BIOCORE game reveal", where: "Livestream · 9:00 AM PT", at: "2027-01-09T09:00:00-08:00" },
     { label: "Los Angeles Event", sub: "CA District Los Angeles Event", where: "El Segundo, CA", at: "2027-03-19T08:00:00-07:00", eventKey: "2027calas" },
-    { label: "San Gabriel Valley Event", sub: "CA District San Gabriel Valley Event", where: "Rosemead, CA", at: "2027-04-02T08:00:00-07:00", eventKey: "2027casgv" },
+    { label: "Hueneme Port Event", sub: "CA District Hueneme Port Event", where: "Port Hueneme, CA", at: "2027-04-02T08:00:00-07:00", eventKey: "2027capoh" },
   ],
 
   /* --- Firebase (optional cloud sync) ----------------------------------------
