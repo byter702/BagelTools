@@ -725,7 +725,7 @@
      href: "https://parts.702tools.com" to open a separate site.
      ======================================================================== */
   const APPS = [
-    { id: "dashboard", name: "Dashboard", icon: "dashboard", accent: "#ffc718", blurb: "Your Bagel Bucks, the leaderboard and the whole team",
+    { id: "dashboard", name: "Dashboard", icon: "dashboard", accent: "#ffc718", hidden: true, blurb: "Your Bagel Bucks, the leaderboard and the whole team",
       pages: [["dashboard", "Overview", "dashboard", "Your day at a glance"], ["profile", "Profile", "user", "Your Bagel Bucks and scouting"],
         ["members", "Members", "teams", "Leaderboard and roster"]] },
     { id: "scouting", name: "Scouting", icon: "binoculars", accent: "#5bbde2", blurb: "Scout every match and pit, then build the pick list",
@@ -801,7 +801,7 @@
           <h2 class="hub-title">Bagel<span>Tools</span></h2>
           <p class="pg-sub">${greet}${u ? `, <b>${esc(u.first)}</b>` : ""}. ${s.eventName ? `You're on <b>${esc(s.eventName)}</b>.` : "Pick an app to get going."}</p>
         </header>
-        <div class="hub-grid" style="--cols:${apps.length - 1}">${apps.map(tile).join("")}</div>
+        <div class="hub-grid" style="--cols:${apps.length}">${apps.map(tile).join("")}</div>
       </section>
       <div class="hub-corner">
         <a class="hub-mini" href="#/settings" title="Settings" aria-label="Settings">${icon("settings")}</a>
@@ -919,8 +919,14 @@
     const dark = document.documentElement.getAttribute("data-theme") !== "light";
     themeBtn.querySelector("use").setAttribute("href", dark ? "#ic-moon" : "#ic-sun");
     themeBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
-    // breadcrumb: Home › App › Page (the app part links to the app's first page)
+    // top bar: Home | Dashboard tabs (a pill slides to the one you're on), then
+    // App › Page for everything else (the app part links to the app's first page)
     const r = current(), rt = routes[r] || routes.home, ap = appFor(rt.navAs || r);
+    const onHome = rt === routes.home, onDash = !onHome && ap.id === "dashboard";
+    $("#tbHome").classList.toggle("on", onHome); $("#tbDash").classList.toggle("on", onDash);
+    $("#tbHome").setAttribute("aria-current", onHome ? "page" : "false"); $("#tbDash").setAttribute("aria-current", onDash ? "page" : "false");
+    document.body.classList.toggle("tb-title-dup", r === "dashboard"); // "Dashboard › Dashboard" says nothing
+    moveTabPill(); requestAnimationFrame(moveTabPill);
     const tbApp = $("#tbApp");
     if (tbApp) {
       if (ap.hidden || rt === routes.home) tbApp.innerHTML = "";
@@ -946,6 +952,17 @@
     // user chip in sidebar foot
     const chip = $("#userChip");
     if (chip) { chip.hidden = !u; if (u) $("#userChipName").textContent = `${u.first} ${u.last}`; }
+  }
+
+  function moveTabPill() {
+    const nav = $("#tbNav"), on = nav && $(".tb-tab.on", nav);
+    if (!nav) return;
+    // until the tabs can be measured, the active tab paints its own gold background
+    if (!on || !on.offsetWidth) { nav.style.setProperty("--pill-o", "0"); nav.classList.remove("pill"); return; }
+    nav.classList.add("pill");
+    nav.style.setProperty("--pill-x", on.offsetLeft + "px");
+    nav.style.setProperty("--pill-w", on.offsetWidth + "px");
+    nav.style.setProperty("--pill-o", "1");
   }
 
   /* ---- Event selection (shared by dashboard, sidebar chip, settings) ------- */
@@ -7554,6 +7571,8 @@
       const tb = $("#themeToggle"); tb.classList.remove("spin"); void tb.offsetWidth; tb.classList.add("spin");
     };
     $("#tbEvent").onclick = openEventMenu;
+    window.addEventListener("resize", moveTabPill);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(moveTabPill); // tab widths change once Orbitron loads
     const logoutBtn = $("#logoutBtn");
     if (logoutBtn) logoutBtn.onclick = () => confirmDialog("Log out of BagelTools?", () => Auth.logout());
     initGlobalSearch();

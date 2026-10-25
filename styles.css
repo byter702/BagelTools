@@ -3812,3 +3812,39 @@ input, textarea, select, [contenteditable="true"] { caret-color: auto; }
 /* orange text needs to be darker to read on the light theme */
 :root[data-theme="light"] .bp-ppct, :root[data-theme="light"] .bp-qty, :root[data-theme="light"] .bp-stats-pct, :root[data-theme="light"] .bp-mech.add,
 :root[data-theme="light"] .bp-pill.add, :root[data-theme="light"] .bp-addperson, :root[data-theme="light"] .bp-undef h4 span { color: color-mix(in srgb, var(--app) 68%, #000); }
+
+/* ==== v109: Home | Dashboard tabs in the top bar ==== */
+.tb-nav { --pill-x: 0px; --pill-w: 0px; --pill-o: 0; position: relative; display: inline-flex; align-items: center; gap: 4px; flex: none;
+  padding: 4px; border-radius: 15px; background: var(--surface-2); border: 1px solid var(--border); }
+.tb-nav::before { content: ""; position: absolute; left: 0; top: 4px; bottom: 4px; width: var(--pill-w); border-radius: 11px; opacity: var(--pill-o);
+  background: var(--secondary); box-shadow: 0 10px 22px -12px var(--secondary);
+  transform: translateX(var(--pill-x)); transition: transform .5s cubic-bezier(.2,.9,.25,1.15), width .5s cubic-bezier(.2,.9,.25,1.15), opacity .3s ease; }
+.tb-tab { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px 0 11px; border-radius: 11px;
+  text-decoration: none; color: var(--text-dim); font-family: var(--font-display); font-weight: 800; font-size: .76rem; letter-spacing: .07em; text-transform: uppercase;
+  transition: color .3s ease, background .2s ease; }
+.tb-tab .ico { width: 18px; height: 18px; transition: transform .45s cubic-bezier(.2,.9,.25,1.5); }
+.tb-tab:hover { color: var(--text); }
+.tb-tab:not(.on):hover { background: var(--surface); }
+.tb-tab:hover .ico { transform: translateY(-1px) scale(1.1); }
+.tb-tab.on { color: var(--on-secondary, #1a1300); background: var(--secondary); }
+.tb-nav.pill .tb-tab.on { background: transparent; }
+.tb-tab.on .ico { --ico-duo-c: #fff; --ico-duo: .45; }
+.tb-tab:focus-visible { outline: 3px solid var(--ring); outline-offset: 1px; }
+/* the old gold Home pill lives in the tabs now; the crumbs only show App › Page */
+.tb-homebtn { display: none !important; }
+body.tb-title-dup .tb-crumbs { display: none; }
+body.is-home .tb-brand { margin-right: 6px; }
+
+@media (max-width: 760px) {
+  .tb-nav { padding: 3px; gap: 2px; border-radius: 13px; }
+  .tb-nav::before { top: 3px; bottom: 3px; border-radius: 10px; }
+  .tb-tab { width: 36px; height: 34px; padding: 0; justify-content: center; }
+  .tb-tab span { display: none; }
+  .topbar .gsearch, .topbar .tb-event { flex-shrink: 0; } /* on phones these are icon buttons: never squeeze them */
+  .topbar { gap: 6px; padding: 10px 12px; }
+  .tb-tab { width: 34px; }
+}
+@media (max-width: 400px) { .tb-crumbs h1 { font-size: .8rem; } }
+/* small phones on the home page: you're already home, so just the Dashboard tab */
+@media (max-width: 480px) { body.is-home #tbHome { display: none; } }
+@media (prefers-reduced-motion: reduce) { .tb-nav::before { transition: none; } }
