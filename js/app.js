@@ -717,15 +717,143 @@
   }
 
   /* ===========================================================================
+     BAGELTOOLS — the hub (#/home) and its apps
+     Each app is a group of existing pages. Home shows one big button per app;
+     inside an app the sidebar lists only that app's pages. To add an app later
+     (e.g. BagelParts) add an entry: pages: [[route, label, icon, blurb]], or
+     href: "https://parts.702tools.com" to open a separate site.
+     ======================================================================== */
+  const APPS = [
+    { id: "dashboard", name: "Dashboard", icon: "dashboard", accent: "#ffc718", blurb: "Your Bagel Bucks, the leaderboard and the whole team",
+      pages: [["dashboard", "Overview", "dashboard", "Your day at a glance"], ["members", "Members", "user", "Profiles, leaderboard, scouters"]] },
+    { id: "scouting", name: "Scouting", icon: "binoculars", accent: "#5bbde2", blurb: "Scout every match and every pit",
+      pages: [["match", "Match Scouting", "binoculars", "Scout a robot in a match"], ["pit", "Pit Scouting", "clipboard", "Robot specs and photos"]] },
+    { id: "strategy", name: "Strategy", icon: "chess", accent: "#a78bfa", blurb: "Turn the data into a pick list",
+      pages: [["data", "Data", "database", "Search, rankings, spreadsheet"], ["picklist", "Pick List", "list", "Alliances, Mashup, Bracket"]] },
+    { id: "statistics", name: "Statistics", icon: "chart", accent: "#4ade80", blurb: "Teams, events and matchups by the numbers",
+      pages: [["bagelstats", "Teams", "chart", "EPA leaderboards"], ["compare", "Compare", "linegraph", "Head to head + charts"],
+        ["teams", "Event", "calendar", "Teams, schedule, rankings"], ["matchup", "Matchup", "compare", "Predict any match"]] },
+    { id: "fantasy", name: "Fantasy", icon: "star", accent: "#fb7185", blurb: "Draft robots, win Bagel Bucks",
+      pages: [["fantasy", "Fantasy Alliance", "star", "Your league and draft"]] },
+    { id: "system", name: "BagelTools", icon: "settings", accent: "#9fb2c0", hidden: true, blurb: "Settings and admin",
+      pages: [["settings", "Settings", "settings", "Theme, season, account"], ["admin", "Admin", "shield", "Members, forms, betting"]] },
+  ];
+  const ROUTE_APP = { team: "statistics" };
+  APPS.forEach((a) => a.pages.forEach((p) => { ROUTE_APP[p[0]] = a.id; }));
+  const appFor = (route) => APPS.find((a) => a.id === ROUTE_APP[route]) || APPS[0];
+  const reduceMotion = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ---- per-app sidebar: the open page grows, a glow slides between pages ----
+  const NV_H = 50, NV_HA = 84, NV_GAP = 6;
+  function renderAppNav(appDef, active) {
+    const nav = $("#nav"), head = $("#appHead");
+    if (!nav) return;
+    document.documentElement.style.setProperty("--app", appDef.accent);
+    if (nav.dataset.app !== appDef.id) {
+      nav.dataset.app = appDef.id;
+      head.innerHTML = `<span class="ah-ico">${icon(appDef.icon)}</span><div><span class="ah-eye">BagelTools app</span><b>${esc(appDef.name)}</b></div>`;
+      head.classList.remove("ah-in"); void head.offsetWidth; head.classList.add("ah-in");
+      nav.innerHTML = `<span class="nv-glow" aria-hidden="true"></span>` + appDef.pages.map(([r, label, ic, blurb], i) =>
+        `<a class="nv" data-route="${r}" href="#/${r}" style="--i:${i}"><span class="nv-ico">${icon(ic)}</span>
+          <span class="nv-txt"><b>${esc(label)}</b><small>${esc(blurb)}</small></span></a>`).join("");
+      nav.classList.remove("nv-in"); void nav.offsetWidth; nav.classList.add("nv-in");
+    }
+    const items = $$(".nv", nav);
+    const idx = Math.max(0, items.findIndex((a) => a.dataset.route === active));
+    items.forEach((a, i) => { a.classList.toggle("active", i === idx); a.setAttribute("aria-current", i === idx ? "page" : "false"); });
+    nav.style.setProperty("--glow-y", idx * (NV_H + NV_GAP) + "px");
+  }
+
+  // ---- home ----
+  function renderHome(root) {
+    const me = Store.getMe(), u = Auth.currentUser(), s = Store.getSettings();
+    const hr = new Date().getHours();
+    const greet = hr < 5 ? "Up late" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
+    const board = allScouters().slice().sort((a, b) => (b.bb || 0) - (a.bb || 0));
+    const rank = board.findIndex((x) => x.id === me.id) + 1;
+    const reqs = Object.keys(Store.getRequests()).length;
+    const tile = (a, i) => {
+      const href = a.href || "#/" + a.pages[0][0];
+      const wide = a.id === "dashboard";
+      return `<a class="hub-tile${wide ? " wide" : ""}" href="${esc(href)}" data-app="${a.id}" style="--app:${a.accent};--i:${i}"${a.href ? ` target="_blank" rel="noopener"` : ""}>
+        <span class="ht-spot" aria-hidden="true"></span>
+        <span class="ht-mark" aria-hidden="true">${icon(a.icon)}</span>
+        <span class="ht-ico">${icon(a.icon)}</span>
+        <span class="ht-txt"><b>${esc(a.name)}</b><span>${esc(a.blurb)}</span></span>
+        ${wide ? `<span class="ht-stats">
+            <span><b data-count="${me.bb || 0}">${(me.bb || 0).toLocaleString()}</b><small>Bagel Bucks</small></span>
+            <span><b>${rank ? "#" + rank : "–"}</b><small>of ${board.length} on the leaderboard</small></span>
+            <span><b data-count="${matchCountOf(me)}">${matchCountOf(me)}</b><small>matches scouted</small></span>
+            <span><b data-count="${pitCountOf(me)}">${pitCountOf(me)}</b><small>pits scouted</small></span></span>`
+          : `<span class="ht-pages">${a.pages.map((p) => `<span>${icon(p[2])}${esc(p[1])}</span>`).join("")}</span>`}
+        <span class="ht-go">${icon("arrow-right")}</span>
+      </a>`;
+    };
+    const apps = APPS.filter((a) => !a.hidden);
+    root.innerHTML = `
+      <section class="hub">
+        <header class="hub-hero">
+          <span class="pg-eyebrow">FRC 702 · Bagel Bytes · ${esc(GAME.seasonLabel)}</span>
+          <h2 class="hub-title">Bagel<span>Tools</span></h2>
+          <p class="pg-sub">${greet}${u ? `, <b>${esc(u.first)}</b>` : ""}. ${s.eventName ? `You're on <b>${esc(s.eventName)}</b>.` : "Pick an app to get going."}</p>
+        </header>
+        <div class="hub-grid">${apps.map(tile).join("")}</div>
+      </section>
+      <div class="hub-corner">
+        <a class="hub-mini" href="#/settings" title="Settings" aria-label="Settings">${icon("settings")}</a>
+        <a class="hub-mini" href="#/admin" title="Admin" aria-label="Admin">${icon("shield")}<span class="nav-badge" id="reqBadge"${reqs ? "" : " hidden"}>${reqs || ""}</span></a>
+      </div>`;
+    countUp(root);
+    // pointer spotlight + a gentle 3D tilt that follows the cursor
+    $$(".hub-tile", root).forEach((t) => {
+      t.addEventListener("pointermove", (e) => {
+        const r = t.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+        t.style.setProperty("--mx", (x * 100).toFixed(1) + "%"); t.style.setProperty("--my", (y * 100).toFixed(1) + "%");
+        if (!reduceMotion() && e.pointerType === "mouse") { t.style.setProperty("--rx", ((0.5 - y) * 6).toFixed(2) + "deg"); t.style.setProperty("--ry", ((x - 0.5) * 8).toFixed(2) + "deg"); }
+      });
+      t.addEventListener("pointerleave", () => { t.style.setProperty("--rx", "0deg"); t.style.setProperty("--ry", "0deg"); });
+      if (t.target === "_blank") return;
+      // opening an app: the tile grows to fill the screen, then the app takes over
+      t.addEventListener("click", (e) => {
+        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+        e.preventDefault();
+        const href = t.getAttribute("href");
+        if (reduceMotion()) { location.hash = href; return; }
+        const r = t.getBoundingClientRect(), z = document.createElement("div");
+        z.className = "hub-zoom"; z.style.setProperty("--app", getComputedStyle(t).getPropertyValue("--app"));
+        Object.assign(z.style, { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px" });
+        z.innerHTML = `<span class="hz-ico">${t.querySelector(".ht-ico").innerHTML}</span>`;
+        document.body.appendChild(z);
+        t.classList.add("launch");
+        const grow = z.animate([
+          { left: r.left + "px", top: r.top + "px", width: r.width + "px", height: r.height + "px", borderRadius: "26px" },
+          { left: "0px", top: "0px", width: innerWidth + "px", height: innerHeight + "px", borderRadius: "0px" }],
+          { duration: 460, easing: "cubic-bezier(.7,0,.2,1)", fill: "forwards" });
+        // timers back up the animation events (they can stall in a background tab), so
+        // the app always opens and the overlay always goes away
+        let opened = false;
+        const open = () => {
+          if (opened) return; opened = true;
+          location.hash = href;
+          setTimeout(() => { z.classList.add("out"); setTimeout(() => z.remove(), 380); }, 70);
+        };
+        grow.onfinish = open;
+        setTimeout(open, 560);
+      });
+    });
+  }
+
+  /* ===========================================================================
      ROUTER
      ======================================================================== */
   const routes = {
+    home: { title: "BagelTools", render: renderHome },
     dashboard: { title: "Dashboard", render: renderDashboard },
     members: { title: "Members", render: renderMembers },
     teams: { title: "Event", render: renderEventsPage },
     match: { title: "Match Scouting", render: renderMatch },
     pit: { title: "Pit Scouting", render: renderPit },
-    bagelstats: { title: "BagelStats", render: renderBagelStats },
+    bagelstats: { title: "Teams", render: renderBagelStats },
     compare: { title: "Compare", render: renderCompare },
     matchup: { title: "Matchup", render: renderMatchup },
     picklist: { title: "Pick List", render: renderPicklist },
@@ -738,10 +866,10 @@
   };
 
   function go(route) {
-    if (!routes[route]) route = "dashboard";
+    if (!routes[route]) route = "home";
     location.hash = "#/" + route;
   }
-  function current() { return (location.hash.replace(/^#\/?/, "") || "dashboard").split("/")[0]; }
+  function current() { return (location.hash.replace(/^#\/?/, "") || "home").split("/")[0]; }
 
   let prevRoute = null, prevHash = null;
   function router() {
@@ -752,15 +880,21 @@
     // robot for everyone else (and so coming back + picking again doesn't double up).
     if (prevRoute === "match" && r !== "match" && window.Cloud) Cloud.releaseMyClaims();
     prevRoute = r;
-    const route = routes[r] || routes.dashboard;
+    const route = routes[r] || routes.home;
     $("#pageTitle").textContent = route.title;
-    $$("#nav a").forEach((a) => a.classList.toggle("active", a.dataset.route === (route.navAs || r)));
+    // BagelTools: home has no sidebar; every other page lives inside its app's sidebar
+    const isHome = route === routes.home;
+    document.body.classList.toggle("is-home", isHome);
+    if (!isHome) renderAppNav(appFor(route.navAs || r), route.navAs || r);
     app.classList.remove("nav-open");
     document.body.classList.remove("nav-lock");
     view.innerHTML = "";
     route.render(view);
     view.focus({ preventScroll: true });
-    if (newPage) window.scrollTo(0, 0);
+    if (newPage) {
+      window.scrollTo(0, 0);
+      if (!reduceMotion()) { view.classList.remove("pg-enter"); void view.offsetWidth; view.classList.add("pg-enter"); }
+    }
     refreshChrome();
   }
 
@@ -877,7 +1011,7 @@
     const actions = [
       ["match", "plus", "New match", "Scout a robot", "y"],
       ["pit", "wrench", "Pit scout", "Robot + photo", "c"],
-      ["bagelstats", "chart", "BagelStats", "EPA rankings", "g"],
+      ["bagelstats", "chart", "Teams", "EPA rankings", "g"],
       ["data/spreadsheet", "download", "Export data", "Spreadsheet + CSV", "v"],
     ];
     root.innerHTML = `
@@ -2001,7 +2135,7 @@
     const evLabel = s2.eventName ? esc(s2.eventName) : "Event";
     const epaCard = `
       <div class="card flush epa-card">
-        <div class="row" style="gap:10px;margin-bottom:10px">${icon("chart")}<h3 style="margin:0">BagelStats EPA</h3></div>
+        <div class="row" style="gap:10px;margin-bottom:10px">${icon("chart")}<h3 style="margin:0">Season EPA</h3></div>
         <div class="epa-ranks">
           <button class="epa-rank" data-jump="world" ${sbRow ? "" : "disabled"}>
             <span class="er-label">${icon("globe")} World rank</span>
@@ -2020,7 +2154,7 @@
           <div class="epa-mode"><span class="em-label">Ongoing event</span><span class="em-val">${evRow ? fmt(evRow.epa) : "—"}</span></div>
         </div>
         ${sbRow && sbRow.record ? `<div class="epa-record">Season record <b>${sbRow.record.w}–${sbRow.record.l}–${sbRow.record.t}</b> <span class="hint">(W–L–T)</span></div>` : ""}
-        ${!sbRow ? `<p class="hint" style="margin:10px 0 0">World & season EPA come from Statbotics — open <b>BagelStats → World</b> while online to load them.</p>` : ""}
+        ${!sbRow ? `<p class="hint" style="margin:10px 0 0">World & season EPA come from Statbotics — open <b>Statistics → Teams</b> while online to load them.</p>` : ""}
         <div class="epa-trend">
           <div class="row between" style="margin:14px 0 8px">
             <span class="er-label">EPA over time</span>
@@ -2170,7 +2304,7 @@
   function renderTeamPage(root) {
     const { team, year, history } = teamRoute();
     if (history) teamPageTab = "history";
-    if (!team) { root.innerHTML = `<div class="card">${emptyState("search", "No team", "Open a team from Events, BagelStats or Data.")}</div>`; return; }
+    if (!team) { root.innerHTML = `<div class="card">${emptyState("search", "No team", "Open a team from Statistics or Data.")}</div>`; return; }
     $("#pageTitle").textContent = "Team " + team;
     const pit = Store.season === year || GAME.season === year ? allPits()[team] : null;
     const ourMatches = allMatches().filter((m) => String(m.team) === team).length;
@@ -3790,7 +3924,7 @@
           <button class="btn primary sm" id="submitBoard">${icon("check")} ${b.submitted ? "Update selections" : "Submit selections"}</button>
         </div>
       </div>
-      <p class="hint">Tap a team to view its BagelStats. Use ${icon("plus")} (or drag) to place a team, then tap a slot. Max pick is the 3rd pick.${b.submitted ? ` <span class="badge green dot">Submitted ${new Date(b.submittedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>` : ""}</p>
+      <p class="hint">Tap a team to view its stats. Use ${icon("plus")} (or drag) to place a team, then tap a slot. Max pick is the 3rd pick.${b.submitted ? ` <span class="badge green dot">Submitted ${new Date(b.submittedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>` : ""}</p>
       <div class="place-banner" id="pickBanner" hidden></div>
 
       <div class="alliance-layout">
@@ -3996,7 +4130,7 @@
           <button class="btn primary sm" id="submitTiers">${icon("check")} Submit</button>
         </div>
       </div>
-      <p class="hint">Tap a team to view its BagelStats. Use ${icon("plus")} (or drag) to pick a team up, then tap a tier row to place it. <b>Auto-rate</b> sorts every team into S–F by EPA.</p>
+      <p class="hint">Tap a team to view its stats. Use ${icon("plus")} (or drag) to pick a team up, then tap a tier row to place it. <b>Auto-rate</b> sorts every team into S–F by EPA.</p>
       <div class="place-banner" id="tierBanner" hidden></div>
       <div class="tier-board" id="tierBoard"></div>
       <div class="card" style="margin-top:14px">
@@ -4862,7 +4996,7 @@
     const years = []; for (let y = GAME.season; y >= 2002; y--) years.push(y);
     const isEvent = bagelTab === "event";
     root.innerHTML = `
-      ${pageHero({ ic: "chart", eyebrow: `BagelStats · ${isEvent ? "live event" : year + " " + (FRC_GAMES[year] || "")}`, title: "EPA leaderboards",
+      ${pageHero({ ic: "chart", eyebrow: `Teams · ${isEvent ? "live event" : year + " " + (FRC_GAMES[year] || "")}`, title: "EPA leaderboards",
         sub: isEvent ? "On-device EPA from your event's played matches, with TBA ranks and ranking points."
           : "Expected points added for every team, from Statbotics. Tap a team to dig in.",
         side: `<label class="bs-year${isEvent ? " off" : ""}" title="${isEvent ? "The Event tab uses your selected event" : "Season"}">${icon("calendar")}
@@ -5197,7 +5331,7 @@
         const epaMap = buildSeasonEpa(), evTeams = eventTeams().map((t) => String(t.team_number));
         ranked = evTeams.length ? evTeams.filter((t) => epaMap[t] != null).sort((a, b) => epaMap[b] - epaMap[a])
           : (API.sbCachedLeaderboard(GAME.season) || []).map((r) => String(r.team));
-        if (!ranked.length) { toast("Load World EPA first (BagelStats → World)", "err"); return; }
+        if (!ranked.length) { toast("Load World EPA first (Statistics → Teams → World)", "err"); return; }
       }
       compareTeams = ranked.slice(0, 5);
       renderCompare(root);
@@ -6889,7 +7023,7 @@
           <div><span>702 vs #1</span><b>${ratio ? "×" + ratio.toFixed(2) : "–"}</b><small>${on ? "rerolled every time it's turned on" : "1.4–1.7× when on"}</small></div>
         </div>
         <ul class="prime-list">
-          <li>${icon("chart")}<span><b>Changes:</b> BagelStats, Compare + Charts, Matchup, the team popup and profile (EPA, ranks, records, events, awards, blue banners, history), event rankings and Event search.</span></li>
+          <li>${icon("chart")}<span><b>Changes:</b> Teams, Compare + Charts, Matchup, the team popup and profile (EPA, ranks, records, events, awards, blue banners, history), event rankings and Event search.</span></li>
           <li>${icon("shield")}<span><b>Never touched:</b> scouting data, pit data, pick lists, Bagel Bucks, betting lines and fantasy prices. It's a costume, not a cheat.</span></li>
           <li>${icon("bell")}<span>Everyone gets a notice when it's switched on or off, and their pages update right away.</span></li>
         </ul>
@@ -7275,17 +7409,18 @@
       applyTheme(next); Store.setSettings({ theme: next }); refreshChrome();
     };
     const logoutBtn = $("#logoutBtn");
-    if (logoutBtn) logoutBtn.onclick = () => confirmDialog("Log out of the scouting app?", () => Auth.logout());
+    if (logoutBtn) logoutBtn.onclick = () => confirmDialog("Log out of BagelTools?", () => Auth.logout());
     initGlobalSearch();
     const userName = $("#userChipName");
     if (userName) { userName.title = "View your profile"; userName.onclick = () => { location.hash = "#/members/profile/" + Store.getMe().id; }; }
     const chip = $("#eventChip");
     if (chip) { chip.classList.add("clickable"); chip.title = "Click to change event";
       chip.onclick = openEventPicker; }
-    $$("#nav a").forEach((a) => a.onclick = (e) => { e.preventDefault(); go(a.dataset.route); });
+    // app sidebar links are plain #/route links; tapping the page you're on just closes the phone drawer
+    $("#nav").addEventListener("click", (e) => { const a = e.target.closest("[data-route]"); if (a && a.dataset.route === current()) { app.classList.remove("nav-open"); syncNavLock(); } });
 
     window.addEventListener("hashchange", router);
-    if (!location.hash) location.hash = "#/dashboard";
+    if (!location.hash) location.hash = "#/home";
     router();
 
     // Cloud sync (real-time scouters, BB leaderboard, shared lists). No-op if

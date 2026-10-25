@@ -115,7 +115,7 @@ const Auth = (() => {
         <div class="auth-brand">
           <img class="auth-logo logo-dark" src="assets/logo-dark.png" alt="FRC 702 Bagel Bytes logo" />
           <img class="auth-logo logo-light" src="assets/logo.png" alt="FRC 702 Bagel Bytes logo" />
-          <div><h1 class="auth-title">Bagel<span>Scout</span></h1><p class="auth-tag">FRC 702 · Members only</p></div>
+          <div><h1 class="auth-title">Bagel<span>Tools</span></h1><p class="auth-tag">FRC 702 · Members only</p></div>
         </div>
         <div class="auth-tabs" id="authTabs" role="tablist">
           <span class="auth-tab-pill"></span>

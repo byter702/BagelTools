@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bagel Bytes Scouting · FRC 702</title>
+  <title>BagelTools · FRC 702</title>
   <meta name="description" content="Scouting, pit scouting, strategy & pick-lists for FRC Team 702 The Bagel Bytes — 2026 REBUILT." />
   <link rel="icon" href="assets/logo.png" />
   <link rel="apple-touch-icon" href="assets/logo.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css?v=99" />
+  <link rel="stylesheet" href="styles.css?v=100" />
 </head>
 <body>
   <!-- Inline SVG icon sprite (Lucide-style). Referenced via <use href="#ic-..."> -->
@@ -70,37 +70,20 @@
 
   <div class="app" id="app">
     <aside class="sidebar" id="sidebar">
-      <div class="brand">
+      <a class="brand home-link" href="#/home" title="Back to all BagelTools apps">
         <img class="logo-dark" src="assets/logo-dark.png" alt="FRC Team 702 Bagel Bytes logo" />
         <img class="logo-light" src="assets/logo.png" alt="FRC Team 702 Bagel Bytes logo" />
         <div class="brand-text">
-          <span class="team">Bagel<span class="team-accent">Scout</span></span>
-          <span class="sub">702 · Scouting</span>
+          <span class="team">Bagel<span class="team-accent">Tools</span></span>
+          <span class="sub"><svg class="ico"><use href="#ic-chevron-left"/></svg> All apps</span>
         </div>
-      </div>
+      </a>
+
+      <div class="app-head" id="appHead"></div>
 
       <div class="event-chip" id="eventChip">No event selected</div>
 
-      <nav class="nav" id="nav" aria-label="Primary">
-        <span class="nav-label">Overview</span>
-        <a data-route="dashboard"><svg class="ico"><use href="#ic-dashboard"/></svg> Dashboard</a>
-        <a data-route="members"><svg class="ico"><use href="#ic-user"/></svg> Members</a>
-        <a data-route="teams"><svg class="ico"><use href="#ic-bagel"/></svg> Event</a>
-        <a data-route="fantasy"><svg class="ico"><use href="#ic-star"/></svg> Fantasy</a>
-        <span class="nav-label">Scouting</span>
-        <a data-route="match"><svg class="ico"><use href="#ic-binoculars"/></svg> Match Scouting</a>
-        <a data-route="pit"><svg class="ico"><use href="#ic-clipboard"/></svg> Pit Scouting</a>
-        <span class="nav-label">Analyze</span>
-        <a data-route="bagelstats"><svg class="ico"><use href="#ic-chart"/></svg> BagelStats</a>
-        <a data-route="compare"><svg class="ico"><use href="#ic-linegraph"/></svg> Compare</a>
-        <a data-route="matchup"><svg class="ico"><use href="#ic-compare"/></svg> Matchup</a>
-        <span class="nav-label">Manage</span>
-        <a data-route="picklist"><svg class="ico"><use href="#ic-list"/></svg> Pick List</a>
-        <a data-route="data"><svg class="ico"><use href="#ic-database"/></svg> Data</a>
-        <a data-route="admin"><svg class="ico"><use href="#ic-shield"/></svg> Admin
-          <span class="nav-badge" id="reqBadge" hidden></span></a>
-        <a data-route="settings"><svg class="ico"><use href="#ic-settings"/></svg> Settings</a>
-      </nav>
+      <nav class="nav" id="nav" aria-label="App pages"></nav>
 
       <div class="sidebar-foot">
         <div class="user-chip" id="userChip" hidden>
@@ -149,16 +132,16 @@
 
   <!-- Access password & admin PIN. Committed so the (private) Vercel deploy has
        them; keep this repo private. See js/secrets.example.js for the format. -->
-  <script src="js/secrets.js?v=99"></script>
-  <script src="js/config.js?v=99"></script>
-  <script src="js/game-config.js?v=99"></script>
-  <script src="js/store.js?v=99"></script>
-  <script src="js/api.js?v=99"></script>
-  <script src="js/epa.js?v=99"></script>
-  <script src="js/auth.js?v=99"></script>
-  <script src="js/cloud.js?v=99"></script>
-  <script src="js/bets.js?v=99"></script>
-  <script src="js/app.js?v=99"></script>
+  <script src="js/secrets.js?v=100"></script>
+  <script src="js/config.js?v=100"></script>
+  <script src="js/game-config.js?v=100"></script>
+  <script src="js/store.js?v=100"></script>
+  <script src="js/api.js?v=100"></script>
+  <script src="js/epa.js?v=100"></script>
+  <script src="js/auth.js?v=100"></script>
+  <script src="js/cloud.js?v=100"></script>
+  <script src="js/bets.js?v=100"></script>
+  <script src="js/app.js?v=100"></script>
 </body>
 </html>
 
