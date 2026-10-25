@@ -5723,7 +5723,7 @@
         <div class="row between" style="align-items:flex-start">
           <div class="row" style="gap:10px">${icon("bell")}
             <div><h2 style="margin:0">${reqKeys.length} access request${reqKeys.length > 1 ? "s" : ""} pending</h2>
-              <p class="hint" style="margin:4px 0 0">These people registered with the Registry Key. Approve to let them create their password, or deny to dismiss.</p></div>
+              <p class="hint" style="margin:4px 0 0">These people registered with the Registry Key and already set a password. Approve to let them in, or deny to remove the request and that password.</p></div>
           </div>
         </div>
         <div class="req-list" style="margin-top:14px">
@@ -6066,7 +6066,12 @@
     $$("[data-bbsub]", root).forEach((b) => b.onclick = () => { const amt = bbAmt(b); if (!amt) return toast("Enter an amount", "err"); Cloud.addBB(-amt, b.dataset.bbsub); toast(`−${amt} BB removed`); });
 
     $$("[data-approve]", root).forEach((b) => b.onclick = () => { Store.approveMember(b.dataset.approve); Cloud.pushRoster(); toast("Member approved"); renderAdmin(root); refreshChrome(); });
-    $$("[data-deny]", root).forEach((b) => b.onclick = () => { Store.denyRequest(b.dataset.deny); Cloud.pushRoster(); toast("Request denied"); renderAdmin(root); refreshChrome(); });
+    $$("[data-deny]", root).forEach((b) => b.onclick = () => {
+      // they set a password when registering: denying removes it too, so nobody keeps a claim on that name
+      const r = Store.getRequests()[b.dataset.deny];
+      if (r && !Store.getMembers()[b.dataset.deny] && Cloud.enabled()) Cloud.deleteCred(Store.scouterIdFor(r.first, r.last)).catch(() => {});
+      Store.denyRequest(b.dataset.deny); Cloud.pushRoster(); toast("Request denied"); renderAdmin(root); refreshChrome();
+    });
     $$("[data-remove]", root).forEach((b) => b.onclick = () =>
       confirmDialog("Remove this member from the roster?", () => {
         const m = Store.getMembers()[b.dataset.remove];

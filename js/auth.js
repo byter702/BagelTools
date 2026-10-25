@@ -1,12 +1,13 @@
 /* =============================================================================
-   auth.js  —  Accounts: register → admin approval → password, then log in
+   auth.js  —  Accounts: register → password → admin approval, then log in
    -----------------------------------------------------------------------------
    Identity = first + last name combined into ONE username ("first last", split on
    the first space — the same key the old full-name login used, so every existing
    account, its Bagel Bucks and its stats carry straight over).
 
-   REGISTER  first, last, Registry Key → access request → an admin approves →
-             the person creates a password (twice) → signed in automatically.
+   REGISTER  first, last, Registry Key → the person creates a password (twice) →
+             access request → an admin approves (any time later: the page lets them
+             in by itself, or they just log in once approved).
    LOG IN    first, last, password. Members from before passwords existed create
              one on their next login (Registry Key required).
 
@@ -224,7 +225,7 @@ const Auth = (() => {
     let n = 0; const t = setInterval(() => { toNames(); if (++n > 10 || !u.isConnected) clearInterval(t); }, 300);
   }
   const steps = (n) => `<ol class="auth-steps" aria-label="Registration progress">
-      ${["Request", "Approval", "Password"].map((t, i) => {
+      ${["Request", "Password", "Approval"].map((t, i) => {
         const st = i + 1 < n ? "done" : i + 1 === n ? "on" : "";
         return `<li class="${st}"><span class="auth-step-dot">${st === "done" ? icon("check") : i + 1}</span><span>${t}</span></li>`;
       }).join("")}
@@ -275,11 +276,22 @@ const Auth = (() => {
     busy(btn, true, "Checking…");
     try {
       await waitRoster();
+      const cred = await lookupCred(Store.scouterIdFor(who.first, who.last));
       if (!isAccepted(who.first, who.last)) {
-        if (hasRequest(who)) return showPendingView(who, false);
+        // Registered (password set) but not approved yet: right password → the waiting screen.
+        if (cred) {
+          if (!pw) return fail("Enter your password.");
+          if (!(await verify(pw, cred))) {
+            if (++failCount >= 5) { failCount = 0; lockUntil = Date.now() + 30000; }
+            return fail("Wrong password.");
+          }
+          if (!hasRequest(who)) sendRequest(who); // e.g. the request got cleared: ask again
+          return showPendingView(who, false, cred);
+        }
+        if (cred === undefined) return fail("Can't reach the server to check your password. Check your connection and try again.");
+        if (hasRequest(who)) return showPendingView(who, false, null);
         return fail(`No account for “${esc(who.full)}” yet. <button type="button" class="auth-inline" data-go-register>Register here</button>`, true);
       }
-      const cred = await lookupCred(Store.scouterIdFor(who.first, who.last));
       if (cred === undefined) return fail("Can't reach the server to check your password. Check your connection and try again.");
       if (cred === null) return showSetPasswordView(who, { needKey: true, existing: true });
       if (!pw) return fail("Enter your password.");
@@ -301,12 +313,12 @@ const Auth = (() => {
     stage(`
       ${steps(1)}
       <form class="auth-form" id="regForm" novalidate>
-        <p class="auth-lead">New here? Request an account. A team admin approves it, then you pick your password.</p>
+        <p class="auth-lead">New here? Request an account and create your password. A team admin approves it after that, even if they're away right now.</p>
         ${nameRow(who)}
         ${field("aKey", "Registry Key", "password", "key", `autocomplete="off" placeholder="Ask a team lead"`)}
         <p class="auth-micro">Your first and last name together become your username.</p>
         <div class="auth-error" role="alert" hidden></div>
-        ${submitBtn("Request access")}
+        ${submitBtn("Next: create a password")}
       </form>`, dir);
     $("#regForm").onsubmit = onRegister;
   }
@@ -318,60 +330,73 @@ const Auth = (() => {
     if (!registryKey()) return fail("No Registry Key is configured — see js/secrets.js.");
     if (val("#aKey") !== registryKey()) return fail("That Registry Key isn't right. Ask a team lead for it.");
     const btn = $(".auth-btn");
-    busy(btn, true, "Sending…");
+    busy(btn, true, "Checking…");
     try {
       await waitRoster();
+      const cred = await lookupCred(Store.scouterIdFor(who.first, who.last));
+      if (cred === undefined) return fail("Can't reach the server. Check your connection and try again.");
       if (isAccepted(who.first, who.last)) {
-        const cred = await lookupCred(Store.scouterIdFor(who.first, who.last));
-        if (cred === undefined) return fail("Can't reach the server. Check your connection and try again.");
         if (cred) return showLoginView(`You already have an account, ${who.first}. Log in below.`, who, "from-left");
         return showSetPasswordView(who, { needKey: false, existing: true });
       }
-      Store.recordLogin(who.first, who.last); // creates the pending request locally
-      const key = Store.nameKey(who.first, who.last);
-      const entry = Store.getRequests()[key] || { first: who.first, last: who.last, ts: Date.now() };
-      if (cloudOn()) Cloud.pushAccessRequest(key, entry);
-      showPendingView(who, true);
+      // Already registered (password set, maybe still waiting): log in to check on it.
+      if (cred) return showLoginView(`${who.first}, you already registered. Log in with your password to see if you're approved yet.`, who, "from-left");
+      showSetPasswordView(who, { needKey: false, newReg: true });
     } catch (err) {
       console.warn("[Auth] register failed", err);
       fail("Something went wrong. Try again.");
-    } finally { busy(btn, false, "Request access"); }
+    } finally { busy(btn, false, "Next: create a password"); }
+  }
+  // The access request admins see (approval is the last step, after the password).
+  function sendRequest(who) {
+    Store.recordLogin(who.first, who.last); // creates the pending request locally
+    const key = Store.nameKey(who.first, who.last);
+    const entry = Store.getRequests()[key] || { first: who.first, last: who.last, ts: Date.now() };
+    if (cloudOn()) Cloud.pushAccessRequest(key, entry);
   }
 
   /* ---- Waiting for approval -------------------------------------------------- */
-  function showPendingView(who, justSent) {
+  // cred = their saved password record (they registered under the new order). Without
+  // one (a request from before approval came last), approval leads to creating it.
+  function showPendingView(who, justSent, cred) {
     setTabs(null);
+    clearPoll();
     stage(`
-      ${steps(2)}
+      ${steps(3)}
       <div class="auth-wait">
         <div class="auth-radar">${icon("bell")}</div>
         <h2 class="auth-h">Waiting for approval</h2>
-        <div class="login-pending">Hi ${esc(who.first)}! ${justSent ? "Your request was sent to" : "Your request is still with"} the team admins.
-          <b>Keep this page open. As soon as you're approved, you'll create your password right here.</b></div>
+        <div class="login-pending">Hi ${esc(who.first)}! ${justSent ? "Your password is saved and your request was sent to" : "Your request is still with"} the team admins.
+          ${cred ? `<b>You can close this page.</b> Once an admin approves you, just log in with your name and password. Keep it open and you'll be let in automatically.`
+            : `<b>Keep this page open. As soon as you're approved, you'll create your password right here.</b>`}</div>
         <button type="button" class="auth-link" id="pendBack">← Back to log in</button>
       </div>`, "from-right");
-    $("#pendBack").onclick = () => showLoginView("", who, "from-left");
+    $("#pendBack").onclick = () => { clearPoll(); showLoginView("", who, "from-left"); };
     pollTimer = setInterval(() => {
       if (!wrap || !wrap.isConnected) return clearPoll();
-      try { if (isAccepted(who.first, who.last)) { clearPoll(); showApproved(who); } } catch (e) {}
+      try { if (isAccepted(who.first, who.last)) { clearPoll(); showApproved(who, cred); } } catch (e) {}
     }, 2000);
   }
-  function showApproved(who) {
-    stage(`${steps(3)}
+  function showApproved(who, cred) {
+    stage(`${steps(4)}
       <div class="auth-wait"><div class="auth-burst">${icon("check")}</div>
-        <h2 class="auth-h">You're approved!</h2><p class="auth-micro">Now let's set up your password…</p></div>`);
-    setTimeout(() => { if (wrap && wrap.isConnected) showSetPasswordView(who, { needKey: false }); }, 1300);
+        <h2 class="auth-h">You're approved!</h2><p class="auth-micro">${cred ? "Welcome to BagelTools…" : "Now let's set up your password…"}</p></div>`);
+    setTimeout(() => {
+      if (!wrap || !wrap.isConnected) return;
+      if (cred) signIn(who, cred); else showSetPasswordView(who, { needKey: false });
+    }, 1300);
   }
 
   /* ---- Create password ------------------------------------------------------- */
   function showSetPasswordView(who, opts) {
     setTabs(null);
-    const label = opts.existing ? "Save password & log in" : "Create account";
+    const label = opts.existing ? "Save password & log in" : opts.newReg ? "Save password & send request" : "Create account";
     stage(`
-      ${opts.existing ? `<div class="auth-badge">${icon("shield")} Secure your account</div>` : steps(3)}
+      ${opts.existing ? `<div class="auth-badge">${icon("shield")} Secure your account</div>` : steps(opts.newReg ? 2 : 4)}
       <form class="auth-form" id="pwForm" novalidate>
         <p class="auth-lead">${opts.existing
           ? `Welcome back, <b>${esc(who.first)}</b>! Your account doesn't have a password yet. Create one so nobody else can log in as you.`
+          : opts.newReg ? `Hi <b>${esc(who.first)}</b>! Create a password you'll remember. Then a team admin approves your account.`
           : `Last step, <b>${esc(who.first)}</b>: create a password you'll remember.`}</p>
         <div class="auth-who">${icon("user")}<span>${esc(who.full)}</span></div>
         ${userField(who)}
@@ -409,6 +434,8 @@ const Auth = (() => {
         const cred = await makeCred(a, who);
         await saveCred(id, cred);
         rememberLogin(who, a);
+        await waitRoster();
+        if (opts.newReg && !isAccepted(who.first, who.last)) { sendRequest(who); return showPendingView(who, true, cred); }
         signIn(who, cred);
       } catch (err) {
         console.warn("[Auth] set password failed", err);
