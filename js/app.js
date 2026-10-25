@@ -96,7 +96,7 @@
     const bb = a.bb ? `<span class="sp-bb">+${a.bb} ${BB}</span>` : "";
     const el = document.createElement("div");
     el.className = "scout-pop";
-    el.innerHTML = `<span class="sp-ico">${icon(a.type === "pit" ? "clipboard" : "binoculars")}</span>
+    el.innerHTML = `<span class="sp-ico">${icon(a.type === "pit" ? "robot" : "binoculars")}</span>
       <span class="sp-text"><b>${esc(name)}</b> ${kind} <b>Team ${esc(a.team || "?")}</b>${where}</span>${bb}`;
     wrap.appendChild(el);
     requestAnimationFrame(() => el.classList.add("in"));
@@ -727,14 +727,14 @@
     { id: "dashboard", name: "Dashboard", icon: "dashboard", accent: "#ffc718", blurb: "Your Bagel Bucks, the leaderboard and the whole team",
       pages: [["dashboard", "Overview", "dashboard", "Your day at a glance"], ["members", "Members", "user", "Profiles, leaderboard, scouters"]] },
     { id: "scouting", name: "Scouting", icon: "binoculars", accent: "#5bbde2", blurb: "Scout every match and every pit",
-      pages: [["match", "Match Scouting", "binoculars", "Scout a robot in a match"], ["pit", "Pit Scouting", "clipboard", "Robot specs and photos"]] },
+      pages: [["match", "Match Scouting", "binoculars", "Scout a robot in a match"], ["pit", "Pit Scouting", "robot", "Robot specs and photos"]] },
     { id: "strategy", name: "Strategy", icon: "chess", accent: "#a78bfa", blurb: "Turn the data into a pick list",
-      pages: [["data", "Data", "database", "Search, rankings, spreadsheet"], ["picklist", "Pick List", "list", "Alliances, Mashup, Bracket"]] },
+      pages: [["data", "Data", "database", "Search, rankings, spreadsheet"], ["picklist", "Pick List", "picklist", "Alliances, Mashup, Bracket"]] },
     { id: "statistics", name: "Statistics", icon: "chart", accent: "#4ade80", blurb: "Teams, events and matchups by the numbers",
-      pages: [["bagelstats", "Teams", "chart", "EPA leaderboards"], ["compare", "Compare", "linegraph", "Head to head + charts"],
-        ["teams", "Event", "calendar", "Teams, schedule, rankings"], ["matchup", "Matchup", "compare", "Predict any match"]] },
-    { id: "fantasy", name: "Fantasy", icon: "star", accent: "#fb7185", blurb: "Draft robots, win Bagel Bucks",
-      pages: [["fantasy", "Fantasy Alliance", "star", "Your league and draft"]] },
+      pages: [["bagelstats", "Teams", "podium", "EPA leaderboards"], ["compare", "Compare", "compare", "Head to head + charts"],
+        ["teams", "Event", "calendar", "Teams, schedule, rankings"], ["matchup", "Matchup", "swords", "Predict any match"]] },
+    { id: "fantasy", name: "Fantasy", icon: "crown", accent: "#fb7185", blurb: "Draft robots, win Bagel Bucks",
+      pages: [["fantasy", "Fantasy Alliance", "crown", "Your league and draft"]] },
     { id: "system", name: "BagelTools", icon: "settings", accent: "#9fb2c0", hidden: true, blurb: "Settings and admin",
       pages: [["settings", "Settings", "settings", "Theme, season, account"], ["admin", "Admin", "shield", "Members, forms, betting"]] },
   ];
@@ -1010,8 +1010,8 @@
     const pitN = Object.keys(pits).length;
     const actions = [
       ["match", "plus", "New match", "Scout a robot", "y"],
-      ["pit", "wrench", "Pit scout", "Robot + photo", "c"],
-      ["bagelstats", "chart", "Teams", "EPA rankings", "g"],
+      ["pit", "robot", "Pit scout", "Robot + photo", "c"],
+      ["bagelstats", "podium", "Teams", "EPA rankings", "g"],
       ["data/spreadsheet", "download", "Export data", "Spreadsheet + CSV", "v"],
     ];
     root.innerHTML = `
@@ -1111,7 +1111,7 @@
             <span class="thero-chips">
               ${r ? `<span class="thero-chip">${icon("trophy")} Rank ${r.rank}${r.record ? ` · ${r.record.wins}-${r.record.losses}-${r.record.ties}` : ""}</span>` : ""}
               <span class="thero-chip">${icon("binoculars")} ${st.matches} scouted</span>
-              ${pit ? `<span class="thero-chip">${icon("clipboard")} Pit ✓</span>` : ""}
+              ${pit ? `<span class="thero-chip">${icon("robot")} Pit ✓</span>` : ""}
             </span>
           </div>
           ${pit && pit.photo ? `<img class="sl-photo" src="${esc(pit.photo)}" alt="Team ${esc(t)} robot" />` : ""}
@@ -1480,7 +1480,7 @@
       </div>
       <div class="grid cols-2 mb-lists">
         <div class="card"><div class="sr-head"><h3>${icon("binoculars")} Last teams scouted</h3><span class="hint">${lastM.length ? "newest first" : ""}</span></div>${tiles(lastM, "No matches scouted yet")}</div>
-        <div class="card"><div class="sr-head"><h3>${icon("clipboard")} Last teams pit scouted</h3><span class="hint">${lastP.length ? "newest first" : ""}</span></div>${tiles(lastP, "No pits scouted yet")}</div>
+        <div class="card"><div class="sr-head"><h3>${icon("robot")} Last teams pit scouted</h3><span class="hint">${lastP.length ? "newest first" : ""}</span></div>${tiles(lastP, "No pits scouted yet")}</div>
       </div>
       <div class="btn-row" style="margin-top:14px"><a class="btn ghost sm" href="#/members/scouters/${encodeURIComponent(sc.id)}">${icon("list")} Everything ${isMe ? "you" : esc(sc.first || "they")} scouted</a></div>`;
     wireTeamTiles(body);
@@ -1797,7 +1797,7 @@
       } else if (esTab === "awards") {
         if (!d.awards.length) { exBody.innerHTML = `<div class="card">${emptyState("star", "No awards yet", "Awards are posted as the event finishes.")}</div>`; return; }
         exBody.innerHTML = `<div class="tp-award-grid">${d.awards.map((a, i) => `<div class="card tp-award-card" style="--i:${i}">
-          ${icon(BANNER_TYPES.includes(a.award_type) ? "flag" : "trophy")}<b>${esc(a.name)}</b>
+          ${icon(BANNER_TYPES.includes(a.award_type) ? "banner" : "trophy")}<b>${esc(a.name)}</b>
           <span>${a.recipient_list.map((r) => r.team_key ? `<a class="ex-chip" href="#/team/${esc(r.team_key.replace("frc", ""))}/${year}">${esc(r.team_key.replace("frc", ""))}</a>${r.awardee ? " " + esc(r.awardee) : ""}` : esc(r.awardee || "")).join(" ")}</span></div>`).join("")}</div>`;
       } else {
         if (!d.teams.length) { exBody.innerHTML = `<div class="card">${emptyState("bagel", "No teams listed yet", "Teams appear as they register.")}</div>`; return; }
@@ -1869,7 +1869,7 @@
         const n = t.team_number, e = epaOf(n), rk = rankMap[n] || {}, photo = (pits[n] || {}).photo;
         return `<button class="team-row" data-team="${n}" data-tfill="${n}">
           <img class="team-avatar tr-icon" data-avatar="${n}" alt="" />
-          <span class="tr-robot">${photo ? `<img src="${esc(photo)}" alt="robot" />` : `<span class="tr-robot-ph">${icon("wrench")}</span>`}</span>
+          <span class="tr-robot">${photo ? `<img src="${esc(photo)}" alt="robot" />` : `<span class="tr-robot-ph">${icon("robot")}</span>`}</span>
           <span class="tr-id"><span class="tr-num">${n}</span><span class="tr-name">${esc(t.nickname || t.name || "")}</span></span>
           <span class="tr-stat"><span class="trs-val">${e != null ? fmt(e, 1) : "–"}</span><span class="trs-label">EPA</span></span>
           <span class="tr-stat"><span class="trs-val">${rk.rank ? "#" + rk.rank : "–"}</span><span class="trs-label">Rank</span></span>
@@ -2187,7 +2187,7 @@
       </div>
       <div class="btn-row" style="margin-top:16px">
         <button class="btn primary" data-act="match">${icon("plus")} Scout a match</button>
-        <button class="btn secondary" data-act="pit">${icon("wrench")} Pit scout</button>
+        <button class="btn secondary" data-act="pit">${icon("robot")} Pit scout</button>
         <button class="btn ghost" data-act="compare">${icon("compare")} Compare</button>
       </div>`, (body, close) => {
       const jw = $('[data-jump="world"]', body);
@@ -2320,7 +2320,7 @@
               <span class="tp-loc" id="tpLoc"></span>
               <span class="thero-chips">
                 <span class="thero-chip">${icon("binoculars")} ${ourMatches} scouted by us</span>
-                <span class="thero-chip">${icon("clipboard")} ${allPits()[team] ? "Pit scouted" : "No pit data"}</span>
+                <span class="thero-chip">${icon("robot")} ${allPits()[team] ? "Pit scouted" : "No pit data"}</span>
               </span>
             </div>
           </div>
@@ -2352,7 +2352,7 @@
 
         <div class="btn-row tp-actions">
           <button class="btn primary" data-tact="match">${icon("plus")} Scout a match</button>
-          <button class="btn secondary" data-tact="pit">${icon("wrench")} Pit scout</button>
+          <button class="btn secondary" data-tact="pit">${icon("robot")} Pit scout</button>
           <button class="btn ghost" data-tact="compare">${icon("compare")} Compare</button>
           <button class="btn ghost" data-tact="data">${icon("database")} Data report</button>
         </div>
@@ -2491,7 +2491,7 @@
       if (!ban.length) { el.hidden = true; return; }
       const evName = {}; h.events.forEach((e) => { evName[e.key] = e.name; });
       el.hidden = false;
-      el.innerHTML = `<div class="sr-head"><h3>${icon("flag")} Blue banners <span class="muted">${ban.length}</span></h3>
+      el.innerHTML = `<div class="sr-head"><h3>${icon("banner")} Blue banners <span class="muted">${ban.length}</span></h3>
           <span class="hint">event wins, Impact / Chairman's &amp; Engineering Inspiration</span></div>
         <div class="bb-strip">${ban.map((a, i) => `
           <a class="bb-banner" href="#/teams/search/${esc(a.event_key)}" style="--i:${i}" title="${esc(a.name)} · ${esc(evName[a.event_key] || a.event_key)}: open the event">
@@ -2562,7 +2562,7 @@
           ${tile("Best season", best ? best.year : "–", best ? `${Math.round(best.norm)} normalized EPA` : "")}
         </div>
         ${chart ? `<section class="card th-chart-card"><div class="sr-head"><h3>${icon("chart")} Strength by season</h3>
-            <span class="hint">normalized EPA, so different games compare fairly · ${icon("flag")} = blue banner · tap a bar</span></div>
+            <span class="hint">normalized EPA, so different games compare fairly · ${icon("banner")} = blue banner · tap a bar</span></div>
             <div class="th-chart-wrap">${chart}</div></section>` : ""}
         <div class="th-list">${years.map((y, i) => {
           const d = by[y], st = sb[y], g = st ? st.record.w + st.record.l + st.record.t : 0;
@@ -2572,7 +2572,7 @@
             <div class="th-mid">
               ${d.events.length ? `<div class="th-evs">${d.events.sort((a, b) => (a.start_date || "").localeCompare(b.start_date || "")).map((e) =>
                 `<span class="th-ev">${esc(shortEventName(e.name))}</span>`).join("")}</div>` : `<span class="hint">No events listed</span>`}
-              ${d.awards.length ? `<div class="th-aws">${d.awards.map((a) => `<span class="tp-award${BANNER_TYPES.includes(a.award_type) ? " blue" : ""}">${icon(BANNER_TYPES.includes(a.award_type) ? "flag" : "trophy")} ${esc(a.name)}</span>`).join("")}</div>` : ""}
+              ${d.awards.length ? `<div class="th-aws">${d.awards.map((a) => `<span class="tp-award${BANNER_TYPES.includes(a.award_type) ? " blue" : ""}">${icon(BANNER_TYPES.includes(a.award_type) ? "banner" : "trophy")} ${esc(a.name)}</span>`).join("")}</div>` : ""}
             </div>
             <div class="th-stats">
               ${st && st.norm != null ? `<div><b>${Math.round(st.norm)}</b><span>norm EPA</span></div>` : ""}
@@ -3037,7 +3037,7 @@
     const pct = teams.length ? doneN / teams.length : 0;
 
     root.innerHTML = `
-      ${pageHero({ ic: "clipboard", eyebrow: "Pit scouting", title: s.eventName ? esc(s.eventName) : "No event selected",
+      ${pageHero({ ic: "robot", eyebrow: "Pit scouting", title: s.eventName ? esc(s.eventName) : "No event selected",
         sub: teams.length ? `${doneN} of ${teams.length} pits scouted${doneN === teams.length ? " · every pit done!" : ""}` : "Pick an event in the sidebar to get the pit map.",
         side: teams.length ? ringSVG(pct, "Pits scouted") : "" })}
       <div id="pitMap"></div>
@@ -3053,7 +3053,7 @@
           </div>
         </section>
         <div class="ms-banner thero" id="pfBanner" hidden></div>
-        <section class="card pf-fields" id="pitFieldsCard"><h3>${icon("wrench")} Robot</h3>
+        <section class="card pf-fields" id="pitFieldsCard"><h3>${icon("robot")} Robot</h3>
           <div class="form-grid">${pitFields().map((f) => renderField(f, "")).join("")}</div>
         </section>
         <div class="ms-savebar">
@@ -3143,7 +3143,7 @@
       const pits = allPits();
       const teamsArr = Object.values(pits).sort((a, b) => Number(a.team) - Number(b.team));
       const el = $("#pitList", root);
-      if (!teamsArr.length) { el.innerHTML = `<div class="card">${emptyState("wrench", "No pit data yet", "Fill the form and save.")}</div>`; return; }
+      if (!teamsArr.length) { el.innerHTML = `<div class="card">${emptyState("robot", "No pit data yet", "Fill the form and save.")}</div>`; return; }
       el.innerHTML = `<div class="pl-grid">${teamsArr.map((p, i) => `
         <article class="pl-card" data-open="${esc(p.team)}" data-tfill="${esc(p.team)}" style="animation-delay:${Math.min(i, 20) * 20}ms">
           <div class="pl-photo">${p.photo ? `<img src="${p.photo}" alt="Team ${esc(p.team)} robot" />` : icon("image")}</div>
@@ -3284,7 +3284,7 @@
           <p class="hint">Pick teams to compare side-by-side.</p>
           <div class="field"><label>Teams (comma-separated #s)</label>
             <input type="text" id="cmpInput" placeholder="e.g. 702, 254, 1678" /></div>
-          <button class="btn primary sm" id="cmpBtn">${icon("chess")} Compare</button>
+          <button class="btn primary sm" id="cmpBtn">${icon("compare")} Compare</button>
           <div id="cmpOut" style="margin-top:14px"></div>
         </div>
       </div>`;
@@ -3434,7 +3434,7 @@
         ${[0, 1, 2].map((i) => slot(col, i)).join("")}
       </div>`;
     root.innerHTML = `
-      ${pageHero({ ic: "compare", eyebrow: sub === "event" ? `Matchup · ${esc(s.eventName || "event")}` : `Matchup · ${year} ${FRC_GAMES[year] || ""}`,
+      ${pageHero({ ic: "swords", eyebrow: sub === "event" ? `Matchup · ${esc(s.eventName || "event")}` : `Matchup · ${year} ${FRC_GAMES[year] || ""}`,
         title: "Predict any match",
         sub: sub === "event" ? "This event's on-device EPA. Rewind to any qualification with the slider."
           : "Statbotics EPA for any season. Pick a year, drop in six teams, and rewind by week.",
@@ -3442,7 +3442,7 @@
       <div class="subtabs" id="muTabs">
         <a href="#/matchup/global" class="${sub === "global" ? "on" : ""}">${icon("globe")} Global</a>
         <a href="#/matchup/event" class="${sub === "event" ? "on" : ""}">${icon("calendar")} Event</a>
-        ${[...matchupRed, ...matchupBlue].some(Boolean) ? `<button id="muSwap" title="Swap alliances">${icon("compare")} Swap</button><button id="muReset">${icon("x")} Clear</button>` : ""}
+        ${[...matchupRed, ...matchupBlue].some(Boolean) ? `<button id="muSwap" title="Swap alliances">${icon("swap")} Swap</button><button id="muReset">${icon("x")} Clear</button>` : ""}
       </div>
       ${sub === "event" && !teams.length
         ? `<div class="card">${emptyState("calendar", "No event selected", "Choose your event in the sidebar to pick its teams.")}</div>`
@@ -3599,9 +3599,9 @@
   function renderPicklist(root) {
     const teams = eventTeams();
     const sub = picklistSub();
-    const tabs = [["alliance", "Alliance selection", "chess"], ["mashup", "Mashup", "compare"], ["bracket", "Bracket", "trophy"]];
+    const tabs = [["alliance", "Alliance selection", "chess"], ["mashup", "Mashup", "mashup"], ["bracket", "Bracket", "trophy"]];
     const ev = Store.getSettings().eventName;
-    const bar = pageHero({ ic: "list", eyebrow: "Pick list", title: ev ? esc(ev) : "No event selected",
+    const bar = pageHero({ ic: "picklist", eyebrow: "Pick list", title: ev ? esc(ev) : "No event selected",
         sub: ev ? "Your alliance board is saved for this event, and Mashup ranks every robot from head-to-head picks. Switch events and you get a fresh set; switch back and they return." : "Pick an event in the sidebar to start building lists." }) +
       `<div class="subtabs" id="pickTabs">
       ${tabs.map(([k, l, ic]) => `<a href="#/picklist/${k}" class="${sub === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}</div>`;
@@ -3801,7 +3801,7 @@
             <label class="mx-s blue">${icon("search")}<select id="mxB" aria-label="Second robot">${opts(b)}</select></label>
           </div>
           <div class="mx-acts">
-            <button type="button" class="btn ghost sm" id="mxRoll">${icon("zap")} New pair</button>
+            <button type="button" class="btn ghost sm" id="mxRoll">${icon("dice")} New pair</button>
             <button type="button" class="btn ghost sm" id="mxUndo" ${myVotes().length ? "" : "disabled"}>${icon("chevron-left")} Undo</button>
           </div>
         </section>
@@ -4253,7 +4253,7 @@
       const cmp = numeric ? na - nb : String(av ?? "").localeCompare(String(bv ?? ""));
       return cmp * s.dir;
     });
-    if (!rows.length) return `<div class="data-empty">${emptyState(tab === "pit" ? "wrench" : "clipboard",
+    if (!rows.length) return `<div class="data-empty">${emptyState(tab === "pit" ? "robot" : "clipboard",
       "Nothing to show", dataScouter || f ? "No records match these filters." : "Records show up here as scouts submit them.")}</div>`;
     const arrow = (k) => s.key === k ? (s.dir > 0 ? " ▲" : " ▼") : "";
     return `<div class="table-wrap scroll-y"><table class="data-table sortable">
@@ -4571,7 +4571,7 @@
         <div class="card"><h3>${icon("clipboard")} Pit entries <span class="muted">${ps.length}</span></h3>
           ${ps.length ? `<div class="ds-feed">${ps.map((p) => `
             <button class="ds-feed-row" data-dteam="${esc(String(p.team))}">
-              ${p.photo ? `<img class="ds-feed-photo" src="${esc(p.photo)}" alt="" />` : `<span class="ds-feed-q">${icon("wrench")}</span>`}
+              ${p.photo ? `<img class="ds-feed-photo" src="${esc(p.photo)}" alt="" />` : `<span class="ds-feed-q">${icon("robot")}</span>`}
               <span class="ds-feed-t">${esc(String(p.team))} <span class="muted">${esc(nameFor(p.team))}</span></span>
               <span class="ds-feed-when">${p.ts ? esc(timeAgo(p.ts)) : ""}</span>
             </button>`).join("")}</div>` : `<p class="muted">No pit entries this season.</p>`}
@@ -4996,7 +4996,7 @@
     const years = []; for (let y = GAME.season; y >= 2002; y--) years.push(y);
     const isEvent = bagelTab === "event";
     root.innerHTML = `
-      ${pageHero({ ic: "chart", eyebrow: `Teams · ${isEvent ? "live event" : year + " " + (FRC_GAMES[year] || "")}`, title: "EPA leaderboards",
+      ${pageHero({ ic: "podium", eyebrow: `Teams · ${isEvent ? "live event" : year + " " + (FRC_GAMES[year] || "")}`, title: "EPA leaderboards",
         sub: isEvent ? "On-device EPA from your event's played matches, with TBA ranks and ranking points."
           : "Expected points added for every team, from Statbotics. Tap a team to dig in.",
         side: `<label class="bs-year${isEvent ? " off" : ""}" title="${isEvent ? "The Event tab uses your selected event" : "Season"}">${icon("calendar")}
@@ -5282,7 +5282,7 @@
     const s = Store.getSettings();
     const tabs = [["global", "Global", "globe"], ["event", "Event", "calendar"], ["charts", "Charts", "chart"]];
     root.innerHTML = `
-      ${pageHero({ ic: "linegraph", eyebrow: `Compare · ${esc(GAME.seasonLabel)}`, title: compareTab === "charts" ? "Charts" : "Head to head",
+      ${pageHero({ ic: "compare", eyebrow: `Compare · ${esc(GAME.seasonLabel)}`, title: compareTab === "charts" ? "Charts" : "Head to head",
         sub: compareTab === "charts" ? "Every team this season on one chart. Hover a bubble for the team and its EPA."
           : "Stack up to 6 teams: EPA over time, where their points come from, and every stat side by side." })}
       <div class="subtabs" id="cmpTabs">${tabs.map(([k, l, ic]) => `<button data-t="${k}" class="${compareTab === k ? "on" : ""}">${icon(ic)} ${l}</button>`).join("")}</div>
@@ -5670,7 +5670,7 @@
       const approved = Store.isBBApproved(evk);
       const scs = allScouters().slice().sort((a, b) => (b.bb || 0) - (a.bb || 0) || scouterName(a).localeCompare(scouterName(b)));
       return `<div class="card">
-        <div class="section-head"><div class="row" style="gap:10px">${icon("star")}<h2 style="margin:0">Bagel Bucks (BB)</h2></div>
+        <div class="section-head"><div class="row" style="gap:10px">${icon("coins")}<h2 style="margin:0">Bagel Bucks (BB)</h2></div>
           ${evk ? `<span class="badge ${approved ? "green" : ""} dot">${approved ? "Approved" : "Not approved"}</span>` : ""}</div>
         <p class="hint">Once you approve an event, <b>every</b> scout earns <b>BB</b> on any device — 10 BB per match, 5 BB per new team pit-scouted — until you turn it off. BB is tied to the account and shared across devices.</p>
         ${evk ? `<div class="row between" style="align-items:center;gap:12px;flex-wrap:wrap">
@@ -5680,7 +5680,7 @@
           : `<p class="hint">Pick an event on the Dashboard first, then approve it here.</p>`}
       </div>
       <div class="card" style="margin-top:16px">
-        <div class="row" style="gap:10px;margin-bottom:6px">${icon("star")}<h3 style="margin:0">Adjust a scouter's BB</h3></div>
+        <div class="row" style="gap:10px;margin-bottom:6px">${icon("coins")}<h3 style="margin:0">Adjust a scouter's BB</h3></div>
         <p class="hint">Manually add or remove Bagel Bucks from any account. Applies to that account on every device.</p>
         ${scs.length ? `<div class="table-wrap"><table>
           <thead><tr><th>Scouter</th><th class="num">BB</th><th>Adjust</th></tr></thead>
@@ -6268,7 +6268,7 @@
     root.innerHTML = `
       <header class="bt-hero">
         <div class="bt-hero-txt">
-          <span class="pg-eyebrow">${icon("star")} Fantasy Alliance</span>
+          <span class="pg-eyebrow">${icon("crown")} Fantasy Alliance</span>
           <h2 class="pg-title">Fantasy Alliance ${FY}</h2>
           <p class="pg-sub">Draft four robots, win weekly head-to-heads for ${Bets.WEEK_WIN} BB, and chase the ${Bets.GRAND_PRIZE.toLocaleString()} BB grand prize.</p>
         </div>
@@ -6709,7 +6709,7 @@
       const lgName = (Bets.LEAGUES.find((x) => x[0] === L.league) || [0, L.league])[1];
       const dr = L.draft || {};
       const pill = dr.status === "live" ? `<span class="fx-pill live">${icon("zap")} Draft live</span>` : dr.status === "done" ? `<span class="fx-pill">${icon("check")} Drafted</span>` : `<span class="fx-pill wait">${icon("clock")} Draft at kickoff</span>`;
-      const head = `<section class="card fx-head"><div class="fx-hl"><span class="fx-crest">${icon("star")}</span><div><span class="pg-eyebrow">${FY} season</span><h3>${esc(lgName)} League</h3>
+      const head = `<section class="card fx-head"><div class="fx-hl"><span class="fx-crest">${icon("crown")}</span><div><span class="pg-eyebrow">${FY} season</span><h3>${esc(lgName)} League</h3>
           <span class="hint">${Bets.members(L).length} players · ${pill}</span></div></div>${tabs}</section>`;
       let html = "";
       if (sub === "draft") html = drawDraft(L);
@@ -6731,7 +6731,7 @@
       introOnce(wrap);
       wrap.innerHTML = `
         <section class="card fx-intro">
-          <div class="fx-intro-l"><span class="fx-crest big">${icon("star")}</span><div>
+          <div class="fx-intro-l"><span class="fx-crest big">${icon("crown")}</span><div>
             <h3>Your season, four robots</h3>
             <p>Join your class league, draft four real FRC robots at kickoff, and win head-to-head matchups every week of the season.</p>
             <span class="fx-ko">${icon("clock")} Draft opens at kickoff: <b>${new Date(ko).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</b> <span class="hint" id="fxKo">${fxCountdown(ko - Date.now())}</span></span>
@@ -7146,7 +7146,7 @@
     }
     function draw() {
       if (!el.isConnected) return;
-      const leagues = `<div class="card"><div class="sr-head"><h3>${icon("star")} Leagues · ${FY}</h3><span class="hint">drafts open automatically at kickoff</span></div>
+      const leagues = `<div class="card"><div class="sr-head"><h3>${icon("crown")} Leagues · ${FY}</h3><span class="hint">drafts open automatically at kickoff</span></div>
         <div class="table-wrap"><table class="fx-table"><thead><tr><th>League</th><th class="num">Players</th><th>Draft</th><th></th></tr></thead><tbody>
         ${Bets.LEAGUES.map(([k, l]) => { const D = Bets.leagueDoc(FY, k), n = Bets.members(D).length, st = (D && D.draft && D.draft.status) || "waiting"; return `
           <tr><td><b>${l}</b></td><td class="num">${n}</td><td>${st === "live" ? `<span class="badge cyan dot">live</span>` : st === "done" ? `<span class="badge green dot">done</span>` : `<span class="badge">waiting</span>`}</td>

@@ -3300,3 +3300,14 @@ body:not(.is-home) .sidebar { animation: sbIn .5s cubic-bezier(.2,.9,.25,1) back
   .hub-tile, .hub-title, .hub-corner, #view.pg-enter, .app-head.ah-in, .nav.nv-in a.nv, .nav.nv-in .nv-glow, body:not(.is-home) .sidebar { animation: none !important; }
   .hub-tile, .nv-glow, .nav a.nv, .nv-ico { transition: none !important; }
 }
+
+/* ---- v101 icon set: duotone line icons --------------------------------------
+   Every icon is 2px line work plus an optional soft fill (.ico-d) behind it.
+   Tune it per place with --ico-duo (opacity) and --ico-duo-c (color); both
+   inherit into the <use> clones. */
+.ico-d { fill: var(--ico-duo-c, currentColor); stroke: none; opacity: var(--ico-duo, .22); }
+.rating .star.on .ico { fill: currentColor; }
+/* icons sitting on a solid accent chip get a light inner glow instead of a dark tint */
+.ht-ico .ico, .ah-ico .ico, .hz-ico .ico, .nav a.nv.active .nv-ico .ico, .fx-crest .ico { --ico-duo-c: #fff; --ico-duo: .5; }
+.nav a.nv.active .nv-ico .ico { color: inherit; } /* the old blue active-link color vanished on the app's chip */
+.pg-hero-ico .ico { --ico-duo: .3; }
