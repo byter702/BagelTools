@@ -72,12 +72,14 @@ const PartsUI = (() => {
     const keys = new Set(person.parts || []);
     return V.mechanisms.filter((m) => m.project === person.project).flatMap((m) => m.parts).filter((p) => keys.has(p.key) && Parts.readyToMake(p));
   };
-  // Which teammate cards are me: linked to my account, else an unlinked card with my name.
+  // Which teammate cards are me: linked to my account, else an unlinked card with my
+  // name (unless I said "Not me" to it on this device).
   function myPeople() {
     const me = Store.getMe() || {}, full = `${me.first || ""} ${me.last || ""}`.trim().toLowerCase(), first = String(me.first || "").trim().toLowerCase();
     const firstTaken = H.allScouters().filter((s) => String(s.first || "").trim().toLowerCase() === first).length > 1;
+    const notMe = new Set(ls.get("notMe", []));
     return V.people.filter((p) => p.uid ? p.uid === me.id
-      : (p.name.trim().toLowerCase() === full || (!firstTaken && first && p.name.trim().toLowerCase() === first)));
+      : (!notMe.has(p.id) && (p.name.trim().toLowerCase() === full || (!firstTaken && first && p.name.trim().toLowerCase() === first))));
   }
   function avatar(person, cls) {
     const sc = scFor(person);
@@ -171,9 +173,8 @@ const PartsUI = (() => {
           <span class="bp-pill${p.id === activeProject ? " on" : ""}">
             <button type="button" role="tab" aria-selected="${p.id === activeProject}" data-proj="${esc(p.id)}">${esc(p.name)}</button>
             ${p.id === activeProject ? `<button type="button" class="bp-pill-ic" data-proj-edit="${esc(p.id)}" title="Rename ${esc(p.name)}" aria-label="Rename ${esc(p.name)}">${icon("edit")}</button>` : ""}
-          </span>`).join("") || `<span class="hint">No active projects yet.</span>`}</div>
-        <form class="bp-inline" data-form="project"><input name="name" autocomplete="off" placeholder="New project" aria-label="New project name" />
-          <button class="btn primary sm" type="submit">${icon("plus")} Add</button></form>
+          </span>`).join("")}
+          <button type="button" class="bp-pill add" data-act="new-proj">${icon("plus")} New project</button></div>
       </div>
       ${proj || archived.length ? `<div class="bp-proj-acts">
         ${proj ? `<button class="btn ghost sm" data-act="code-proj">${icon("download")} Save code for ${esc(proj.name)}</button>
@@ -192,7 +193,8 @@ const PartsUI = (() => {
       <div class="card bp-start-card">
         <span class="bp-start-ic">${icon("plus")}</span>
         <h3>Start a project</h3>
-        <p class="hint">One project per robot or season, for example "Socal Showdown Redesign". Type a name above and hit Add.</p>
+        <p class="hint">One project per robot or season, for example "Socal Showdown Redesign".</p>
+        <button class="btn primary sm" data-act="new-proj">${icon("plus")} New project</button>
       </div>
       <div class="card bp-start-card">
         <span class="bp-start-ic">${icon("upload")}</span>
@@ -250,7 +252,7 @@ const PartsUI = (() => {
   function filterBanner() {
     const p = projectPeople().find((x) => x.id === (activeAlert || activePerson));
     if (!p) { activeAlert = activePerson = null; return ""; }
-    return `<div class="bp-filter">${avatar(p, "bp-av sm")}<span>Showing only <b>${esc(p.name)}</b>'s parts${activeAlert ? " that are ready to make" : ""}</span>
+    return `<div class="bp-filter">${avatar(p, "bp-av sm")}<span class="bp-ftxt">Showing only <b>${esc(p.name)}</b>'s parts${activeAlert ? " that are ready to make" : ""}</span>
       <button class="btn ghost sm" data-act="clear-person">${icon("x")} Show all parts</button></div>`;
   }
 
@@ -302,11 +304,12 @@ const PartsUI = (() => {
     return `<div class="bp-detail">
       <div class="bp-steps">${p.stages.map((st, i) => `<button type="button" class="bp-step${i <= p.stage ? " on" : ""}${i === p.stage ? " cur" : ""}" data-stage="${i}" data-key="${esc(p.key)}">
         <span>${i < p.stage ? icon("check") : i + 1}</span>${esc(st)}</button>`).join("")}</div>
-      <div class="bp-drow"><span class="bp-dl">Building it</span><span class="bp-dchips">
-        ${who.map((x) => `<span class="bp-person-chip">${avatar(x, "bp-av xs")}${esc(x.name)}<button type="button" data-unassign="${esc(x.id)}" data-key="${esc(p.key)}" aria-label="Unassign ${esc(x.name)}">${icon("x")}</button></span>`).join("") || `<span class="hint">Nobody yet</span>`}
-        ${free.length ? `<select data-assign="${esc(p.key)}" aria-label="Assign to a teammate"><option value="">+ Assign…</option>${free.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select>` : ""}
-      </span></div>
-      <div class="bp-drow"><span class="bp-dl">List</span><select data-movetype="${esc(p.key)}" aria-label="Move to a list">
+      <div class="bp-dfield"><span class="bp-dl">Building it</span>
+        <div class="bp-dchips">${who.map((x) => `<span class="bp-person-chip">${avatar(x, "bp-av xs")}${esc(x.name)}<button type="button" data-unassign="${esc(x.id)}" data-key="${esc(p.key)}" aria-label="Unassign ${esc(x.name)}">${icon("x")}</button></span>`).join("")
+          || `<span class="bp-nobody">${icon("user")} Nobody yet</span>`}</div>
+        ${free.length ? `<select data-assign="${esc(p.key)}" aria-label="Assign to a teammate"><option value="">${ppl.length > free.length ? "Add someone else…" : "Assign to…"}</option>${free.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select>`
+          : ppl.length ? "" : `<span class="hint">Add teammates in the Team panel first.</span>`}</div>
+      <div class="bp-dfield"><span class="bp-dl">List</span><select data-movetype="${esc(p.key)}" aria-label="Move to a list">
         ${lists.map((t) => `<option value="${esc(t)}"${t === p.type ? " selected" : ""}>${esc(typeInfo(t).label)}</option>`).join("")}
         ${p.overridden ? `<option value="__auto__">Auto-sort by name</option>` : ""}</select></div>
       ${p.type === "inhouse" ? fileRow(p, "drawing") : ""}${p.type === "lasercut" ? fileRow(p, "dxf") : ""}
@@ -319,7 +322,7 @@ const PartsUI = (() => {
   }
   function fileRow(p, kind) {
     const name = p[kind], pdf = kind === "drawing";
-    return `<div class="bp-drow"><span class="bp-dl">${pdf ? "Drawing" : "DXF"}</span>${name
+    return `<div class="bp-dfield"><span class="bp-dl">${pdf ? "Drawing" : "DXF"}</span>${name
       ? `<span class="bp-file"><button type="button" class="bp-file-open" data-file="${kind}" data-key="${esc(p.key)}">${icon(pdf ? "external" : "download")} ${esc(name)}</button>
          <button type="button" class="bp-file-x" data-file-rm="${kind}" data-key="${esc(p.key)}" aria-label="Remove ${esc(name)}">${icon("x")}</button></span>`
       : `<label class="bp-drop" data-drop="${kind}" data-key="${esc(p.key)}">${icon("upload")} Drop a ${pdf ? "PDF" : "DXF"} or tap to upload
@@ -354,7 +357,6 @@ const PartsUI = (() => {
     const ppl = projectPeople();
     const alerts = new Map(ppl.map((p) => [p.id, alertParts(p).length]));
     const ordered = ppl.slice().sort((a, b) => ((alerts.get(b.id) > 0) - (alerts.get(a.id) > 0)) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
-    const roster = H.allScouters().map(H.scouterName).filter((n) => !ppl.some((p) => p.name.toLowerCase() === n.toLowerCase()));
     const me = meId();
     return `<aside class="card bp-team">
       <div class="sr-head"><h3>${icon("teams")} Team</h3><span class="hint">${esc(proj.name)}</span></div>
@@ -369,9 +371,7 @@ const PartsUI = (() => {
           <span class="bp-pbar"><i style="width:${pr.pct}%"></i></span>
           <span class="bp-pmeta">${pr.done}/${pr.total} done${n ? ` · <b>${n} ready</b>` : ""}</span>
         </div>`; }).join("") || `<p class="hint bp-people-empty">Nobody on this project yet. Add teammates below, then drag a part (or a whole list's header) onto someone to assign it.</p>`}</div>
-      <form class="bp-inline" data-form="person"><input name="name" list="bpRoster" autocomplete="off" placeholder="Add a teammate" aria-label="Teammate name" />
-        <button class="btn primary sm" type="submit">${icon("plus")} Add</button></form>
-      <datalist id="bpRoster">${roster.map((n) => `<option value="${esc(n)}"></option>`).join("")}</datalist>
+      <button type="button" class="bp-addperson" data-act="add-person">${icon("plus")} Add teammate</button>
       <p class="hint bp-team-tip">${icon("info")}<span>Drag parts onto people, or open a part and use <b>Assign</b>. A red <b>!</b> means they have parts ready to make.</span></p>
     </aside>`;
   }
@@ -379,16 +379,6 @@ const PartsUI = (() => {
   /* ---- board events ---- */
   function partByKey(key) { return V.mechanisms.flatMap((m) => m.parts).find((p) => p.key === key); }
   function wireBoard(root) {
-    root.onsubmit = (e) => {
-      const f = e.target.closest("form[data-form]"); if (!f) return;
-      e.preventDefault();
-      const input = f.querySelector("input"), name = input.value.trim(); if (!name) return;
-      if (f.dataset.form === "project") run(Parts.addProject(name).then((id) => { activeProject = id; ls.set("project", id); activeMech = "__all__"; input.value = ""; redraw(); }), `Created ${name}`);
-      if (f.dataset.form === "person") {
-        const sc = H.allScouters().find((s) => H.scouterName(s).toLowerCase() === name.toLowerCase());
-        run(Parts.addPerson(activeProject, name, sc ? sc.id : "").then(() => { input.value = ""; redraw(); }), `Added ${name} to the team`);
-      }
-    };
     root.onclick = (e) => {
       const t = e.target.closest("button, [data-proj], a"); if (!t || !root.contains(t)) return;
       const d = t.dataset;
@@ -415,6 +405,9 @@ const PartsUI = (() => {
       if (d.file && d.key) return openFile(d.file, d.key);
       if (d.fileRm && d.key) return H.confirmDialog(`Remove this ${d.fileRm === "drawing" ? "drawing" : "DXF"}?`, () => run(Parts.removeFile(d.fileRm, d.key), "File removed"));
       switch (d.act) {
+        case "new-proj": return askText("New project", "Project name (one per robot or season)", "", (name) =>
+          run(Parts.addProject(name).then((id) => { activeProject = id; ls.set("project", id); activeMech = "__all__"; activePerson = activeAlert = null; redraw(); }), `Created ${name}`));
+        case "add-person": return addPersonModal();
         case "code-all": return codeModal(null);
         case "code-proj": return codeModal(activeProject);
         case "archive-proj": return archiveProject();
@@ -513,7 +506,7 @@ const PartsUI = (() => {
 
   /* ---- dialogs ---- */
   function askText(title, label, value, onOk) {
-    H.modal(title, `<form id="bpAsk"><label class="field"><span>${esc(label)}</span><input id="bpAskIn" autocomplete="off" value="${esc(value || "")}" /></label>
+    H.modal(title, `<form id="bpAsk"><label class="field"><span>${esc(label)}</span><input type="text" id="bpAskIn" autocomplete="off" value="${esc(value || "")}" /></label>
       <div class="btn-row" style="justify-content:flex-end;margin-top:14px"><button type="submit" class="btn primary">Save</button></div></form>`, (body, close) => {
       const input = body.querySelector("#bpAskIn"); input.focus(); input.select();
       body.querySelector("#bpAsk").onsubmit = (e) => { e.preventDefault(); const v = input.value.trim(); if (!v) return; close(); onOk(v); };
@@ -545,7 +538,7 @@ const PartsUI = (() => {
   }
   function mechModal(m) {
     H.modal(m ? `Edit ${m.name}` : "Add a mechanism", `<form id="bpMech" class="bp-form">
-      <label class="field"><span>Name</span><input name="name" autocomplete="off" placeholder="Drivetrain, Intake, Shooter…" value="${esc(m ? m.name : "")}" required /></label>
+      <label class="field"><span>Name</span><input type="text" name="name" autocomplete="off" placeholder="Drivetrain, Intake, Shooter…" value="${esc(m ? m.name : "")}" required /></label>
       <label class="field"><span>Onshape link <i class="hint">(optional, adds an "Open in Onshape" button)</i></span><input name="link" type="url" inputmode="url" placeholder="https://cad.onshape.com/documents/…" value="${esc(m ? m.link : "")}" /></label>
       <div class="btn-row" style="justify-content:flex-end"><button class="btn primary" type="submit">${icon(m ? "check" : "plus")} ${m ? "Save" : "Add mechanism"}</button></div></form>`, (body, close) => {
       const f = body.querySelector("#bpMech"); field(f, "name").focus();
@@ -558,11 +551,29 @@ const PartsUI = (() => {
       };
     });
   }
+  function addPersonModal() {
+    const ppl = projectPeople();
+    const roster = H.allScouters().filter((sc) => !ppl.some((p) => p.uid === sc.id || scFor(p) === sc))
+      .sort((a, b) => H.scouterName(a).localeCompare(H.scouterName(b)));
+    H.modal("Add a teammate", `<form id="bpAddP" class="bp-form">
+      <label class="field"><span>BagelTools account</span><select name="uid">
+        <option value="">${roster.length ? "Pick their account…" : "Everyone is already on this team"}</option>${roster.map((sc) => `<option value="${esc(sc.id)}">${esc(H.scouterName(sc))}</option>`).join("")}</select></label>
+      <label class="field"><span>Name on the board <i class="hint">(no account yet? just type a name)</i></span><input type="text" name="name" autocomplete="off" placeholder="Filled in from the account" /></label>
+      <div class="btn-row" style="justify-content:flex-end"><button class="btn primary" type="submit">${icon("plus")} Add to team</button></div></form>`, (body, close) => {
+      const f = body.querySelector("#bpAddP"), sel = field(f, "uid"), name = field(f, "name");
+      sel.onchange = () => { const sc = H.allScouters().find((x) => x.id === sel.value); if (sc) name.value = H.scouterName(sc); };
+      f.onsubmit = (e) => {
+        e.preventDefault();
+        const n = name.value.trim(); if (!n) return H.toast("Pick an account or type a name", "err");
+        close(); run(Parts.addPerson(activeProject, n, sel.value), `Added ${n} to the team`);
+      };
+    });
+  }
   function editPerson(id) {
     const p = V.people.find((x) => x.id === id); if (!p) return;
     const roster = H.allScouters().slice().sort((a, b) => H.scouterName(a).localeCompare(H.scouterName(b)));
     H.modal(`Edit ${p.name}`, `<form id="bpPerson" class="bp-form">
-      <label class="field"><span>Name</span><input name="name" autocomplete="off" value="${esc(p.name)}" required /></label>
+      <label class="field"><span>Name</span><input type="text" name="name" autocomplete="off" value="${esc(p.name)}" required /></label>
       <label class="field"><span>BagelTools account <i class="hint">(links their photo, "My Parts" page and alerts)</i></span>
         <select name="uid"><option value="">Not linked</option>${roster.map((s) => `<option value="${esc(s.id)}"${s.id === p.uid ? " selected" : ""}>${esc(H.scouterName(s))}</option>`).join("")}</select></label>
       <div class="btn-row" style="justify-content:space-between">
@@ -611,7 +622,7 @@ const PartsUI = (() => {
       <details class="bp-comps"><summary>${icon("dashboard")} Composite parts <span class="hint">(${(V.composites || []).length} defined)</span></summary>
         <p class="hint">A composite is one line in the assembly BOM that's really several parts. Define it once (paste the parts from its own Part Studio) and every import expands it, multiplying quantities.</p>
         <div id="bpCompList"></div>
-        <input id="bpCompName" autocomplete="off" placeholder="Composite name, exactly as it reads in the BOM" />
+        <input type="text" id="bpCompName" autocomplete="off" placeholder="Composite name, exactly as it reads in the BOM" />
         <textarea id="bpCompText" rows="3" placeholder="Its parts, one per line (quantity in the last column)"></textarea>
         <div class="btn-row"><button class="btn ghost sm" type="button" id="bpCompSave">${icon("check")} Save composite</button></div>
       </details>
@@ -734,8 +745,7 @@ const PartsUI = (() => {
         <div class="btn-row" style="justify-content:center"><a class="btn primary" href="#/parts">${icon("wrench")} Open the board</a></div></div>`;
       root.onchange = (e) => {
         const sel = e.target.closest("[data-claim]"); if (!sel || !sel.value) return;
-        const p = V.people.find((x) => x.id === sel.value);
-        run(Parts.updatePerson(p.id, p.name, meId()), `Linked: you're ${p.name} now`);
+        claim(sel.value); sel.value = "";
       };
       root.onclick = null;
       return;
@@ -756,8 +766,9 @@ const PartsUI = (() => {
         </div>`;
       };
       return `<section class="card bp-mine">
-        <div class="bp-mine-head">${avatar(person, "bp-av")}<div><span class="pg-eyebrow">${esc(proj.name)}</span><b>${pr.done}/${pr.total} done</b></div>
-          <span class="bp-ppct">${pr.pct}%</span></div>
+        <div class="bp-mine-head">${avatar(person, "bp-av")}<div><span class="pg-eyebrow">${esc(proj.name)} · ${esc(person.name)}</span><b>${pr.done}/${pr.total} done</b></div>
+          <span class="bp-ppct">${pr.pct}%</span>
+          <button class="btn ghost sm" data-notme="${esc(person.id)}" title="This card isn't you">${icon("x")} Not me</button></div>
         <div class="bp-bigbar"><i style="width:${pr.pct}%"></i></div>
         ${ready.length ? `<h4 class="bp-mh hot">${icon("zap")} Ready to make <span>${ready.length}</span></h4>${ready.map(row).join("")}` : ""}
         ${todo.length ? `<h4 class="bp-mh">${icon("clock")} In progress <span>${todo.length}</span></h4>${todo.sort((a, b) => frac(b) - frac(a)).map(row).join("")}` : ""}
@@ -765,14 +776,38 @@ const PartsUI = (() => {
         ${!parts.length ? `<p class="hint">Nothing assigned to you in ${esc(proj.name)} yet.</p>` : ""}
       </section>`;
     }).join("");
-    root.innerHTML = head + sections;
-    root.onchange = null;
+    const others = liveProjects().map((pr) => [pr, V.people.filter((p) => p.project === pr.id && !p.uid)])
+      .filter(([pr, ps]) => ps.length && !cards.some((c) => c.project === pr.id));
+    root.innerHTML = head + sections + (others.length ? `<details class="card bp-claimmore"><summary>${icon("plus")} On another project's team? Link that card</summary>
+      <div class="bp-claim">${others.map(([pr, ps]) => `<label class="field"><span>${esc(pr.name)}</span>
+        <select data-claim><option value="">Which card is you?</option>${ps.map((p) => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join("")}</select></label>`).join("")}</div></details>` : "");
+    root.onchange = (e) => { const sel = e.target.closest("[data-claim]"); if (sel && sel.value) { claim(sel.value); sel.value = ""; } };
     root.onclick = (e) => {
+      const nm = e.target.closest("[data-notme]");
+      if (nm) return notMe(nm.dataset.notme);
       const b = e.target.closest("[data-step]");
       if (b) { const p = partByKey(b.dataset.key); if (p) run(Parts.setStage(p.key, p.stage + Number(b.dataset.step)), (st) => `${p.name}: ${p.stages[st]}`); return; }
       const a = e.target.closest("[data-goto]");
       if (a) { const p = partByKey(a.dataset.goto); activeProject = a.dataset.proj; ls.set("project", activeProject); activeMech = p ? p.mechId : "__all__"; activePerson = activeAlert = null; expandedKey = a.dataset.goto; }
     };
+  }
+
+  // Link my account to a teammate card (asks first: a misclick shouldn't make you someone else).
+  function claim(personId) {
+    const p = V.people.find((x) => x.id === personId); if (!p) return;
+    const proj = V.projects.find((x) => x.id === p.project);
+    H.confirmDialog(`Link your account to the "${p.name}" card${proj ? ` in ${proj.name}` : ""}? Only do this if that card is you.`, () => {
+      ls.set("notMe", ls.get("notMe", []).filter((x) => x !== p.id));
+      run(Parts.updatePerson(p.id, p.name, meId()), "Linked: that card is you now");
+    });
+  }
+  function notMe(personId) {
+    const p = V.people.find((x) => x.id === personId); if (!p) return;
+    if (p.uid && p.uid === meId()) {
+      return H.confirmDialog(`Unlink your account from the "${p.name}" card? Their parts stop showing here.`, () => run(Parts.updatePerson(p.id, p.name, ""), "Unlinked"));
+    }
+    ls.set("notMe", [...new Set([...ls.get("notMe", []), p.id])]);
+    H.toast(`Got it: ${p.name} isn't you`); redraw();
   }
 
   /* ===========================================================================

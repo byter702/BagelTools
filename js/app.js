@@ -734,7 +734,7 @@
     { id: "statistics", name: "Statistics", icon: "chart", accent: "#4ade80", blurb: "Teams, events and matchups by the numbers",
       pages: [["bagelstats", "Teams", "podium", "EPA leaderboards"], ["compare", "Compare", "compare", "Head to head + charts"],
         ["teams", "Event", "calendar", "Teams, schedule, rankings"], ["matchup", "Matchup", "swords", "Predict any match"]] },
-    { id: "parts", name: "Parts", icon: "wrench", accent: "#a78bfa", blurb: "Every robot part from Onshape to done, and who's building it",
+    { id: "parts", name: "Parts", icon: "wrench", accent: "#fb923c", blurb: "Every robot part from Onshape to done, and who's building it",
       pages: [["parts", "Board", "wrench", "Projects, mechanisms, team"], ["myparts", "My Parts", "user", "What you're building"],
         ["partsguide", "Guide", "info", "How Parts works"]] },
     { id: "fantasy", name: "Fantasy", icon: "crown", accent: "#fb7185", blurb: "Draft robots, win Bagel Bucks",
