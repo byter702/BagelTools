@@ -101,16 +101,34 @@ const Auth = (() => {
 
   function logout() { Store.clearSession(); location.reload(); }
 
+  // Signed out on this device, with a note for the login screen, then a fresh page.
+  const REMOVED_MSG = "An admin removed you from the team roster. Ask a team lead if that's a mistake.";
+  function kick(msg) {
+    if (!currentUser()) return;
+    try { sessionStorage.setItem("bb702.authMsg", msg); } catch (e) {}
+    Store.clearSession(); location.reload();
+  }
   // Ends this session if the account's password was reset or changed elsewhere.
   async function checkSession() {
     const s = currentUser(); if (!s || !cloudOn()) return;
     try {
       const c = await Cloud.getCred(Store.scouterIdFor(s.first, s.last));
-      if (!c || (s.cv && c.updatedAt !== s.cv)) {
-        try { sessionStorage.setItem("bb702.authMsg", "Your password was reset — log in again."); } catch (e) {}
-        Store.clearSession(); location.reload();
-      }
+      if (!c || (s.cv && c.updatedAt !== s.cv)) kick(isAccepted(s.first, s.last) ? "Your password was reset. Log in again." : REMOVED_MSG);
     } catch (e) {} // offline: keep the session
+  }
+  // Live, on every open device: removed from the roster → signed out now. (Called by
+  // cloud.js whenever the server's roster changes.)
+  function enforceRoster() {
+    const s = currentUser();
+    if (s && !isAccepted(s.first, s.last)) kick(REMOVED_MSG);
+  }
+  // Live, on every open device: password reset or account removed → signed out now.
+  function watchSession() {
+    const s = currentUser(); if (!s || !cloudOn() || !Cloud.watchCred) return;
+    Cloud.watchCred(Store.scouterIdFor(s.first, s.last), (c) => {
+      const cur = currentUser(); if (!cur) return;
+      if (!c || (cur.cv && c.updatedAt !== cur.cv)) kick(isAccepted(cur.first, cur.last) ? "Your password was reset. Log in again." : REMOVED_MSG);
+    });
   }
 
   /* ---- Screen --------------------------------------------------------------- */
@@ -487,6 +505,6 @@ const Auth = (() => {
     }, 600);
   }
 
-  return { currentUser, isLoggedIn, logout, showLogin, checkSession, properName };
+  return { currentUser, isLoggedIn, logout, showLogin, checkSession, enforceRoster, watchSession, properName };
 })();
 window.Auth = Auth;

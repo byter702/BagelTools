@@ -6075,7 +6075,7 @@
       Store.denyRequest(b.dataset.deny); Cloud.pushRoster(); toast("Request denied"); renderAdmin(root); refreshChrome();
     });
     $$("[data-remove]", root).forEach((b) => b.onclick = () =>
-      confirmDialog("Remove this member from the roster?", () => {
+      confirmDialog("Remove this member from the roster? They're signed out on every device right away.", () => {
         const m = Store.getMembers()[b.dataset.remove];
         Store.removeMember(b.dataset.remove); Cloud.pushRoster();
         if (m && Cloud.enabled()) { const sid = Store.scouterIdFor(m.first, m.last); Cloud.deleteCred(sid).catch(() => {}); if (adminCredIds) adminCredIds.delete(sid); }
@@ -7574,6 +7574,7 @@
     // Firebase isn't configured — everything still works locally.
     Cloud.init();
     Auth.checkSession(); // signs this device out if the account's password was reset
+    Auth.watchSession(); // …and keeps watching: a reset or removal signs every device out live
     Cloud.syncMe();
     Cloud.heartbeat();
     Cloud.releaseMyClaims(); // a fresh load = no active selection, so clear my old claims

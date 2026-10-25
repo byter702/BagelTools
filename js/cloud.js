@@ -119,7 +119,10 @@
       // the same approved members and pending access requests.
       try {
         var r = cache.config.roster;
-        if (r && window.Store && Store.mergeRoster) Store.mergeRoster(r.members, r.requests);
+        if (r && window.Store && Store.mergeRoster) Store.mergeRoster(r.members, r.requests, r.removed);
+        // Removed from the roster? Sign out on every device right away (only on what the
+        // server says, never on the on-device copy, which can be out of date).
+        if (r && !snap.metadata.fromCache && window.Auth && Auth.enforceRoster) setTimeout(Auth.enforceRoster, 0);
         // Fold the shared Bagel Bucks approved-event list into local so every
         // device knows which events earn BB (admin approval is team-wide).
         ["matchForm", "pitForm"].forEach(function (name) {
@@ -372,8 +375,9 @@
       if (!this.enabled() || !window.Store) return;
       var members = (Store.getMembers && Store.getMembers()) || {};
       var requests = (Store.getRequests && Store.getRequests()) || {};
+      var removed = (Store.getRemoved && Store.getRemoved()) || {};
       db.collection("config").doc("roster")
-        .set(clean({ members: members, requests: requests, updatedAt: Date.now() }))
+        .set(clean({ members: members, requests: requests, removed: removed, updatedAt: Date.now() }))
         .catch(function (e) { log("pushRoster failed", e); });
     },
     // Team-wide Bagel Bucks approval: which events earn BB (shared by the admin).
@@ -502,6 +506,15 @@
     deleteCred: function (id) {
       if (!this.enabled() || !id) return Promise.reject(new Error("cloud off"));
       return db.collection("creds").doc(id).delete();
+    },
+    // Live view of one account's password record (signs a device out the moment an
+    // admin resets it or removes the account). cb(cred or null); server data only.
+    watchCred: function (id, cb) {
+      if (!this.enabled() || !id) return function () {};
+      return db.collection("creds").doc(id).onSnapshot(function (d) {
+        if (d.metadata.fromCache) return;
+        cb(d.exists ? d.data() : null);
+      }, function () {});
     },
     // Admin: which scouter ids have a password set.
     listCredIds: function () {

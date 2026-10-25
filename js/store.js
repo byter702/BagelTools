@@ -13,7 +13,7 @@ const Store = (() => {
   // Accounts, the roster, sessions and app-wide settings are shared by every season.
   const BASE_SEASON = 2026;
   const SEASON = (window.GAME && GAME.season) || BASE_SEASON;
-  const GLOBAL_KEYS = new Set(["settings", "session", "members", "requests", "meAccounts", "credCache", "me"]);
+  const GLOBAL_KEYS = new Set(["settings", "session", "members", "requests", "removed", "meAccounts", "credCache", "me"]);
   const k = (name) => (SEASON === BASE_SEASON || GLOBAL_KEYS.has(name)) ? `${NS}.${name}` : `${NS}.y${SEASON}.${name}`;
 
   function read(name, fallback) {
@@ -356,6 +356,10 @@ const Store = (() => {
     write("requests", reqs);
     return "new";
   }
+  // removed: members an admin took off the roster { key: ts }. Shared with the roster
+  // so the removal reaches every device (members alone only ever get added).
+  function getRemoved() { return read("removed", {}); }
+  const unremove = (key) => { const rm = getRemoved(); if (rm[key]) { delete rm[key]; write("removed", rm); } };
   function approveMember(key) {
     const reqs = getRequests(), members = getMembers();
     const r = reqs[key];
@@ -363,16 +367,20 @@ const Store = (() => {
       firstSeen: r ? r.ts : Date.now(), lastSeen: Date.now() };
     delete reqs[key];
     write("members", members); write("requests", reqs);
+    unremove(key);
   }
   function denyRequest(key) { const reqs = getRequests(); delete reqs[key]; write("requests", reqs); }
   // Merge a shared roster (from the cloud) into the local one. Members are additive
-  // (approved anywhere → member everywhere). Pending REQUESTS are cloud-authoritative:
-  // the cloud's request list replaces the local one (minus any that are now members).
-  // This is what makes a DENY stick — a denied request removed from the cloud can no
-  // longer linger in some other device's local list and get re-pushed later.
-  function mergeRoster(members, requests) {
+  // (approved anywhere → member everywhere), except the ones the cloud lists as
+  // REMOVED, which are dropped here too. Pending REQUESTS and the removed list are
+  // cloud-authoritative: the cloud's copy replaces the local one. That's what makes a
+  // DENY or a REMOVE stick on every device instead of lingering and getting re-pushed.
+  function mergeRoster(members, requests, removed) {
+    if (removed && typeof removed === "object") write("removed", removed);
+    const rm = getRemoved();
     if (members && typeof members === "object") {
       const merged = { ...getMembers(), ...members };
+      Object.keys(rm).forEach((k2) => { if (!members[k2]) delete merged[k2]; }); // removed (unless re-approved since)
       write("members", merged);
     }
     const mem = getMembers();
@@ -382,12 +390,16 @@ const Store = (() => {
       write("requests", reqs);
     }
   }
-  function removeMember(key) { const members = getMembers(); delete members[key]; write("members", members); }
+  function removeMember(key) {
+    const members = getMembers(); delete members[key]; write("members", members);
+    const rm = getRemoved(); rm[key] = Date.now(); write("removed", rm);
+  }
   // Manually add an approved member (admin).
   function addMember(first, last) {
     const key = nameKey(first, last); const members = getMembers();
     members[key] = { first: String(first).trim(), last: String(last).trim(), firstSeen: Date.now(), lastSeen: Date.now() };
     write("members", members);
+    unremove(key);
   }
 
   // ---- Custom pit-scouting form schema (admin-editable) -------------------
@@ -494,7 +506,7 @@ const Store = (() => {
     getMe, setMe, getMeAccounts, removeAccountById, scouterIdFor, recordMatchScouted, recordPitScouted,
     getStrategy, setStrategy,
     getSession, setSession, clearSession, getCachedCred, cacheCred,
-    getMembers, getRequests, recordLogin, approveMember, denyRequest, removeMember, addMember, nameKey, mergeRoster,
+    getMembers, getRequests, getRemoved, recordLogin, approveMember, denyRequest, removeMember, addMember, nameKey, mergeRoster,
     getPitSchema, setPitSchema, clearPitSchema,
     getMatchSchema, setMatchSchema, clearMatchSchema,
     getCache, setCache,
