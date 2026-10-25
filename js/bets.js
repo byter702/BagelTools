@@ -320,6 +320,14 @@ const Bets = (() => {
     }
     return n;
   }
+  // The "you won / lost / refunded" popup was shown: remember it on the bet itself, so
+  // it never shows again on any device (even if this browser's storage is full).
+  function markSeen(ids) {
+    const d = db(); if (!d || !ids || !ids.length) return;
+    const uid = me().id, batch = d.batch(); let n = 0;
+    ids.forEach((id) => { const b = cache.mine[id]; if (b && b.uid === uid && !b.seenAt) { batch.update(d.collection("bets").doc(id), { seenAt: Date.now() }); n++; } });
+    if (n) batch.commit().catch((e) => console.warn("[Bets] markSeen failed", e));
+  }
   // Admin: void a match market (bad data, replay…): everyone gets their stake back.
   async function voidMarket(matchKey, eventKey) {
     const d = db(); if (!d) throw new Error("OFFLINE");
@@ -804,7 +812,7 @@ const Bets = (() => {
     POOLS, SEED, PLAYOFF_MULT, AP_PAY, ROUND_BB, BRACKET_FEE, DE8, FP_START, ROSTER, MIN_PRICE, WEEK_WIN, GRAND_PRIZE, AUTO_PICK_MS, LEAGUES,
     cache, watch, isReady, onChange: (cb) => { cbs.push(cb); return () => { cbs = cbs.filter((x) => x !== cb); }; }, _inject,
     played, teamsOf, isPlayoff, matchOrder, matchState, matchLabel,
-    makeLine, outcome, poolLabels, pools, betsOn, estMultiplier, payouts, openMarket, lockMarket, placeBet, cancelBet, settleEvent, settleMyOtherEvents, voidMarket,
+    makeLine, outcome, poolLabels, pools, betsOn, estMultiplier, payouts, openMarket, lockMarket, placeBet, cancelBet, settleEvent, settleMyOtherEvents, voidMarket, markSeen,
     scoreAlliances, gridOf, saveAlliancePred, settleAlliancePreds,
     bracketParticipants, cleanPicks, bracketActual, scoreBracket, bracketDone, saveBracket, settleBrackets,
     addMashupVote, undoMashupVote, mashupVotes, mashupRatings, nextMashupPair,

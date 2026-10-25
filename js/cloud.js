@@ -221,6 +221,31 @@
         .catch(function (e) { log("setBBValue failed", e); });
     },
 
+    // Admin: multiply every scouter's Bagel Bucks (e.g. ×4). One transaction per
+    // account so a bet or a scouting reward landing at the same moment isn't lost.
+    getBBBoosts: function () { var d = cache.config.bbBoosts; return (d && Array.isArray(d.log)) ? d.log : []; },
+    multiplyAllBB: async function (factor) {
+      if (!this.enabled()) throw new Error("cloud off");
+      factor = Number(factor);
+      if (!(factor > 1 && factor <= 10)) throw new Error("multiplier must be between 1 and 10");
+      var m = me(), by = m ? ((m.first || "") + " " + (m.last || "")).trim() : "";
+      var boostOne = function (ref) {
+        return db.runTransaction(function (tx) {
+          return tx.get(ref).then(function (s) {
+            var bb = (s.exists && s.data().bb) || 0;
+            if (!(bb > 0)) return false;
+            tx.update(ref, { bb: Math.round(bb * factor) });
+            return true;
+          });
+        });
+      };
+      var snap = await db.collection("scouters").get(), n = 0;
+      for (var i = 0; i < snap.docs.length; i++) { if (await boostOne(snap.docs[i].ref)) n++; }
+      await db.collection("config").doc("bbBoosts").set({
+        log: firebase.firestore.FieldValue.arrayUnion({ factor: factor, at: Date.now(), by: by, byId: m ? m.id : "", n: n }) }, { merge: true });
+      return n;
+    },
+
     // Lightweight presence ping.
     heartbeat: function () {
       if (!this.enabled()) return;

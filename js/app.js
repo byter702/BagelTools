@@ -629,6 +629,7 @@
   }
   let pitPageRefresh = null; // set by renderPit; lets cloud updates refresh the pit list+map live
   const BB = "BB";
+  const BB_MATCH = 25, BB_PIT = 15; // earned per new match record / per newly pit-scouted team
 
   // Cloud module is optional; fall back to safe no-ops if cloud.js is absent.
   const Cloud = window.Cloud || {
@@ -725,11 +726,11 @@
      ======================================================================== */
   const APPS = [
     { id: "dashboard", name: "Dashboard", icon: "dashboard", accent: "#ffc718", blurb: "Your Bagel Bucks, the leaderboard and the whole team",
-      pages: [["dashboard", "Overview", "dashboard", "Your day at a glance"], ["members", "Members", "user", "Profiles, leaderboard, scouters"]] },
-    { id: "scouting", name: "Scouting", icon: "binoculars", accent: "#5bbde2", blurb: "Scout every match and every pit",
-      pages: [["match", "Match Scouting", "binoculars", "Scout a robot in a match"], ["pit", "Pit Scouting", "robot", "Robot specs and photos"]] },
-    { id: "strategy", name: "Strategy", icon: "chess", accent: "#a78bfa", blurb: "Turn the data into a pick list",
-      pages: [["data", "Data", "database", "Search, rankings, spreadsheet"], ["picklist", "Pick List", "picklist", "Alliances, Mashup, Bracket"]] },
+      pages: [["dashboard", "Overview", "dashboard", "Your day at a glance"], ["profile", "Profile", "user", "Your Bagel Bucks and scouting"],
+        ["members", "Members", "teams", "Leaderboard and roster"]] },
+    { id: "scouting", name: "Scouting", icon: "binoculars", accent: "#5bbde2", blurb: "Scout every match and pit, then build the pick list",
+      pages: [["match", "Match Scouting", "binoculars", "Scout a robot in a match"], ["pit", "Pit Scouting", "robot", "Robot specs and photos"],
+        ["data", "Data", "database", "Search, rankings, spreadsheet"], ["picklist", "Pick List", "picklist", "Alliances, Mashup, Bracket"]] },
     { id: "statistics", name: "Statistics", icon: "chart", accent: "#4ade80", blurb: "Teams, events and matchups by the numbers",
       pages: [["bagelstats", "Teams", "podium", "EPA leaderboards"], ["compare", "Compare", "compare", "Head to head + charts"],
         ["teams", "Event", "calendar", "Teams, schedule, rankings"], ["matchup", "Matchup", "swords", "Predict any match"]] },
@@ -781,10 +782,10 @@
         <span class="ht-ico">${icon(a.icon)}</span>
         <span class="ht-txt"><b>${esc(a.name)}</b><span>${esc(a.blurb)}</span></span>
         ${wide ? `<span class="ht-stats">
-            <span><b data-count="${me.bb || 0}">${(me.bb || 0).toLocaleString()}</b><small>Bagel Bucks</small></span>
-            <span><b>${rank ? "#" + rank : "–"}</b><small>of ${board.length} on the leaderboard</small></span>
-            <span><b data-count="${matchCountOf(me)}">${matchCountOf(me)}</b><small>matches scouted</small></span>
-            <span><b data-count="${pitCountOf(me)}">${pitCountOf(me)}</b><small>pits scouted</small></span></span>`
+            <span><b data-count="${me.bb || 0}">${(me.bb || 0).toLocaleString()}</b><small data-s="BB">Bagel Bucks</small></span>
+            <span><b>${rank ? "#" + rank : "–"}</b><small data-s="rank">of ${board.length} on the leaderboard</small></span>
+            <span><b data-count="${matchCountOf(me)}">${matchCountOf(me)}</b><small data-s="matches">matches scouted</small></span>
+            <span><b data-count="${pitCountOf(me)}">${pitCountOf(me)}</b><small data-s="pits">pits scouted</small></span></span>`
           : `<span class="ht-pages">${a.pages.map((p) => `<span>${icon(p[2])}${esc(p[1])}</span>`).join("")}</span>`}
         <span class="ht-go">${icon("arrow-right")}</span>
       </a>`;
@@ -797,7 +798,7 @@
           <h2 class="hub-title">Bagel<span>Tools</span></h2>
           <p class="pg-sub">${greet}${u ? `, <b>${esc(u.first)}</b>` : ""}. ${s.eventName ? `You're on <b>${esc(s.eventName)}</b>.` : "Pick an app to get going."}</p>
         </header>
-        <div class="hub-grid">${apps.map(tile).join("")}</div>
+        <div class="hub-grid" style="--cols:${apps.length - 1}">${apps.map(tile).join("")}</div>
       </section>
       <div class="hub-corner">
         <a class="hub-mini" href="#/settings" title="Settings" aria-label="Settings">${icon("settings")}</a>
@@ -849,6 +850,7 @@
   const routes = {
     home: { title: "BagelTools", render: renderHome },
     dashboard: { title: "Dashboard", render: renderDashboard },
+    profile: { title: "Profile", render: renderProfilePage },
     members: { title: "Members", render: renderMembers },
     teams: { title: "Event", render: renderEventsPage },
     match: { title: "Match Scouting", render: renderMatch },
@@ -902,7 +904,7 @@
     const s = Store.getSettings();
     document.body.classList.toggle("prime-on", !!API.primeOn());
     const u = Auth.currentUser();
-    $("#scoutTag").innerHTML = u ? `Signed in: <a class="st-me" href="#/members/profile" title="Your profile">${esc(u.first)} ${esc(u.last)}</a>`
+    $("#scoutTag").innerHTML = u ? `Signed in: <a class="st-me" href="#/profile" title="Your profile">${esc(u.first)} ${esc(u.last)}</a>`
       : (s.scoutName ? `Scout: <b>${esc(s.scoutName)}</b>` : "");
     const altSeason = GAME.season !== (Number(window.CONFIG && CONFIG.defaultSeason) || 2026);
     $("#eventChip").innerHTML = `<span class="ec-season${altSeason ? " alt" : ""}">${esc(GAME.seasonLabel)}</span>` +
@@ -910,6 +912,25 @@
     const themeBtn = $("#themeToggle");
     const dark = document.documentElement.getAttribute("data-theme") !== "light";
     themeBtn.querySelector("use").setAttribute("href", dark ? "#ic-moon" : "#ic-sun");
+    themeBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
+    // breadcrumb: Home › App › Page (the app part links to the app's first page)
+    const r = current(), rt = routes[r] || routes.home, ap = appFor(rt.navAs || r);
+    const tbApp = $("#tbApp");
+    if (tbApp) {
+      if (ap.hidden || rt === routes.home) tbApp.innerHTML = "";
+      else {
+        tbApp.href = "#/" + ap.pages[0][0]; tbApp.style.setProperty("--app", ap.accent);
+        tbApp.innerHTML = `<span class="tb-app-ico">${icon(ap.icon)}</span>${esc(ap.name)}`;
+      }
+    }
+    const tbEv = $("#tbEvent");
+    if (tbEv) {
+      tbEv.classList.toggle("none", !s.eventName);
+      tbEv.title = s.eventName ? `${s.eventName} · change event` : "Pick your event";
+      tbEv.setAttribute("aria-label", s.eventName ? `Event: ${s.eventName}. Change event` : "Pick your event");
+      tbEv.innerHTML = `<span class="tbe-ico">${icon("calendar")}</span><span class="tbe-txt"><small>${esc(GAME.seasonLabel)} event</small>
+        <b>${s.eventName ? esc(s.eventName) : "Pick your event"}</b></span>${icon("chevron-down", "ico tbe-chev")}`;
+    }
     // pending access-request badge on the Admin nav item
     const badge = $("#reqBadge");
     if (badge) {
@@ -923,7 +944,8 @@
 
   /* ---- Event selection (shared by dashboard, sidebar chip, settings) ------- */
   async function selectEvent(key, name) {
-    Store.setSettings({ eventKey: key, eventName: name });
+    const recent = (Store.getSettings().recentEvents || []).filter((x) => x && x.key !== key);
+    Store.setSettings({ eventKey: key, eventName: name, recentEvents: [{ key, name }, ...recent].slice(0, 6) });
     refreshChrome();
     toast("Loading team list & schedule…");
     try {
@@ -933,6 +955,85 @@
       toast(`Event set: ${name}`);
     } catch (e) { toast("Event set — team list needs wifi to load", "err"); }
     router(); // re-render current view with the new event
+  }
+
+  // Top-bar event switcher: the current event, then the test event, pinned, live and
+  // recent events; typing searches the whole season. "Browse all" opens the full picker.
+  function closeEventMenu() {
+    const p = $(".evp"); if (p) p.remove();
+    const b = $("#tbEvent"); if (b) b.setAttribute("aria-expanded", "false");
+  }
+  function openEventMenu() {
+    const btn = $("#tbEvent");
+    if ($(".evp")) { closeEventMenu(); return; }
+    const s = Store.getSettings(), year = GAME.season;
+    const pop = document.createElement("div");
+    pop.className = "evp"; pop.setAttribute("role", "dialog"); pop.setAttribute("aria-label", "Change event");
+    pop.innerHTML = `
+      <div class="evp-cur"><span class="evp-cur-ico">${icon("calendar")}</span><div><span class="pg-eyebrow">${esc(GAME.seasonLabel)} · your event</span>
+        <b>${s.eventName ? esc(s.eventName) : "No event selected"}</b></div></div>
+      <label class="evp-search">${icon("search")}<input type="search" placeholder="Search ${year} events…" autocomplete="off" spellcheck="false" aria-label="Search events" /></label>
+      <div class="evp-list" role="listbox" aria-label="Events"></div>
+      <button class="evp-all" type="button">${icon("calendar")}<span>Browse every ${year} event</span>${icon("arrow-right")}</button>`;
+    document.body.appendChild(pop);
+    btn.setAttribute("aria-expanded", "true");
+    const place = () => {
+      const r = btn.getBoundingClientRect(), w = Math.min(380, innerWidth - 20);
+      pop.style.width = w + "px"; pop.style.top = Math.round(r.bottom + 10) + "px";
+      pop.style.left = Math.round(Math.max(10, Math.min(innerWidth - w - 10, r.left + r.width / 2 - w / 2))) + "px";
+    };
+    place();
+    let events = ((Store.getCache("events." + year, null) || {}).data) || [];
+    const today = new Date().toISOString().slice(0, 10);
+    const isLive = (e) => e.start_date && e.end_date && e.start_date <= today && today <= e.end_date;
+    const list = $(".evp-list", pop), input = $("input", pop);
+    const live = `<span class="badge green dot">LIVE</span> `;
+    const row = (x) => `<button class="evp-row${x.key === s.eventKey ? " on" : ""}" type="button" role="option" aria-selected="${x.key === s.eventKey}"
+        data-ev="${esc(x.key)}" data-name="${esc(x.name)}">
+        <span class="evp-name">${x.tag || ""}${esc(x.name)}</span>${x.meta ? `<span class="evp-meta">${esc(x.meta)}</span>` : ""}
+        ${x.key === s.eventKey ? `<span class="evp-check">${icon("check")}</span>` : ""}</button>`;
+    const asItem = (e) => ({ key: e.key, name: e.name || e.key, meta: [e.city, e.state_prov].filter(Boolean).join(", "), tag: isLive(e) ? live : "" });
+    const draw = () => {
+      const q = input.value.trim().toLowerCase();
+      if (q) {
+        const hits = events.filter((e) => (e.name || "").toLowerCase().includes(q) || (e.city || "").toLowerCase().includes(q) || (e.key || "").toLowerCase().includes(q))
+          .sort((a, b) => (isLive(b) - isLive(a)) || (a.start_date || "").localeCompare(b.start_date || "")).slice(0, 30);
+        list.innerHTML = hits.length ? hits.map((e) => row(asItem(e))).join("") : `<p class="evp-empty">${events.length ? "No events match that." : "Loading events…"}</p>`;
+      } else {
+        const seen = new Set(), byKey = (k) => events.find((e) => e.key === k);
+        const group = (title, items) => {
+          items = items.filter((x) => x && !seen.has(x.key)); items.forEach((x) => seen.add(x.key));
+          return items.length ? `<span class="evp-group">${title}</span>${items.map(row).join("")}` : "";
+        };
+        const te = (window.Cloud && Cloud.enabled() && Cloud.getTestEvent()) || s.testEvent;
+        const recent = (s.recentEvents || []).filter((x) => x && x.key && (String(x.key).startsWith(String(year)) || x.key === TEST_EVENT_KEY));
+        list.innerHTML = [
+          group("Practice", te ? [{ key: TEST_EVENT_KEY, name: TEST_EVENT_NAME, meta: "Shared test event", tag: `<span class="badge green dot">TEST</span> ` }] : []),
+          group("Pinned", (s.pinnedEvents || []).map((k) => byKey(k)).filter(Boolean).map(asItem)),
+          group("Happening now", events.filter(isLive).slice(0, 5).map(asItem)),
+          group("Recent", recent.map((x) => byKey(x.key) ? asItem(byKey(x.key)) : { key: x.key, name: x.name || x.key })),
+        ].join("") || `<p class="evp-empty">Search for your event above, or browse them all.</p>`;
+      }
+      $$("[data-ev]", list).forEach((b) => b.onclick = () => {
+        closeEventMenu();
+        if (b.dataset.ev !== Store.getSettings().eventKey) selectEvent(b.dataset.ev, b.dataset.name);
+      });
+    };
+    draw();
+    if (!events.length) API.getEvents(year).then(({ events: evs }) => { events = evs || []; if (pop.isConnected) draw(); }).catch(() => {
+      if (pop.isConnected && !input.value) list.insertAdjacentHTML("afterbegin", `<p class="evp-empty">Events need wifi the first time.</p>`);
+    });
+    input.oninput = draw;
+    $(".evp-all", pop).onclick = () => { closeEventMenu(); openEventPicker(); };
+    if (matchMedia("(pointer: fine)").matches) setTimeout(() => input.focus(), 30);
+    const outside = (e) => { if (!pop.isConnected) return done(); if (!pop.contains(e.target) && !btn.contains(e.target)) closeEventMenu(); };
+    const key = (e) => { if (e.key === "Escape") { closeEventMenu(); btn.focus(); } };
+    const done = () => { document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", key); removeEventListener("resize", place); removeEventListener("hashchange", closeEventMenu); };
+    document.addEventListener("pointerdown", outside, true);
+    document.addEventListener("keydown", key);
+    addEventListener("resize", place);
+    addEventListener("hashchange", closeEventMenu);
+    new MutationObserver((_, ob) => { if (!pop.isConnected) { done(); ob.disconnect(); } }).observe(document.body, { childList: true });
   }
 
   function openEventPicker() {
@@ -1008,12 +1109,6 @@
     const hr = new Date().getHours();
     const greet = hr < 5 ? "Up late" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
     const pitN = Object.keys(pits).length;
-    const actions = [
-      ["match", "plus", "New match", "Scout a robot", "y"],
-      ["pit", "robot", "Pit scout", "Robot + photo", "c"],
-      ["bagelstats", "podium", "Teams", "EPA rankings", "g"],
-      ["data/spreadsheet", "download", "Export data", "Spreadsheet + CSV", "v"],
-    ];
     root.innerHTML = `
       <section class="db-hero">
         <div class="db-hero-txt">
@@ -1022,16 +1117,11 @@
           <p class="pg-sub">${s.eventName ? `Scouting <b>${esc(s.eventName)}</b>.` : "Pick an event to load teams, the schedule and live stats."}</p>
         </div>
         <div class="db-hero-stats">
-          <a class="db-chip y" href="#/members/profile"><b data-count="${me.bb || 0}">${me.bb || 0}</b><span>${BB}</span></a>
-          <a class="db-chip" href="#/members/profile"><b data-count="${matchCountOf(me)}">${matchCountOf(me)}</b><span>your matches</span></a>
-          <a class="db-chip" href="#/members/profile"><b data-count="${pitCountOf(me)}">${pitCountOf(me)}</b><span>your pits</span></a>
+          <a class="db-chip y" href="#/profile"><b data-count="${me.bb || 0}">${me.bb || 0}</b><span>${BB}</span></a>
+          <a class="db-chip" href="#/profile"><b data-count="${matchCountOf(me)}">${matchCountOf(me)}</b><span>your matches</span></a>
+          <a class="db-chip" href="#/profile"><b data-count="${pitCountOf(me)}">${pitCountOf(me)}</b><span>your pits</span></a>
         </div>
       </section>
-
-      <div class="db-actions">
-        ${actions.map(([r, ic, t, sub, tone], i) => `<a class="db-act ${tone}" href="#/${r}" style="animation-delay:${i * 50}ms">
-          <span class="db-act-ico">${icon(ic)}</span><span class="db-act-txt"><b>${t}</b><span>${sub}</span></span>${icon("chevron-right")}</a>`).join("")}
-      </div>
 
       <section class="card db-event">
         <div class="db-event-txt">
@@ -1331,11 +1421,11 @@
   }
 
   /* ===========================================================================
-     VIEW: MEMBERS (Profile / Leaderboard / Scouters)
+     VIEW: MEMBERS (Leaderboard / Roster) + PROFILE
      ======================================================================== */
   function memberSub() {
     const parts = location.hash.replace(/^#\/?/, "").split("/");
-    return { sub: parts[1] || "scouters", id: parts[2] || "" };
+    return { sub: parts[1] || "leaderboard", id: parts[2] || "" };
   }
   function adminSub() {
     return location.hash.replace(/^#\/?/, "").split("/")[1] || "requests";
@@ -1428,9 +1518,10 @@
   }
 
   function renderMembers(root) {
-    const { sub } = memberSub();
-    const activeTab = ["profile", "leaderboard", "scouters"].includes(sub) ? sub : "scouters";
-    const tabs = [["scouters", "Scouters", "teams"], ["leaderboard", "Leaderboard", "trophy"], ["profile", "Profile", "user"]];
+    const { sub, id } = memberSub();
+    // someone's profile opened from the leaderboard / roster stays inside Members
+    const activeTab = sub === "profile" ? "profile" : ["roster", "scouters"].includes(sub) ? "roster" : "leaderboard";
+    const tabs = [["leaderboard", "Leaderboard", "trophy"], ["roster", "Roster", "teams"]];
     root.innerHTML = `
       <div class="subtabs" id="memberTabs">
         ${tabs.map(([k, l, ic]) => `<a href="#/members/${k}" class="${activeTab === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}
@@ -1440,12 +1531,16 @@
       <div id="memberBody"></div>`;
     const body = $("#memberBody", root);
     if (activeTab === "leaderboard") renderLeaderboard(body);
-    else if (activeTab === "scouters") {
-      const id = memberSub().id;
-      if (id) renderScouterReport(body, decodeURIComponent(id), "#/members/scouters");
-      else renderScoutersList(body);
+    else if (activeTab === "roster") {
+      if (id) renderScouterReport(body, decodeURIComponent(id), "#/members/roster");
+      else renderRoster(body);
     }
-    else renderProfile(body, memberSub().id || Store.getMe().id);
+    else renderProfile(body, decodeURIComponent(id) || Store.getMe().id);
+  }
+  // Dashboard → Profile: your own page (#/profile), or anyone's (#/profile/<id>).
+  function renderProfilePage(root) {
+    const id = (location.hash.replace(/^#\/?/, "").split("/")[1]) || "";
+    renderProfile(root, decodeURIComponent(id) || Store.getMe().id);
   }
 
   function renderProfile(body, id) {
@@ -1474,7 +1569,7 @@
         <div class="mb-bb"><span class="mb-bb-num" data-count="${sc.bb || 0}">${sc.bb || 0}</span><span class="mb-bb-unit">Bagel Bucks</span></div>
       </section>
       <div class="mb-stats">
-        <a class="tp-tile hl" href="#/members/leaderboard"><span class="tp-tile-l">Leaderboard</span><b class="tp-tile-v">${rank ? `#<span data-count="${rank}">${rank}</span>` : "–"}</b><span class="tp-tile-s">of ${allScouters().length} scouters</span></a>
+        <a class="tp-tile hl" href="#/members/leaderboard"><span class="tp-tile-l">Leaderboard</span><b class="tp-tile-v">${rank ? `#<span data-count="${rank}">${rank}</span>` : "–"}</b><span class="tp-tile-s">of ${allScouters().length} on the roster</span></a>
         <div class="tp-tile"><span class="tp-tile-l">Matches scouted</span><b class="tp-tile-v"><span data-count="${matchCountOf(sc)}">${matchCountOf(sc)}</span></b><span class="tp-tile-s">this season</span></div>
         <div class="tp-tile"><span class="tp-tile-l">Teams pit scouted</span><b class="tp-tile-v"><span data-count="${pitCountOf(sc)}">${pitCountOf(sc)}</span></b><span class="tp-tile-s">this season</span></div>
       </div>
@@ -1482,7 +1577,7 @@
         <div class="card"><div class="sr-head"><h3>${icon("binoculars")} Last teams scouted</h3><span class="hint">${lastM.length ? "newest first" : ""}</span></div>${tiles(lastM, "No matches scouted yet")}</div>
         <div class="card"><div class="sr-head"><h3>${icon("robot")} Last teams pit scouted</h3><span class="hint">${lastP.length ? "newest first" : ""}</span></div>${tiles(lastP, "No pits scouted yet")}</div>
       </div>
-      <div class="btn-row" style="margin-top:14px"><a class="btn ghost sm" href="#/members/scouters/${encodeURIComponent(sc.id)}">${icon("list")} Everything ${isMe ? "you" : esc(sc.first || "they")} scouted</a></div>`;
+      <div class="btn-row" style="margin-top:14px"><a class="btn ghost sm" href="#/members/roster/${encodeURIComponent(sc.id)}">${icon("list")} Everything ${isMe ? "you" : esc(sc.first || "they")} scouted</a></div>`;
     wireTeamTiles(body);
     countUp(body);
     if (isMe) {
@@ -1540,34 +1635,51 @@
     countUp(body);
   }
 
-  // Scouters subpage: every scouter as a tile (search by name) → their full report.
-  let mbScoutQ = "";
-  function renderScoutersList(body) {
+  // Roster: every scouter as a tile with when they were last online (search by name) → their full report.
+  let mbScoutQ = "", rosterSort = "online";
+  function renderRoster(body) {
     const meId = Store.getMe().id;
-    const all = allScouters().map((sc) => ({ sc, m: matchCountOf(sc), p: pitCountOf(sc), on: sc.id === meId || isOnline(sc) }))
-      .sort((a, b) => (b.m + b.p) - (a.m + a.p) || scouterName(a.sc).localeCompare(scouterName(b.sc)));
+    const all = allScouters().map((sc) => {
+      const on = sc.id === meId || isOnline(sc);
+      return { sc, m: matchCountOf(sc), p: pitCountOf(sc), on, seen: on ? Date.now() : (sc.lastSeen || 0) };
+    });
+    const SORTS = [["online", "Last online"], ["scouting", "Most scouting"], ["name", "A–Z"]];
     body.innerHTML = `
       <div class="card ds-top">
         <label class="ds-search" for="mbScoutQ">${icon("search")}
           <input id="mbScoutQ" type="search" autocomplete="off" placeholder="Search a scouter's name…" value="${esc(mbScoutQ)}" />
         </label>
-        <span class="hint">${all.filter((x) => x.on).length} online · ${all.length} scouters</span>
+        <div class="seg ro-sort" role="group" aria-label="Sort the roster">${SORTS.map(([k, l]) => `<button type="button" data-rsort="${k}" class="${rosterSort === k ? "on" : ""}">${l}</button>`).join("")}</div>
+        <span class="hint">${all.filter((x) => x.on).length} online · ${all.length} on the roster</span>
       </div>
       <div id="mbScoutList"></div>`;
     const list = $("#mbScoutList", body), input = $("#mbScoutQ", body);
+    const status = (x) => x.on ? `<span class="ro-seen on">Online now</span>`
+      : x.seen ? `<span class="ro-seen" title="${esc(new Date(x.seen).toLocaleString())}">Last online ${timeAgo(x.seen)}</span>`
+      : `<span class="ro-seen never">Not online yet</span>`;
     const draw = () => {
       const q = mbScoutQ.trim().toLowerCase();
-      const rows = all.filter((x) => !q || scouterName(x.sc).toLowerCase().includes(q));
+      const byName = (a, b) => scouterName(a.sc).localeCompare(scouterName(b.sc));
+      const rows = all.filter((x) => !q || scouterName(x.sc).toLowerCase().includes(q)).sort(
+        rosterSort === "name" ? byName
+          : rosterSort === "scouting" ? (a, b) => (b.m + b.p) - (a.m + a.p) || byName(a, b)
+          : (a, b) => (b.on - a.on) || (b.seen - a.seen) || byName(a, b));
       list.innerHTML = rows.length ? `<div class="ds-sgrid">${rows.map((x, i) => `
         <button class="ds-scouter" data-dscouter="${esc(x.sc.id)}" style="animation-delay:${Math.min(i, 16) * 25}ms">
           <span class="lb-av-wrap">${scouterAvatar(x.sc, "sc-avatar")}${x.on ? `<span class="mb-online on sm"></span>` : ""}</span>
           <span class="ds-sname">${esc(scouterName(x.sc))}${x.sc.id === meId ? ` <span class="badge cyan">You</span>` : ""}</span>
+          ${status(x)}
           <span class="ds-meta"><b>${x.m}</b> matches · <b>${x.p}</b> pits</span>
         </button>`).join("")}</div>`
         : `<div class="card">${emptyState("user", "No scouters found", "Try a different name.")}</div>`;
-      $$("[data-dscouter]", list).forEach((b) => b.onclick = () => { location.hash = "#/members/scouters/" + encodeURIComponent(b.dataset.dscouter); });
+      $$("[data-dscouter]", list).forEach((b) => b.onclick = () => { location.hash = "#/members/roster/" + encodeURIComponent(b.dataset.dscouter); });
     };
     input.oninput = () => { mbScoutQ = input.value; draw(); };
+    $$("[data-rsort]", body).forEach((b) => b.onclick = () => {
+      rosterSort = b.dataset.rsort;
+      $$("[data-rsort]", body).forEach((x) => x.classList.toggle("on", x === b));
+      draw();
+    });
     draw();
   }
 
@@ -2952,12 +3064,12 @@
       if (isNew) {
         const earn = canEarnBB();
         Store.recordMatchScouted(team, earn);
-        if (earn) Cloud.addBB(10); // account-based BB, atomic on the cloud
+        if (earn) Cloud.addBB(BB_MATCH); // account-based BB, atomic on the cloud
         Cloud.syncMe();
         Cloud.pushMatches();
-        Cloud.pushActivity({ type: "match", team, bb: earn ? 10 : 0, matchNumber: entry.matchNumber });
+        Cloud.pushActivity({ type: "match", team, bb: earn ? BB_MATCH : 0, matchNumber: entry.matchNumber });
         // keep the claim so the robot stays locked for others until the record syncs
-        toast(earn ? `Saved · Team ${team} · +10 BB` : `Saved · Team ${team}`);
+        toast(earn ? `Saved · Team ${team} · +${BB_MATCH} BB` : `Saved · Team ${team}`);
       } else {
         Cloud.pushMatches();
         toast("Match updated");
@@ -3123,11 +3235,11 @@
       if (isNewPit) {
         const earn = canEarnBB();
         Store.recordPitScouted(team, earn);
-        if (earn) Cloud.addBB(5); // account-based BB, atomic on the cloud
+        if (earn) Cloud.addBB(BB_PIT); // account-based BB, atomic on the cloud
         Cloud.syncMe();
         Cloud.pushPits();
-        Cloud.pushActivity({ type: "pit", team, bb: earn ? 5 : 0 });
-        toast(earn ? `Pit data saved · Team ${team} · +5 BB` : `Pit data saved · Team ${team}`);
+        Cloud.pushActivity({ type: "pit", team, bb: earn ? BB_PIT : 0 });
+        toast(earn ? `Pit data saved · Team ${team} · +${BB_PIT} BB` : `Pit data saved · Team ${team}`);
       } else {
         Cloud.pushPits();
         toast(`Pit data saved · Team ${team}`);
@@ -4287,7 +4399,7 @@
     if (r.sub === "spreadsheet") renderDataSheet(body);
     else if (r.kind === "team" && r.id) renderDataTeam(body, r.id);
     else if (r.kind === "data") renderDataStats(body, r.id);
-    else if (r.kind === "scouter" && r.id) { location.replace("#/members/scouters/" + encodeURIComponent(r.id)); return; } // moved to Members
+    else if (r.kind === "scouter" && r.id) { location.replace("#/members/roster/" + encodeURIComponent(r.id)); return; } // moved to Members
     else renderDataSearch(body);
   }
 
@@ -4452,7 +4564,7 @@
         <label class="ds-search" for="dsInput">${icon("search")}
           <input id="dsInput" type="search" autocomplete="off" placeholder="Search a team number or name…" value="${esc(dsQuery)}" />
         </label>
-        <span class="hint">${scouted.length} teams scouted · scouters are in <a href="#/members/scouters">Members → Scouters</a></span>
+        <span class="hint">${scouted.length} teams scouted · scouters are in <a href="#/members/roster">Members → Roster</a></span>
       </div>
       <div id="dsResults"></div>`;
     const res = $("#dsResults", body), input = $("#dsInput", body);
@@ -4577,7 +4689,7 @@
             </button>`).join("")}</div>` : `<p class="muted">No pit entries this season.</p>`}
         </div>
       </div>`;
-    $("#dsBack", body).onclick = () => { location.hash = backHash || "#/members/scouters"; };
+    $("#dsBack", body).onclick = () => { location.hash = backHash || "#/members/roster"; };
     $$("[data-dteam]", body).forEach((b) => b.onclick = () => { location.hash = "#/data/search/team/" + b.dataset.dteam; });
     paintAvatars(body, teams);
     paintTeamFills(body, teams);
@@ -5672,13 +5784,24 @@
       return `<div class="card">
         <div class="section-head"><div class="row" style="gap:10px">${icon("coins")}<h2 style="margin:0">Bagel Bucks (BB)</h2></div>
           ${evk ? `<span class="badge ${approved ? "green" : ""} dot">${approved ? "Approved" : "Not approved"}</span>` : ""}</div>
-        <p class="hint">Once you approve an event, <b>every</b> scout earns <b>BB</b> on any device — 10 BB per match, 5 BB per new team pit-scouted — until you turn it off. BB is tied to the account and shared across devices.</p>
+        <p class="hint">Once you approve an event, <b>every</b> scout earns <b>BB</b> on any device — ${BB_MATCH} BB per match, ${BB_PIT} BB per new team pit-scouted — until you turn it off. BB is tied to the account and shared across devices.</p>
         ${evk ? `<div class="row between" style="align-items:center;gap:12px;flex-wrap:wrap">
           <div><b>${esc(evk)}</b></div>
           <button class="btn ${approved ? "danger" : "primary"} sm" id="bbApproveBtn">${approved ? "Turn off earning" : "Approve for BB earning (everyone)"}</button>
         </div>`
           : `<p class="hint">Pick an event on the Dashboard first, then approve it here.</p>`}
       </div>
+      ${(() => {
+        const last = Cloud.getBBBoosts().slice(-1)[0];
+        return `<div class="card bb-boost" style="margin-top:16px">
+        <div class="row" style="gap:10px;margin-bottom:6px">${icon("zap")}<h3 style="margin:0">Multiply everyone's BB</h3></div>
+        <p class="hint">Multiplies every scouter's Bagel Bucks at once. ×4 turns 120 BB into 480. Each tap runs once, one account at a time.</p>
+        ${last ? `<p class="hint">Last time: <b>×${esc(String(last.factor))}</b> by ${esc(last.by || "an admin")} · ${esc(new Date(last.at).toLocaleString())} (${last.n || 0} accounts)</p>` : ""}
+        <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">
+          <label class="bb-x">× <input type="number" id="bbBoostX" value="4" min="1.5" max="10" step="0.5" style="width:74px" aria-label="Multiplier" /></label>
+          <button class="btn primary sm" id="bbBoostBtn"${Cloud.enabled() ? "" : " disabled"}>${icon("zap")} Multiply everyone's BB</button>
+        </div></div>`;
+      })()}
       <div class="card" style="margin-top:16px">
         <div class="row" style="gap:10px;margin-bottom:6px">${icon("coins")}<h3 style="margin:0">Adjust a scouter's BB</h3></div>
         <p class="hint">Manually add or remove Bagel Bucks from any account. Applies to that account on every device.</p>
@@ -5928,6 +6051,21 @@
       toast(on ? "BB earning approved for this event (team-wide)" : "BB earning turned off");
       renderAdmin(root);
     };
+    const boostBtn = $("#bbBoostBtn", root);
+    if (boostBtn) boostBtn.onclick = () => {
+      const x = Number($("#bbBoostX", root).value);
+      if (!(x > 1 && x <= 10)) return toast("Pick a multiplier between 1 and 10", "err");
+      const rich = allScouters().filter((sc) => (sc.bb || 0) > 0).sort((a, b) => (b.bb || 0) - (a.bb || 0));
+      const ex = rich.slice(0, 2).map((sc) => `${scouterName(sc)} ${sc.bb} → ${Math.round(sc.bb * x)}`).join(", ");
+      const last = Cloud.getBBBoosts().slice(-1)[0];
+      const again = last && Date.now() - last.at < 3 * 864e5 ? ` Heads up: ${last.by || "an admin"} already multiplied by ×${last.factor} ${timeAgo(last.at)}.` : "";
+      confirmDialog(`Multiply all ${rich.length} balances by ×${x}? (${ex}${rich.length > 2 ? ", …" : ""})${again}`, async () => {
+        boostBtn.disabled = true; boostBtn.textContent = "Multiplying…";
+        try { const n = await Cloud.multiplyAllBB(x); toast(`Done: ${n} balances ×${x}`); }
+        catch (e) { toast("Couldn't multiply: " + (e.message || e), "err"); }
+        if (root.isConnected) renderAdmin(root);
+      });
+    };
     const bbAmt = (btn) => { const r = btn.closest("tr"); const i = r && r.querySelector(".bb-amt"); return Math.abs(Math.floor(Number(i && i.value) || 0)); };
     $$("[data-bbadd]", root).forEach((b) => b.onclick = () => { const amt = bbAmt(b); if (!amt) return toast("Enter an amount", "err"); Cloud.addBB(amt, b.dataset.bbadd); toast(`+${amt} BB added`); });
     $$("[data-bbsub]", root).forEach((b) => b.onclick = () => { const amt = bbAmt(b); if (!amt) return toast("Enter an amount", "err"); Cloud.addBB(-amt, b.dataset.bbsub); toast(`−${amt} BB removed`); });
@@ -6117,7 +6255,7 @@
           <div class="st-acct">
             ${scouterAvatar(Store.getMe(), "sc-avatar")}
             <div><b>${esc(u ? u.first + " " + u.last : "Guest")}</b><span class="hint">Signed in on this device</span></div>
-            <a class="btn ghost sm" href="#/members/profile">${icon("user")} Profile</a>
+            <a class="btn ghost sm" href="#/profile">${icon("user")} Profile</a>
           </div>
           <button class="btn danger sm" id="stLogout" style="margin-top:12px">${icon("logout")} Log out</button>
         </section>
@@ -7407,12 +7545,14 @@
       const cur = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
       const next = cur === "light" ? "dark" : "light";
       applyTheme(next); Store.setSettings({ theme: next }); refreshChrome();
+      const tb = $("#themeToggle"); tb.classList.remove("spin"); void tb.offsetWidth; tb.classList.add("spin");
     };
+    $("#tbEvent").onclick = openEventMenu;
     const logoutBtn = $("#logoutBtn");
     if (logoutBtn) logoutBtn.onclick = () => confirmDialog("Log out of BagelTools?", () => Auth.logout());
     initGlobalSearch();
     const userName = $("#userChipName");
-    if (userName) { userName.title = "View your profile"; userName.onclick = () => { location.hash = "#/members/profile/" + Store.getMe().id; }; }
+    if (userName) { userName.title = "View your profile"; userName.onclick = () => { location.hash = "#/profile"; }; }
     const chip = $("#eventChip");
     if (chip) { chip.classList.add("clickable"); chip.title = "Click to change event";
       chip.onclick = openEventPicker; }
@@ -7458,21 +7598,34 @@
     // refresh/direct link doesn't stay empty. Skipped mid-form or mid-typing.
     // Bagel Bets: live markets + "your bet paid out" notices anywhere in the app.
     // A popup for every one of my match bets that settles (win, loss or refund), shown
-    // once per bet even if it settled while I was away (remembered on this device).
+    // ONCE EVER, even if it settled while I was away. The bet doc itself remembers it
+    // was seen (seenAt), so a full browser storage (which silently dropped the old
+    // on-device list) or another device can't bring it back. Bets settled before
+    // v102 never pop up again.
+    const BET_POP_SINCE = 1792902333612;
     const seenKey = () => "bb702.betSeen." + (Store.getMe().id || "");
     const loadSeen = () => { try { return new Set(JSON.parse(localStorage.getItem(seenKey()) || "[]")); } catch (e) { return new Set(); } };
-    const saveSeen = (set) => { try { localStorage.setItem(seenKey(), JSON.stringify([...set].slice(-400))); } catch (e) { /* storage off */ } };
+    const saveSeen = (set) => {
+      const v = JSON.stringify([...set].slice(-400));
+      try { localStorage.setItem(seenKey(), v); } catch (e) {
+        try { Object.keys(localStorage).filter((x) => x.startsWith("bb702.") && x.includes(".cache.")).forEach((x) => localStorage.removeItem(x)); localStorage.setItem(seenKey(), v); }
+        catch (e2) { /* storage off: the seenAt on the bet still covers it */ }
+      }
+    };
     let seenBets = null;
     Bets.onChange(() => {
       if (Bets.isReady("mine")) {
         if (!seenBets) seenBets = loadSeen();
-        const fresh = Object.values(Bets.cache.mine).filter((b) => b.settled && !seenBets.has(b.id));
+        const fresh = Object.values(Bets.cache.mine).filter((b) => b.settled && !b.seenAt && !seenBets.has(b.id));
         if (fresh.length) {
+          const shown = [];
           fresh.sort((x, y) => (x.settledAt || 0) - (y.settledAt || 0)).forEach((b) => {
             seenBets.add(b.id);
-            if (Date.now() - (b.settledAt || 0) < 7 * 864e5) betResultPopup(b);
+            const t = b.settledAt || 0;
+            if (t >= BET_POP_SINCE && Date.now() - t < 7 * 864e5) { betResultPopup(b); shown.push(b.id); }
           });
           saveSeen(seenBets);
+          Bets.markSeen(shown);
         }
       }
       refreshWallet(); if (betsRedraw) betsRedraw();
