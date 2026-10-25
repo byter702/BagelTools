@@ -156,8 +156,10 @@ const PartsUI = (() => {
     const archived = V.projects.filter((p) => p.archived);
     const size = Parts.sizeOf();
     root.innerHTML = `
-      ${hero(proj ? esc(proj.name) : "Parts", "Import each mechanism from Onshape, track every part until it's made, and split the work across the team.",
-        `<button class="btn ghost sm" data-act="code-all" title="Save code for every project">${icon("download")} Save code</button>`)}
+      ${hero(proj ? esc(proj.name) : "Parts", "",
+        `<button class="btn ghost sm" data-act="code-all" title="Save code for every project">${icon("download")} Save code</button>
+        ${proj ? `<button class="btn ghost sm" data-act="archive-proj">${icon("lock")} Archive</button>
+          <button class="btn ghost sm bp-danger" data-act="del-proj">${icon("trash")} Delete</button>` : ""}`)}
       ${size > Parts.SIZE_WARN ? `<div class="card bp-warn">${icon("info")}<span>The parts board is ${Math.round(size / Parts.SIZE_MAX * 100)}% full. Delete projects you don't need anymore to keep room.</span></div>` : ""}
       ${projectsBar(proj, archived)}
       ${proj ? projectBody(proj) : startHere()}`;
@@ -176,10 +178,7 @@ const PartsUI = (() => {
           </span>`).join("")}
           <button type="button" class="bp-pill add" data-act="new-proj">${icon("plus")} New project</button></div>
       </div>
-      ${proj || archived.length ? `<div class="bp-proj-acts">
-        ${proj ? `<button class="btn ghost sm" data-act="code-proj">${icon("download")} Save code for ${esc(proj.name)}</button>
-          <button class="btn ghost sm" data-act="archive-proj">${icon("lock")} Archive</button>
-          <button class="btn ghost sm bp-danger" data-act="del-proj">${icon("trash")} Delete</button>` : ""}
+      ${archived.length ? `<div class="bp-proj-acts">
         ${archived.length ? `<details class="bp-archived"><summary>${icon("lock")} ${plural(archived.length, "archived project")}</summary>
           ${archived.map((p) => `<div class="bp-arow"><span>${esc(p.name)}</span><span class="bp-rowbtns">
             <button class="btn ghost sm" data-unarchive="${esc(p.id)}">Bring back</button>
@@ -234,12 +233,11 @@ const PartsUI = (() => {
         </div></section>` : ""}
       <section class="card bp-stats">
         <div class="bp-stats-top"><span class="pg-eyebrow">Manufactured${mech ? ` · ${esc(mech.name)}` : ""}</span>
-          <b class="bp-stats-frac">${done} <span>/ ${typed.length}</span></b><b class="bp-stats-pct">${pct}%</b></div>
+          <b class="bp-stats-frac">${done} <span>/ ${typed.length}</span></b></div>
         <div class="bp-bigbar"><i style="width:${pct}%"></i></div>
         <div class="bp-stats-chips">
           ${ready ? `<span class="bp-schip hot">${icon("zap")} ${ready} ready to make</span>` : ""}
           ${unsorted ? `<span class="bp-schip">${icon("info")} ${unsorted} unsorted</span>` : ""}
-          ${!mech ? `<span class="bp-schip">${icon("info")} Pick a mechanism tab to import its parts</span>` : ""}
         </div>
       </section>
       ${filterBanner()}
@@ -299,21 +297,16 @@ const PartsUI = (() => {
     </div>`;
   }
   function detail(p, who) {
-    const ppl = projectPeople(), free = ppl.filter((x) => !who.includes(x));
-    const lists = orderedTypes();
+    // assigning is drag-only (a part onto a teammate); lists change by dragging too
     return `<div class="bp-detail">
       <div class="bp-steps">${p.stages.map((st, i) => `<button type="button" class="bp-step${i <= p.stage ? " on" : ""}${i === p.stage ? " cur" : ""}" data-stage="${i}" data-key="${esc(p.key)}">
         <span>${i < p.stage ? icon("check") : i + 1}</span>${esc(st)}</button>`).join("")}</div>
-      <div class="bp-dfield"><span class="bp-dl">Building it</span>
+      <div class="bp-dfield"><span class="bp-dl">Assigned</span>
         <div class="bp-dchips">${who.map((x) => `<span class="bp-person-chip">${avatar(x, "bp-av xs")}${esc(x.name)}<button type="button" data-unassign="${esc(x.id)}" data-key="${esc(p.key)}" aria-label="Unassign ${esc(x.name)}">${icon("x")}</button></span>`).join("")
-          || `<span class="bp-nobody">${icon("user")} Nobody yet</span>`}</div>
-        ${free.length ? `<select data-assign="${esc(p.key)}" aria-label="Assign to a teammate"><option value="">${ppl.length > free.length ? "Add someone else…" : "Assign to…"}</option>${free.map((x) => `<option value="${esc(x.id)}">${esc(x.name)}</option>`).join("")}</select>`
-          : ppl.length ? "" : `<span class="hint">Add teammates in the Team panel first.</span>`}</div>
-      <div class="bp-dfield"><span class="bp-dl">List</span><select data-movetype="${esc(p.key)}" aria-label="Move to a list">
-        ${lists.map((t) => `<option value="${esc(t)}"${t === p.type ? " selected" : ""}>${esc(typeInfo(t).label)}</option>`).join("")}
-        ${p.overridden ? `<option value="__auto__">Auto-sort by name</option>` : ""}</select></div>
+          || `<span class="bp-nobody">${icon("user")} Nobody yet</span>`}</div></div>
       ${p.type === "inhouse" ? fileRow(p, "drawing") : ""}${p.type === "lasercut" ? fileRow(p, "dxf") : ""}
       <div class="bp-dbtns">
+        ${p.overridden ? `<button type="button" class="btn ghost sm" data-autosort="${esc(p.key)}" title="Put it back on the list its name says">${icon("swap")} Auto-sort</button>` : ""}
         ${p.onshapeUrl ? `<a class="btn ghost sm" href="${esc(p.onshapeUrl)}" target="_blank" rel="noopener">${icon("external")} Onshape</a>` : ""}
         <button type="button" class="btn ghost sm" data-archive="${esc(p.key)}">${icon("lock")} Archive</button>
         <button type="button" class="btn ghost sm bp-danger" data-remove="${esc(p.key)}">${icon("trash")} Remove</button>
@@ -343,10 +336,10 @@ const PartsUI = (() => {
     const made = vis.filter((p) => p.type && p.done && !p.archived).sort((a, c) => (order.indexOf(a.type) - order.indexOf(c.type)) || a.name.localeCompare(c.name));
     const arch = vis.filter((p) => p.archived);
     return sec("unsorted", `${icon("info")} Unsorted <span class="hint">${unsorted.length}</span>`, `These names don't follow the <code>type-name</code> convention (3dp, fabworks, lasercut, inhouse). Rename them in CAD and re-import, drag one onto a list (or open the list picker), or mark it handled.`,
-        unsorted.map((p) => row(p, `<select data-movetype="${esc(p.key)}" aria-label="Put ${esc(p.rawName)} on a list"><option value="">Put on a list…</option>${orderedTypes().map((t) => `<option value="${esc(t)}">${esc(typeInfo(t).label)}</option>`).join("")}</select>${b("data-resolve", p.key, "Handled")}${b("data-archive", p.key, "Archive")}`, "drag")).join("")) +
-      sec("resolved", `${icon("check")} Handled <span class="hint">${resolved.length}</span>`, "Unsorted parts you've dealt with.",
+        unsorted.map((p) => row(p, `<select data-movetype="${esc(p.key)}" aria-label="Put ${esc(p.rawName)} on a list"><option value="">Put on a list…</option>${orderedTypes().map((t) => `<option value="${esc(t)}">${esc(typeInfo(t).label)}</option>`).join("")}</select>${b("data-resolve", p.key, "Resolve")}${b("data-archive", p.key, "Archive")}`, "drag")).join("")) +
+      sec("resolved", `${icon("check")} Resolved <span class="hint">${resolved.length}</span>`, "",
         resolved.map((p) => row(p, b("data-unresolve", p.key, "Send back"), "drag")).join("")) +
-      sec("made", `${icon("trophy")} Manufactured <span class="hint">${made.length}</span>`, "",
+      sec("made", `Manufactured <span class="hint">${made.length}</span>`, "",
         made.map((p) => row(p, `${b("data-reopen", p.key, "Reopen")}${b("data-archive", p.key, "Archive")}`, true)).join("")) +
       sec("arch", `${icon("lock")} Archived <span class="hint">${arch.length}</span>`, "Set aside: they don't count toward any list or the progress bar.",
         arch.map((p) => row(p, `${b("data-unarchive-part", p.key, "Bring back")}${b("data-remove", p.key, "Delete")}`, p.type ? true : null)).join(""));
@@ -371,9 +364,7 @@ const PartsUI = (() => {
           <span class="bp-pbar"><i style="width:${pr.pct}%"></i></span>
           <span class="bp-pmeta">${pr.done}/${pr.total} done${n ? ` · <b>${n} ready</b>` : ""}</span>
         </div>`; }).join("") || `<p class="hint bp-people-empty">Nobody on this project yet. Add teammates below, then drag a part (or a whole list's header) onto someone to assign it.</p>`}</div>
-      <button type="button" class="bp-addperson" data-act="add-person">${icon("plus")} Add teammate</button>
-      <p class="hint bp-team-tip">${icon("info")}<span>Drag parts onto people, or open a part and use <b>Assign</b>. A red <b>!</b> means they have parts ready to make.</span></p>
-    </aside>`;
+      <button type="button" class="bp-addperson" data-act="add-person">${icon("plus")} Add teammate</button>    </aside>`;
   }
 
   /* ---- board events ---- */
@@ -390,6 +381,7 @@ const PartsUI = (() => {
       if (d.open) { expandedKey = expandedKey === d.open ? null : d.open; return redraw(); }
       if (d.stage != null && d.key) { const p = partByKey(d.key); return run(Parts.setStage(d.key, Number(d.stage)).then((st) => { if (p && st === p.stages.length - 1) { expandedKey = null; H.toast(`${p.name} is manufactured`); } })); }
       if (d.unassign) { const pid = d.unassign, key = d.key; return run(Parts.assign(pid, [key], false).then(() => pushUndo("unassign", () => Parts.assign(pid, [key], true)))); }
+      if (d.autosort) return movePart(d.autosort, null);
       if (d.archive) return run(Parts.setArchived(d.archive, true).then(() => { if (expandedKey === d.archive) expandedKey = null; }), "Archived");
       if (d.unarchivePart) return run(Parts.setArchived(d.unarchivePart, false), "Back on its list");
       if (d.remove) { const p = partByKey(d.remove); return H.confirmDialog(`Remove "${p ? p.name : "this part"}" from the tracker?`, () => run(Parts.removePart(d.remove), "Part removed")); }
@@ -409,7 +401,6 @@ const PartsUI = (() => {
           run(Parts.addProject(name).then((id) => { activeProject = id; ls.set("project", id); activeMech = "__all__"; activePerson = activeAlert = null; redraw(); }), `Created ${name}`));
         case "add-person": return addPersonModal();
         case "code-all": return codeModal(null);
-        case "code-proj": return codeModal(activeProject);
         case "archive-proj": return archiveProject();
         case "del-proj": return deleteProject(activeProject);
         case "add-mech": return mechModal(null);
@@ -423,8 +414,6 @@ const PartsUI = (() => {
     };
     root.onchange = (e) => {
       const el = e.target, d = el.dataset;
-      if (d.assign && el.value) { const pid = el.value, key = d.assign, person = V.people.find((x) => x.id === pid);
-        return run(Parts.assign(pid, [key], true).then(() => pushUndo(`assign to ${person ? person.name : ""}`, () => Parts.assign(pid, [key], false))), `Assigned to ${person ? person.name : "them"}`); }
       if (d.movetype && el.value) return movePart(d.movetype, el.value === "__auto__" ? null : el.value);
       if (d.upload && el.files && el.files[0]) return upload(d.upload, d.key, el.files[0]);
     };
@@ -846,12 +835,12 @@ const PartsUI = (() => {
           </tbody></table></div>
           <p class="hint">Your <code>type-</code> prefix always wins (<code>3dp-MotorSpacer</code> is a 3D print). Ignored automatically: origin cubes, fasteners (bolts, screws, nuts, washers…) and bare part numbers. Bearings and anything else land in <b>Unsorted</b>.</p></section>
         <section class="card"><h3>${icon("teams")} 5 · Team and assignments</h3>
-          <p>The <b>Team</b> panel is per project. Add teammates (pick their name to link their BagelTools account), then drag a part onto someone, or drag a whole list's header to give them every part in it. On a phone, open a part and use <b>Assign</b>. A part can belong to several people.</p>
+          <p>The <b>Team</b> panel is per project. Add teammates (pick their name to link their BagelTools account), then drag a part onto someone, or drag a whole list's header to give them every part in it. A part can belong to several people; open it and tap the × on a name to unassign.</p>
           <p>Tap a person to see only their parts. A red <b>!</b> means they have parts <b>ready to make</b>: an in-house part with a drawing, a laser-cut part with a DXF, or a 3D print / pulley / spacer / shaft at "Designed". People linked to their account get a heads-up when someone hands them parts, and see everything on <a href="#/myparts">My Parts</a>.</p></section>
         <section class="card"><h3>${icon("check")} 6 · Track, sort, archive</h3>
           <ul><li>Tap a part to open it, then tap a stage. Its last stage moves it to <b>Manufactured</b>.</li>
           <li>In-house parts take a <b>PDF drawing</b> and laser-cut parts a <b>DXF</b>: drop the file on the open part. Uploading moves it to "Drawing made" / "DXF Uploaded".</li>
-          <li>Sorted wrong? Drag the part to another list, or use the <b>List</b> picker. <b>Ctrl+Z</b> undoes the last move or assignment.</li>
+          <li>Sorted wrong? Drag the part to another list (<b>Auto-sort</b> on the open part puts it back). <b>Ctrl+Z</b> undoes the last move or assignment.</li>
           <li><b>New list</b> (end of the board) makes your own list, shared by every project. The dot on a list's header picks its color on your device; drag headers to reorder.</li>
           <li><b>Archive</b> sets a part (or a whole project) aside without deleting it.</li></ul></section>
         <section class="card"><h3>${icon("download")} 7 · Save codes</h3>

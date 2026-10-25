@@ -180,6 +180,11 @@
       try {
         if (!firebase.apps || !firebase.apps.length) firebase.initializeApp(CFG);
         db = firebase.firestore();
+        // Keep a copy of the data on the device. A reload then only downloads what
+        // changed instead of every match/pit/scouter again (the free plan allows
+        // 50k reads a day), and offline saves survive a refresh.
+        try { db.enablePersistence({ synchronizeTabs: true }).catch(function (e) { log("offline cache off", e && e.code); }); }
+        catch (e) { log("offline cache off", e); }
         ready = true;
         listen();
       } catch (e) { ready = false; log("init failed", e); }

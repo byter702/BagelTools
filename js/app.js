@@ -708,7 +708,7 @@
   function isOnline(sc) {
     if (sc.online) return true;
     if (!sc.lastSeen) return false;
-    return (Date.now() - sc.lastSeen) < 90 * 1000; // seen in the last 90s
+    return (Date.now() - sc.lastSeen) < 5.5 * 60 * 1000; // pinged within the last 5½ min (tabs ping every 4)
   }
   // 702 bagel icon shown for any account without a custom photo — the default
   // profile picture for new accounts and everyone who hasn't uploaded their own.
@@ -737,7 +737,7 @@
     { id: "parts", name: "Parts", icon: "wrench", accent: "#fb923c", blurb: "Every robot part from Onshape to done, and who's building it",
       pages: [["parts", "Board", "wrench", "Projects, mechanisms, team"], ["myparts", "My Parts", "user", "What you're building"],
         ["partsguide", "Guide", "info", "How Parts works"]] },
-    { id: "fantasy", name: "Fantasy", icon: "crown", accent: "#fb7185", blurb: "Draft robots, win Bagel Bucks",
+    { id: "fantasy", name: "Fantasy", icon: "crown", accent: "#fb7185", hidden: true, blurb: "Draft robots, win Bagel Bucks",
       pages: [["fantasy", "Fantasy Alliance", "crown", "Your league and draft"]] },
     { id: "system", name: "BagelTools", icon: "settings", accent: "#9fb2c0", hidden: true, blurb: "Settings and admin",
       pages: [["settings", "Settings", "settings", "Theme, season, account"], ["admin", "Admin", "shield", "Members, forms, betting"]] },
@@ -747,6 +747,18 @@
   const appFor = (route) => APPS.find((a) => a.id === ROUTE_APP[route]) || APPS[0];
   const reduceMotion = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
+  // ---- sidebar: main links (Home, Dashboard, Profile, Members, Fantasy) on every page,
+  // then the open app's own pages below them ----
+  const MAIN_APPS = new Set(["dashboard", "fantasy"]); // their pages ARE the main links
+  function renderSidebar(appDef, active) {
+    const g = appDef ? active : "home";
+    $$("#gnav .gn").forEach((a) => { const on = a.dataset.g === g; a.classList.toggle("on", on); a.setAttribute("aria-current", on ? "page" : "false"); });
+    const showApp = !!appDef && !MAIN_APPS.has(appDef.id);
+    $("#sbApp").hidden = !showApp;
+    if (appDef) document.documentElement.style.setProperty("--app", appDef.accent);
+    if (showApp) renderAppNav(appDef, active);
+    else $("#nav").dataset.app = ""; // re-entering an app plays its intro again
+  }
   // ---- per-app sidebar: the open page grows, a glow slides between pages ----
   const NV_H = 50, NV_HA = 84, NV_GAP = 6;
   function renderAppNav(appDef, active) {
@@ -851,7 +863,7 @@
      ROUTER
      ======================================================================== */
   const routes = {
-    home: { title: "BagelTools", render: renderHome },
+    home: { title: "Home", render: renderHome },
     dashboard: { title: "Dashboard", render: renderDashboard },
     profile: { title: "Profile", render: renderProfilePage },
     members: { title: "Members", render: renderMembers },
@@ -893,7 +905,7 @@
     // BagelTools: home has no sidebar; every other page lives inside its app's sidebar
     const isHome = route === routes.home;
     document.body.classList.toggle("is-home", isHome);
-    if (!isHome) renderAppNav(appFor(route.navAs || r), route.navAs || r);
+    renderSidebar(isHome ? null : appFor(route.navAs || r), route.navAs || r);
     app.classList.remove("nav-open");
     document.body.classList.remove("nav-lock");
     view.innerHTML = "";
@@ -913,20 +925,15 @@
     $("#scoutTag").innerHTML = u ? `Signed in: <a class="st-me" href="#/profile" title="Your profile">${esc(u.first)} ${esc(u.last)}</a>`
       : (s.scoutName ? `Scout: <b>${esc(s.scoutName)}</b>` : "");
     const altSeason = GAME.season !== (Number(window.CONFIG && CONFIG.defaultSeason) || 2026);
-    $("#eventChip").innerHTML = `<span class="ec-season${altSeason ? " alt" : ""}">${esc(GAME.seasonLabel)}</span>` +
+    const evChip = $("#eventChip"); // (the event now lives in the top bar)
+    if (evChip) evChip.innerHTML = `<span class="ec-season${altSeason ? " alt" : ""}">${esc(GAME.seasonLabel)}</span>` +
       (s.eventName ? `<b>${esc(s.eventName)}</b>` : `No event selected`);
     const themeBtn = $("#themeToggle");
     const dark = document.documentElement.getAttribute("data-theme") !== "light";
     themeBtn.querySelector("use").setAttribute("href", dark ? "#ic-moon" : "#ic-sun");
     themeBtn.setAttribute("aria-label", dark ? "Switch to light theme" : "Switch to dark theme");
-    // top bar: Home | Dashboard tabs (a pill slides to the one you're on), then
-    // App › Page for everything else (the app part links to the app's first page)
+    // top bar: App › Page (the app part links to the app's first page)
     const r = current(), rt = routes[r] || routes.home, ap = appFor(rt.navAs || r);
-    const onHome = rt === routes.home, onDash = !onHome && ap.id === "dashboard";
-    $("#tbHome").classList.toggle("on", onHome); $("#tbDash").classList.toggle("on", onDash);
-    $("#tbHome").setAttribute("aria-current", onHome ? "page" : "false"); $("#tbDash").setAttribute("aria-current", onDash ? "page" : "false");
-    document.body.classList.toggle("tb-title-dup", r === "dashboard"); // "Dashboard › Dashboard" says nothing
-    moveTabPill(); requestAnimationFrame(moveTabPill);
     const tbApp = $("#tbApp");
     if (tbApp) {
       if (ap.hidden || rt === routes.home) tbApp.innerHTML = "";
@@ -952,17 +959,6 @@
     // user chip in sidebar foot
     const chip = $("#userChip");
     if (chip) { chip.hidden = !u; if (u) $("#userChipName").textContent = `${u.first} ${u.last}`; }
-  }
-
-  function moveTabPill() {
-    const nav = $("#tbNav"), on = nav && $(".tb-tab.on", nav);
-    if (!nav) return;
-    // until the tabs can be measured, the active tab paints its own gold background
-    if (!on || !on.offsetWidth) { nav.style.setProperty("--pill-o", "0"); nav.classList.remove("pill"); return; }
-    nav.classList.add("pill");
-    nav.style.setProperty("--pill-x", on.offsetLeft + "px");
-    nav.style.setProperty("--pill-w", on.offsetWidth + "px");
-    nav.style.setProperty("--pill-o", "1");
   }
 
   /* ---- Event selection (shared by dashboard, sidebar chip, settings) ------- */
@@ -7571,8 +7567,6 @@
       const tb = $("#themeToggle"); tb.classList.remove("spin"); void tb.offsetWidth; tb.classList.add("spin");
     };
     $("#tbEvent").onclick = openEventMenu;
-    window.addEventListener("resize", moveTabPill);
-    if (document.fonts && document.fonts.ready) document.fonts.ready.then(moveTabPill); // tab widths change once Orbitron loads
     const logoutBtn = $("#logoutBtn");
     if (logoutBtn) logoutBtn.onclick = () => confirmDialog("Log out of BagelTools?", () => Auth.logout());
     initGlobalSearch();
@@ -7584,6 +7578,7 @@
     if (chip) { chip.classList.add("clickable"); chip.title = "Click to change event";
       chip.onclick = openEventPicker; }
     // app sidebar links are plain #/route links; tapping the page you're on just closes the phone drawer
+    $("#gnav").addEventListener("click", (e) => { const a = e.target.closest("[data-g]"); if (a && a.dataset.g === current()) { app.classList.remove("nav-open"); syncNavLock(); } });
     $("#nav").addEventListener("click", (e) => { const a = e.target.closest("[data-route]"); if (a && a.dataset.route === current()) { app.classList.remove("nav-open"); syncNavLock(); } });
 
     window.addEventListener("hashchange", router);
@@ -7597,7 +7592,12 @@
     Cloud.syncMe();
     Cloud.heartbeat();
     Cloud.releaseMyClaims(); // a fresh load = no active selection, so clear my old claims
-    setInterval(() => Cloud.heartbeat(), 45 * 1000);
+    // Presence ping. Every open tab reads every other tab's ping, so reads grow with
+    // (people online)²: ping every 4 min, only while the tab is actually visible.
+    let lastBeat = Date.now();
+    const beat = () => { if (document.hidden) return; lastBeat = Date.now(); Cloud.heartbeat(); };
+    setInterval(beat, 4 * 60 * 1000);
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - lastBeat > 90 * 1000) beat(); });
     // Cloud snapshots arrive every few seconds (everyone's heartbeat), so they never
     // re-render the page you're looking at. Only the sidebar chrome updates, plus
     // two in-place exceptions: live robot locks on Match Scouting, and the pit
