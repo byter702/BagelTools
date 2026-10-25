@@ -156,35 +156,107 @@ const PartsUI = (() => {
     const archived = V.projects.filter((p) => p.archived);
     const size = Parts.sizeOf();
     root.innerHTML = `
-      ${hero(proj ? esc(proj.name) : "Parts", "",
-        `<button class="btn ghost sm" data-act="code-all" title="Save code for every project">${icon("download")} Save code</button>
-        ${proj ? `<button class="btn ghost sm" data-act="archive-proj">${icon("lock")} Archive</button>
-          <button class="btn ghost sm bp-danger" data-act="del-proj">${icon("trash")} Delete</button>` : ""}`)}
+      ${projectHeader(proj)}
       ${size > Parts.SIZE_WARN ? `<div class="card bp-warn">${icon("info")}<span>The parts board is ${Math.round(size / Parts.SIZE_MAX * 100)}% full. Delete projects you don't need anymore to keep room.</span></div>` : ""}
-      ${projectsBar(proj, archived)}
       ${proj ? projectBody(proj) : startHere()}`;
     wireBoard(root);
   }
 
-  function projectsBar(proj, archived) {
-    const live = liveProjects();
-    return `<section class="card bp-projects">
-      <div class="bp-proj-row">
-        <span class="pg-eyebrow">Projects</span>
-        <div class="bp-pills" role="tablist" aria-label="Projects">${live.map((p) => `
-          <span class="bp-pill${p.id === activeProject ? " on" : ""}">
-            <button type="button" role="tab" aria-selected="${p.id === activeProject}" data-proj="${esc(p.id)}">${esc(p.name)}</button>
-            ${p.id === activeProject ? `<button type="button" class="bp-pill-ic" data-proj-edit="${esc(p.id)}" title="Rename ${esc(p.name)}" aria-label="Rename ${esc(p.name)}">${icon("edit")}</button>` : ""}
-          </span>`).join("")}
-          <button type="button" class="bp-pill add" data-act="new-proj">${icon("plus")} New project</button></div>
+  // The project header: an uploadable project icon, the project name with a
+  // dropdown to switch/create projects, and the save/archive/delete actions.
+  function projectHeader(proj) {
+    const ic = proj && proj.icon
+      ? `<img src="${esc(proj.icon)}" alt="" />`
+      : icon("wrench");
+    return `<header class="pg-hero bp-hero">
+      <button type="button" class="pg-hero-ico bp-proj-ico${proj && proj.icon ? " has-img" : ""}"${proj ? ` data-act="proj-icon" title="Upload a project icon" aria-label="Upload a project icon"` : ` disabled`}>${ic}</button>
+      <div class="pg-hero-txt">
+        <div class="bp-proj-head">
+          ${proj
+            ? `<button type="button" class="bp-proj-switch" data-act="proj-menu" aria-haspopup="true" aria-expanded="false" title="Switch project">
+                 <h2 class="pg-title">${esc(proj.name)}</h2>${icon("chevron-down")}</button>
+               <button type="button" class="bp-pill-ic bp-proj-rename" data-proj-edit="${esc(proj.id)}" title="Rename ${esc(proj.name)}" aria-label="Rename project">${icon("edit")}</button>`
+            : `<h2 class="pg-title">Parts</h2>
+               <button type="button" class="btn primary sm" data-act="new-proj">${icon("plus")} New project</button>`}
+        </div>
       </div>
-      ${archived.length ? `<div class="bp-proj-acts">
-        ${archived.length ? `<details class="bp-archived"><summary>${icon("lock")} ${plural(archived.length, "archived project")}</summary>
-          ${archived.map((p) => `<div class="bp-arow"><span>${esc(p.name)}</span><span class="bp-rowbtns">
-            <button class="btn ghost sm" data-unarchive="${esc(p.id)}">Bring back</button>
-            <button class="btn ghost sm bp-danger" data-proj-del="${esc(p.id)}">Delete</button></span></div>`).join("")}</details>` : ""}
-      </div>` : ""}
-    </section>`;
+      <div class="pg-hero-side">
+        <button class="btn ghost sm" data-act="code-all" title="Save code for every project">${icon("download")} Save code</button>
+        ${proj ? `<button class="btn ghost sm" data-act="archive-proj">${icon("lock")} Archive</button>
+          <button class="btn ghost sm bp-danger" data-act="del-proj">${icon("trash")} Delete</button>` : ""}
+      </div>
+    </header>`;
+  }
+
+  function switchProject(id) {
+    activeProject = id; ls.set("project", id);
+    activeMech = "__all__"; activePerson = activeAlert = expandedKey = null;
+    redraw();
+  }
+  function newProject() {
+    return askText("New project", "Project name (one per robot or season)", "", (name) =>
+      run(Parts.addProject(name).then((id) => switchProject(id)), `Created ${name}`));
+  }
+
+  // Dropdown next to the project name: switch project, make a new one, or manage archived ones.
+  function projectMenu(anchor) {
+    const open = document.querySelector(".bp-projmenu");
+    if (open) { open.remove(); if (open.dataset.a === anchor.dataset.id) return; }
+    const live = liveProjects(), arch = V.projects.filter((p) => p.archived);
+    const m = document.createElement("div"); m.className = "bp-projmenu";
+    m.innerHTML = live.map((p) => `<button type="button" class="bp-pm-item${p.id === activeProject ? " on" : ""}" data-sw="${esc(p.id)}">
+        <span class="bp-pm-ic">${p.icon ? `<img src="${esc(p.icon)}" alt="" />` : icon("wrench")}</span>
+        <span class="bp-pm-name">${esc(p.name)}</span>${p.id === activeProject ? icon("check") : ""}</button>`).join("")
+      + `<button type="button" class="bp-pm-item add" data-new>${icon("plus")} New project</button>`
+      + (arch.length ? `<div class="bp-pm-sep">Archived</div>` + arch.map((p) => `<div class="bp-pm-arow"><span>${esc(p.name)}</span><span class="bp-rowbtns">
+          <button type="button" class="btn ghost sm" data-un="${esc(p.id)}">Bring back</button>
+          <button type="button" class="btn ghost sm bp-danger" data-del="${esc(p.id)}">Delete</button></span></div>`).join("") : "");
+    document.body.appendChild(m);
+    const r = anchor.getBoundingClientRect();
+    m.style.top = Math.min(r.bottom + 8, innerHeight - m.offsetHeight - 8) + "px";
+    m.style.left = Math.max(8, Math.min(r.left, innerWidth - m.offsetWidth - 8)) + "px";
+    m.onclick = (e) => {
+      const b = e.target.closest("[data-sw],[data-new],[data-un],[data-del]"); if (!b) return;
+      m.remove();
+      if (b.dataset.sw != null) return switchProject(b.dataset.sw);
+      if (b.hasAttribute("data-new")) return newProject();
+      if (b.dataset.un != null) return run(Parts.setProjectArchived(b.dataset.un, false).then(() => switchProject(b.dataset.un)), "Project is back");
+      if (b.dataset.del != null) return deleteProject(b.dataset.del);
+    };
+    setTimeout(() => document.addEventListener("pointerdown", function off(e) {
+      if (!m.contains(e.target) && !anchor.contains(e.target)) { m.remove(); document.removeEventListener("pointerdown", off); }
+    }), 0);
+  }
+
+  // Upload a project icon: pick an image, crop it to a small square, store the data URL.
+  function pickProjectIcon() {
+    if (!activeProject) return;
+    const inp = document.createElement("input");
+    inp.type = "file"; inp.accept = "image/*"; inp.hidden = true;
+    document.body.appendChild(inp);
+    inp.onchange = async () => {
+      const f = inp.files && inp.files[0]; inp.remove();
+      if (!f) return;
+      try { await run(Parts.setProjectIcon(activeProject, await squareImage(f, 96)), "Project icon updated"); }
+      catch (e) { err(e); }
+    };
+    inp.click();
+  }
+  function squareImage(file, size) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement("canvas"); c.width = c.height = size;
+        const ctx = c.getContext("2d");
+        const scale = size / Math.min(img.width, img.height), w = img.width * scale, h = img.height * scale;
+        ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);   // cover-fit, centered
+        resolve(c.toDataURL("image/png"));
+      };
+      img.onerror = reject;
+      const fr = new FileReader();
+      fr.onload = () => { img.src = fr.result; }; fr.onerror = reject;
+      fr.readAsDataURL(file);
+    });
   }
 
   function startHere() {
@@ -301,9 +373,10 @@ const PartsUI = (() => {
     return `<div class="bp-detail">
       <div class="bp-steps">${p.stages.map((st, i) => `<button type="button" class="bp-step${i <= p.stage ? " on" : ""}${i === p.stage ? " cur" : ""}" data-stage="${i}" data-key="${esc(p.key)}">
         <span>${i < p.stage ? icon("check") : i + 1}</span>${esc(st)}</button>`).join("")}</div>
-      <div class="bp-dfield"><span class="bp-dl">Assigned</span>
-        <div class="bp-dchips">${who.map((x) => `<span class="bp-person-chip">${avatar(x, "bp-av xs")}${esc(x.name)}<button type="button" data-unassign="${esc(x.id)}" data-key="${esc(p.key)}" aria-label="Unassign ${esc(x.name)}">${icon("x")}</button></span>`).join("")
-          || `<span class="bp-nobody">${icon("user")} Nobody yet</span>`}</div></div>
+      ${who.length
+        ? `<div class="bp-dfield"><span class="bp-dl">Assigned</span>
+            <div class="bp-dchips">${who.map((x) => `<span class="bp-person-chip">${avatar(x, "bp-av xs")}${esc(x.name)}<button type="button" data-unassign="${esc(x.id)}" data-key="${esc(p.key)}" aria-label="Unassign ${esc(x.name)}">${icon("x")}</button></span>`).join("")}</div></div>`
+        : `<div class="bp-dfield"><span class="bp-dl">Unassigned</span></div>`}
       ${p.type === "inhouse" ? fileRow(p, "drawing") : ""}${p.type === "lasercut" ? fileRow(p, "dxf") : ""}
       <div class="bp-dbtns">
         ${p.overridden ? `<button type="button" class="btn ghost sm" data-autosort="${esc(p.key)}" title="Put it back on the list its name says">${icon("swap")} Auto-sort</button>` : ""}
@@ -355,14 +428,14 @@ const PartsUI = (() => {
       <div class="sr-head"><h3>${icon("teams")} Team</h3><span class="hint">${esc(proj.name)}</span></div>
       <div class="bp-people">${ordered.map((p) => {
         const pr = personProgress(p), n = alerts.get(p.id);
-        return `<div class="bp-person${activePerson === p.id || activeAlert === p.id ? " on" : ""}" data-person="${esc(p.id)}">
-          <button type="button" class="bp-person-main" data-pick="${esc(p.id)}" title="Show only ${esc(p.name)}'s parts">
+        return `<div class="bp-person${activePerson === p.id || activeAlert === p.id ? " on" : ""}" data-person="${esc(p.id)}" data-pick="${esc(p.id)}" role="button" tabindex="0" title="Show only ${esc(p.name)}'s parts">
+          <span class="bp-person-main">
             ${avatar(p, "bp-av")}<span class="bp-pname">${esc(p.name)}${p.uid && p.uid === me ? ` <span class="badge cyan">You</span>` : ""}</span>
-            <span class="bp-ppct">${pr.pct}%</span></button>
+            <span class="bp-ppct">${pr.pct}%</span></span>
           ${n ? `<button type="button" class="bp-alert" data-alert="${esc(p.id)}" title="${plural(n, "part")} ready to make: show only those" aria-label="${plural(n, "part")} ready to make">!</button>` : ""}
           <button type="button" class="bp-pedit" data-edit-person="${esc(p.id)}" aria-label="Edit ${esc(p.name)}">${icon("edit")}</button>
           <span class="bp-pbar"><i style="width:${pr.pct}%"></i></span>
-          <span class="bp-pmeta">${pr.done}/${pr.total} done${n ? ` · <b>${n} ready</b>` : ""}</span>
+          <span class="bp-pmeta">${pr.done}/${pr.total}${n ? ` · <b>${n} ready</b>` : ""}</span>
         </div>`; }).join("") || `<p class="hint bp-people-empty">Nobody on this project yet. Add teammates below, then drag a part (or a whole list's header) onto someone to assign it.</p>`}</div>
       <button type="button" class="bp-addperson" data-act="add-person">${icon("plus")} Add teammate</button>    </aside>`;
   }
@@ -371,9 +444,9 @@ const PartsUI = (() => {
   function partByKey(key) { return V.mechanisms.flatMap((m) => m.parts).find((p) => p.key === key); }
   function wireBoard(root) {
     root.onclick = (e) => {
-      const t = e.target.closest("button, [data-proj], a"); if (!t || !root.contains(t)) return;
+      const t = e.target.closest("button, [data-proj], [data-pick], a"); if (!t || !root.contains(t)) return;
       const d = t.dataset;
-      if (d.proj) { activeProject = d.proj; ls.set("project", d.proj); activeMech = "__all__"; activePerson = activeAlert = expandedKey = null; return redraw(); }
+      if (d.proj) return switchProject(d.proj);
       if (d.projEdit) return renameProject(d.projEdit);
       if (d.projDel) return deleteProject(d.projDel);
       if (d.unarchive) return run(Parts.setProjectArchived(d.unarchive, false).then(() => { activeProject = d.unarchive; ls.set("project", activeProject); redraw(); }), "Project is back");
@@ -397,8 +470,9 @@ const PartsUI = (() => {
       if (d.file && d.key) return openFile(d.file, d.key);
       if (d.fileRm && d.key) return H.confirmDialog(`Remove this ${d.fileRm === "drawing" ? "drawing" : "DXF"}?`, () => run(Parts.removeFile(d.fileRm, d.key), "File removed"));
       switch (d.act) {
-        case "new-proj": return askText("New project", "Project name (one per robot or season)", "", (name) =>
-          run(Parts.addProject(name).then((id) => { activeProject = id; ls.set("project", id); activeMech = "__all__"; activePerson = activeAlert = null; redraw(); }), `Created ${name}`));
+        case "new-proj": return newProject();
+        case "proj-menu": return projectMenu(t);
+        case "proj-icon": return pickProjectIcon();
         case "add-person": return addPersonModal();
         case "code-all": return codeModal(null);
         case "archive-proj": return archiveProject();
@@ -416,6 +490,10 @@ const PartsUI = (() => {
       const el = e.target, d = el.dataset;
       if (d.movetype && el.value) return movePart(d.movetype, el.value === "__auto__" ? null : el.value);
       if (d.upload && el.files && el.files[0]) return upload(d.upload, d.key, el.files[0]);
+    };
+    // the whole person card is a button → Enter/Space activate it like a click
+    root.onkeydown = (e) => {
+      if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches("[data-pick]")) { e.preventDefault(); e.target.click(); }
     };
     // drag and drop: parts → lists (re-sort) or people (assign); list headers → lists (reorder) or people (assign all)
     root.ondragstart = (e) => {

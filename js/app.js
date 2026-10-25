@@ -957,6 +957,11 @@
         tbApp.innerHTML = `<span class="tb-app-ico">${icon(ap.icon)}</span>${esc(ap.name)}`;
       }
     }
+    // Hide a page title that just repeats the app name (e.g. the Parts board: "Parts › Parts").
+    const pt = $("#pageTitle"), sep = document.querySelector(".tb-sep2");
+    const dupe = tbApp && tbApp.innerHTML && pt && pt.textContent.trim() === ap.name;
+    if (pt) pt.hidden = !!dupe;
+    if (sep) sep.style.display = dupe ? "none" : "";
     const tbEv = $("#tbEvent");
     if (tbEv) {
       tbEv.classList.toggle("none", !s.eventName);

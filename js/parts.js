@@ -234,6 +234,11 @@ const Parts = (() => {
     need(!s.projects.some((o) => o.id !== id && o.name.toLowerCase() === name.toLowerCase()), `A project called “${name}” already exists.`);
     p.name = name;
   });
+  // A small square image (data URL) shown next to the project name. "" clears it.
+  const setProjectIcon = (id, icon) => mutate((s) => {
+    const p = s.projects.find((x) => x.id === id); need(p, "Unknown project. Refresh the page.");
+    if (icon) p.icon = String(icon); else delete p.icon;
+  });
   // Archiving can also drop the project's drawings / DXFs to free space.
   const setProjectArchived = (id, archived, dropDrawings, dropDxfs) => mutate((s) => {
     const p = s.projects.find((x) => x.id === id); need(p, "Unknown project. Refresh the page.");
@@ -536,7 +541,7 @@ const Parts = (() => {
     STAGES, TYPE_ORDER, TYPE_INFO, SIZE_WARN, SIZE_MAX, MAX_FILE_BYTES,
     watch, isReady: () => ready, onChange: (cb) => { cbs.push(cb); return () => { cbs = cbs.filter((x) => x !== cb); }; },
     listenError: () => listenErr, view, state, sizeOf, typeInfo, classify, parseLines, readyToMake,
-    addProject, removeProject, renameProject, setProjectArchived,
+    addProject, removeProject, renameProject, setProjectArchived, setProjectIcon,
     addMechanism, removeMechanism, updateMechanism,
     addPerson, removePerson, updatePerson, assign,
     addComposite, removeComposite, previewImport, applyImport,
