@@ -3913,3 +3913,18 @@ body.is-home .tb-brand { margin-right: 6px; }
 .sb-event .tbe-txt b { font-size: .9rem; }
 .sb-event .tbe-chev { width: 16px; height: 16px; flex: none; color: var(--text-mut); transition: transform .3s ease; }
 .sb-event[aria-expanded="true"] .tbe-chev { transform: rotate(180deg); }
+
+/* ==== v114: big monitors use the space: wider sidebar, content fills the screen ==== */
+:root { --sidebar-w: clamp(248px, 15.5vw, 320px); --content-max: 2400px; }
+@media (min-width: 1600px) {
+  .sidebar { padding: 22px 18px; }
+  .brand img { width: 52px; height: 52px; }
+  .brand .team { font-size: 1.2rem; }
+  .sb-event { min-height: 58px; }
+  .sb-event .tbe-txt b { font-size: 1rem; }
+  .gn { height: 48px; font-size: 1.04rem; }
+  .gn-ico { width: 36px; height: 36px; }
+  .gn-ico .ico { width: 20px; height: 20px; }
+  .content { padding: 28px 44px 90px; }
+  .topbar { padding-left: 44px; padding-right: 44px; }
+}
