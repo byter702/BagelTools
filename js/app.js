@@ -734,6 +734,9 @@
     { id: "statistics", name: "Statistics", icon: "chart", accent: "#4ade80", blurb: "Teams, events and matchups by the numbers",
       pages: [["bagelstats", "Teams", "podium", "EPA leaderboards"], ["compare", "Compare", "compare", "Head to head + charts"],
         ["teams", "Event", "calendar", "Teams, schedule, rankings"], ["matchup", "Matchup", "swords", "Predict any match"]] },
+    { id: "parts", name: "Parts", icon: "wrench", accent: "#a78bfa", blurb: "Every robot part from Onshape to done, and who's building it",
+      pages: [["parts", "Board", "wrench", "Projects, mechanisms, team"], ["myparts", "My Parts", "user", "What you're building"],
+        ["partsguide", "Guide", "info", "How Parts works"]] },
     { id: "fantasy", name: "Fantasy", icon: "crown", accent: "#fb7185", blurb: "Draft robots, win Bagel Bucks",
       pages: [["fantasy", "Fantasy Alliance", "crown", "Your league and draft"]] },
     { id: "system", name: "BagelTools", icon: "settings", accent: "#9fb2c0", hidden: true, blurb: "Settings and admin",
@@ -860,6 +863,9 @@
     matchup: { title: "Matchup", render: renderMatchup },
     picklist: { title: "Pick List", render: renderPicklist },
     fantasy: { title: "Fantasy", render: renderFantasyPage },
+    parts: { title: "Parts", render: (root) => PartsUI.board(root) },
+    myparts: { title: "My Parts", render: (root) => PartsUI.mine(root) },
+    partsguide: { title: "Parts Guide", render: (root) => PartsUI.guide(root) },
     bets: { title: "Fantasy", render: () => location.replace("#/fantasy") }, // old links
     data: { title: "Data", render: renderData },
     team: { title: "Team", render: renderTeamPage, navAs: "teams" },
@@ -7551,6 +7557,8 @@
     const logoutBtn = $("#logoutBtn");
     if (logoutBtn) logoutBtn.onclick = () => confirmDialog("Log out of BagelTools?", () => Auth.logout());
     initGlobalSearch();
+    // BagelParts (the Parts app) draws with the same helpers as every other page
+    PartsUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, notifyBanner, pageHero, emptyState, scouterAvatar, allScouters, scouterName });
     const userName = $("#userChipName");
     if (userName) { userName.title = "View your profile"; userName.onclick = () => { location.hash = "#/profile"; }; }
     const chip = $("#eventChip");
