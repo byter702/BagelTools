@@ -704,7 +704,9 @@
     });
     return [...byName.values()];
   }
-  function scouterName(sc) { return `${sc.first || ""} ${sc.last || ""}`.trim() || "Unnamed scout"; }
+  // always shown with capital first letters, however the name was typed ("jaxson stuck" → "Jaxson Stuck")
+  const properName = (s) => (window.Auth && Auth.properName ? Auth.properName(s) : String(s || "").trim());
+  function scouterName(sc) { return properName(`${sc.first || ""} ${sc.last || ""}`) || "Unnamed scout"; }
   function isOnline(sc) {
     if (sc.online) return true;
     if (!sc.lastSeen) return false;
@@ -3089,7 +3091,7 @@
           <td><span class="team-num">${esc(m.team)}</span></td>
           <td><span class="alliance-dot alliance-${m.alliance === "red" ? "red" : "blue"}"></span>${esc(m.alliance || "")}</td>
           ${statField ? `<td class="num">${statVal(m)}</td>` : ""}
-          <td class="muted">${esc(m.scout || "")}</td>
+          <td class="muted">${esc(properName(m.scout))}</td>
           <td class="row" style="gap:6px;flex-wrap:nowrap">
             <button class="icon-btn" data-edit="${m.id}" aria-label="Edit">${icon("edit")}</button>
             <button class="icon-btn" data-del="${m.id}" aria-label="Delete">${icon("trash")}</button></td>
@@ -3262,7 +3264,7 @@
               ${p.canClimb ? `<span class="sr-chip">Climbs</span>` : ""}
               ${p.shotblocker ? `<span class="sr-chip">Shotblocker</span>` : ""}
             </div>
-            <div class="pl-foot"><span class="hint">${p.scout ? "by " + esc(p.scout) : ""}</span>
+            <div class="pl-foot"><span class="hint">${p.scout ? "by " + esc(properName(p.scout)) : ""}</span>
               <span class="row" style="gap:6px"><button class="btn sm ghost" data-load="${esc(p.team)}">${icon("edit")} Edit</button>
               <button class="icon-btn" data-del="${esc(p.team)}" aria-label="Delete">${icon("trash")}</button></span></div>
           </div>
@@ -4810,7 +4812,7 @@
       <details class="sr-match">
         <summary>
           <span class="sr-q ${esc(m.alliance || "")}">${esc(qTag(m.matchNumber))}</span>
-          <span class="sr-mby">${esc(m.scout || "Scout")}${m.ts ? ` · ${esc(timeAgo(m.ts))}` : ""}</span>
+          <span class="sr-mby">${esc(properName(m.scout) || "Scout")}${m.ts ? ` · ${esc(timeAgo(m.ts))}` : ""}</span>
           ${textKeys.some((k) => m[k]) ? `<span class="sr-note-flag" title="Has notes">${icon("edit")}</span>` : ""}
           ${icon("chevron-right")}
         </summary>

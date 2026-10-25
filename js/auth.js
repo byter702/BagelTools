@@ -24,16 +24,31 @@ const Auth = (() => {
   const ITER = 150000;   // PBKDF2 rounds
   const MIN_PW = 6;
 
-  (() => { const s = Store.getSession(); if (s && s.v !== SESSION_V) Store.clearSession(); })();
-
-  function currentUser() { const s = Store.getSession(); return s && s.v === SESSION_V ? s : null; }
-  function isLoggedIn() { return !!currentUser(); }
-
+  // Names are matched without caring about capitals (accounts are keyed on the
+  // lowercased name), but always shown with a capital first letter:
+  // "samuel" / "SAMUEL" → "Samuel"; mixed case like "McDonald" is kept as typed.
+  function properName(s) {
+    return String(s || "").trim().split(/\s+/).filter(Boolean).map((w) => {
+      const base = (w === w.toLowerCase() || w === w.toUpperCase()) ? w.toLowerCase() : w;
+      return base.replace(/(^|[-'’])(\p{L})/gu, (m, p, c) => p + c.toUpperCase());
+    }).join(" ");
+  }
   function canon(first, last) {
-    const full = (String(first || "") + " " + String(last || "")).trim().replace(/\s+/g, " ");
+    const full = properName(String(first || "") + " " + String(last || ""));
     const parts = full ? full.split(" ") : [];
     return { first: parts[0] || "", last: parts.slice(1).join(" "), full };
   }
+
+  (() => {
+    const s = Store.getSession(); if (!s) return;
+    if (s.v !== SESSION_V) return Store.clearSession();
+    // sessions saved as typed ("samuel wright") get their capitals back
+    const c = canon(s.first, s.last);
+    if (c.first !== s.first || c.last !== s.last) Store.setSession(Object.assign({}, s, { first: c.first, last: c.last }));
+  })();
+
+  function currentUser() { const s = Store.getSession(); return s && s.v === SESSION_V ? s : null; }
+  function isLoggedIn() { return !!currentUser(); }
 
   // Accepted = the owner, the config allow-list, or an admin-approved member.
   function isAccepted(first, last) {
@@ -456,6 +471,9 @@ const Auth = (() => {
   /* ---- Enter the app --------------------------------------------------------- */
   function signIn(who, cred) {
     clearPoll();
+    // the name as the team roster has it (keeps deliberate capitals like "McDonald")
+    const m = Store.getMembers()[Store.nameKey(who.first, who.last)];
+    if (m && m.first) who = canon(m.first, m.last);
     Store.cacheCred(Store.scouterIdFor(who.first, who.last), cred);
     const status = Store.getMembers()[Store.nameKey(who.first, who.last)] ? Store.recordLogin(who.first, who.last) : "known";
     Store.setSession({ first: who.first, last: who.last, ts: Date.now(), v: SESSION_V, cv: cred.updatedAt });
@@ -469,6 +487,6 @@ const Auth = (() => {
     }, 600);
   }
 
-  return { currentUser, isLoggedIn, logout, showLogin, checkSession };
+  return { currentUser, isLoggedIn, logout, showLogin, checkSession, properName };
 })();
 window.Auth = Auth;
