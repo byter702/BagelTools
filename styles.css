@@ -3928,3 +3928,24 @@ body.is-home .tb-brand { margin-right: 6px; }
   .content { padding: 28px 44px 90px; }
   .topbar { padding-left: 44px; padding-right: 44px; }
 }
+
+/* ==== v115: events (current event named in the sidebar, Events page, match videos) ==== */
+/* no event picked: the Event page is greyed out (tapping it opens the event picker) */
+.nav a.nv.nv-off { opacity: .55; }
+.nav a.nv.nv-off .nv-ico { border: 1.5px dashed color-mix(in srgb, var(--app) 60%, transparent); background: transparent; }
+.nav a.nv.nv-off:hover { opacity: .85; }
+/* a match with video on the schedule */
+.sr-label .sr-vid { display: inline-grid; place-items: center; margin-left: 5px; vertical-align: -2px; color: #ff4d4d; }
+.sr-label .sr-vid .ico { width: 13px; height: 13px; --ico-duo: .35; }
+/* the match video in the match window: a thumbnail until you press play */
+.md-video { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.md-play, .md-frame { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; border-radius: 14px; overflow: hidden; background: #000; }
+.md-play { padding: 0; cursor: pointer; }
+.md-play img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .5s ease, filter .3s ease; filter: brightness(.82); }
+.md-play:hover img { transform: scale(1.03); filter: brightness(.95); }
+.md-play-ic { position: absolute; inset: 0; margin: auto; width: 68px; height: 68px; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(255, 0, 0, .9); color: #fff; box-shadow: 0 12px 30px -10px rgba(0,0,0,.7); transition: transform .35s cubic-bezier(.2,.9,.25,1.4); }
+.md-play-ic .ico { width: 30px; height: 30px; margin-left: 4px; --ico-duo-c: #fff; --ico-duo: .9; }
+.md-play:hover .md-play-ic { transform: scale(1.1); }
+.md-vids { display: flex; gap: 6px; flex-wrap: wrap; }
+.md-vids .btn.on { border-color: var(--primary); color: var(--text); }

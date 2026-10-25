@@ -456,7 +456,7 @@ const API = (() => {
     const opt = (p) => tbaMem(p).catch(() => null);
     const [info, teams, rankings, matches, awards, sb] = await Promise.all([
       tbaMem("/event/" + key), opt("/event/" + key + "/teams/simple"), opt("/event/" + key + "/rankings"),
-      opt("/event/" + key + "/matches/simple"), opt("/event/" + key + "/awards"),
+      opt("/event/" + key + "/matches"), opt("/event/" + key + "/awards"), // full matches: they carry the match videos
       sbMem("/team_events?event=" + key + "&limit=200").catch(() => null),
     ]);
     const epa = {};

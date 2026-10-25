@@ -733,7 +733,8 @@
         ["data", "Data", "database", "Search, rankings, spreadsheet"], ["picklist", "Pick List", "picklist", "Alliances, Mashup, Bracket"]] },
     { id: "statistics", name: "Statistics", icon: "chart", accent: "#4ade80", blurb: "Teams, events and matchups by the numbers",
       pages: [["bagelstats", "Teams", "podium", "EPA leaderboards"], ["compare", "Compare", "compare", "Head to head + charts"],
-        ["teams", "Event", "calendar", "Teams, schedule, rankings"], ["matchup", "Matchup", "swords", "Predict any match"]] },
+        ["teams", "Event", "calendar", "Your event: teams, schedule, rankings"], ["events", "Events", "search", "Look up any event"],
+        ["matchup", "Matchup", "swords", "Predict any match"]] },
     { id: "parts", name: "Parts", icon: "wrench", accent: "#fb923c", blurb: "Every robot part from Onshape to done, and who's building it",
       pages: [["parts", "Board", "wrench", "Projects, mechanisms, team"], ["myparts", "My Parts", "user", "What you're building"],
         ["partsguide", "Guide", "info", "How Parts works"]] },
@@ -761,6 +762,8 @@
   }
   // ---- per-app sidebar: the open page grows, a glow slides between pages ----
   const NV_H = 50, NV_HA = 84, NV_GAP = 6;
+  const evNavName = () => { const s = Store.getSettings(); return s.eventKey ? shortEventName(s.eventName || s.eventKey) : ""; };
+  function pageLabel(route, label) { return route === "teams" ? (evNavName() || "No event") : label; }
   function renderAppNav(appDef, active) {
     const nav = $("#nav"), head = $("#appHead");
     if (!nav) return;
@@ -775,6 +778,14 @@
       nav.classList.remove("nv-in"); void nav.offsetWidth; nav.classList.add("nv-in");
     }
     const items = $$(".nv", nav);
+    const evItem = items.find((a) => a.dataset.route === "teams");
+    if (evItem) {
+      const name = evNavName();
+      evItem.classList.toggle("nv-off", !name);
+      $(".nv-txt b", evItem).textContent = name || "No event";
+      $(".nv-txt small", evItem).textContent = name ? "Teams, schedule, rankings, awards" : "Pick an event to open it";
+      evItem.title = name ? Store.getSettings().eventName : "Pick an event first";
+    }
     const idx = Math.max(0, items.findIndex((a) => a.dataset.route === active));
     items.forEach((a, i) => { a.classList.toggle("active", i === idx); a.setAttribute("aria-current", i === idx ? "page" : "false"); });
     nav.style.setProperty("--glow-y", idx * (NV_H + NV_GAP) + "px");
@@ -793,7 +804,7 @@
         <span class="ht-mark" aria-hidden="true">${icon(a.icon)}</span>
         <span class="ht-ico">${icon(a.icon)}</span>
         <span class="ht-txt"><b>${esc(a.name)}</b><span>${esc(a.blurb)}</span></span>
-        <span class="ht-pages">${a.pages.map((p) => `<span>${icon(p[2])}${esc(p[1])}</span>`).join("")}</span>
+        <span class="ht-pages">${a.pages.map((p) => `<span>${icon(p[2])}${esc(pageLabel(p[0], p[1]))}</span>`).join("")}</span>
         <span class="ht-go">${icon("arrow-right")}</span>
       </a>`;
     };
@@ -869,6 +880,7 @@
     profile: { title: "Profile", render: renderProfilePage },
     members: { title: "Members", render: renderMembers },
     teams: { title: "Event", render: renderEventsPage },
+    events: { title: "Events", render: renderEventsSearchPage },
     match: { title: "Match Scouting", render: renderMatch },
     pit: { title: "Pit Scouting", render: renderPit },
     bagelstats: { title: "Teams", render: renderBagelStats },
@@ -902,7 +914,7 @@
     if (prevRoute === "match" && r !== "match" && window.Cloud) Cloud.releaseMyClaims();
     prevRoute = r;
     const route = routes[r] || routes.home;
-    $("#pageTitle").textContent = route.title;
+    $("#pageTitle").textContent = r === "teams" ? (evNavName() || "Event") : route.title;
     // BagelTools: home has no sidebar; every other page lives inside its app's sidebar
     const isHome = route === routes.home;
     document.body.classList.toggle("is-home", isHome);
@@ -963,9 +975,11 @@
   }
 
   /* ---- Event selection (shared by dashboard, sidebar chip, settings) ------- */
+  let afterEventPick = null; // where to go once an event is picked (the greyed-out Event page)
   async function selectEvent(key, name) {
     const recent = (Store.getSettings().recentEvents || []).filter((x) => x && x.key !== key);
     Store.setSettings({ eventKey: key, eventName: name, recentEvents: [{ key, name }, ...recent].slice(0, 6) });
+    if (afterEventPick) { const h = afterEventPick; afterEventPick = null; if (location.hash !== h) location.hash = h; }
     refreshChrome();
     toast("Loading team list & schedule…");
     try {
@@ -980,7 +994,7 @@
   // Top-bar event switcher: the current event, then the test event, pinned, live and
   // recent events; typing searches the whole season. "Browse all" opens the full picker.
   function closeEventMenu() {
-    const p = $(".evp"); if (p) p.remove();
+    const p = $(".evp"); if (p) { p.remove(); setTimeout(() => { if (!$(".evp")) afterEventPick = null; }, 0); }
     const b = $("#tbEvent"); if (b) b.setAttribute("aria-expanded", "false");
   }
   function openEventMenu() {
@@ -1667,7 +1681,6 @@
     return 1 / (1 + Math.pow(10, -diff / scale));
   }
 
-  function teamsSub() { const p = (location.hash.replace(/^#\/?/, "") || "").split("/"); return p[1] || "list"; }
   const OUR_TEAM = "702";
   let evView = "grid", evSchedFilter = "all", evSchedTeam = "";
   function currentEventInfo() {
@@ -1675,31 +1688,61 @@
     const evc = Store.getCache("events." + GAME.season, null);
     return (evc && evc.data || []).find((e) => e.key === s.eventKey) || null;
   }
+
+  /* ---- One event, two places ----------------------------------------------
+     Your current event (#/teams/<sub>) and any event you look up (#/events/<key>/<sub>)
+     share the exact same subpages, built from an event "context":
+       { key, year, mine, base, teams, matches, epaOf, teamEpa, epaNote,
+         rankings() → Promise<{rankings}>, awards() → Promise<[]>, nameOf, openTeam, winners } */
+  const EV_TABS = [["teams", "Teams", "bagel"], ["schedule", "Schedule", "calendar"], ["rankings", "Rankings", "trophy"], ["awards", "Awards", "star"]];
+  const evSubOf = (i) => { const p = (location.hash.replace(/^#\/?/, "") || "").split("/")[i] || "teams"; return p === "list" ? "teams" : p; };
+  function eventTabsHTML(base, sub) {
+    return `<div class="subtabs ev-tabs">${EV_TABS.map(([k, l, ic]) => `<a href="${base}/${k}" class="${sub === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}</div>`;
+  }
+  function renderEventSub(body, sub, ctx) {
+    if (sub === "schedule") renderSchedule(body, ctx);
+    else if (sub === "rankings") renderEventRankings(body, ctx);
+    else if (sub === "awards") renderEventAwards(body, ctx);
+    else renderTeamsList(body, ctx);
+  }
+  function currentEventCtx() {
+    const s = Store.getSettings(), key = s.eventKey;
+    const ev = currentEventEpa(), season = buildSeasonEpa();
+    const evEpa = (t) => (ev && ev.byTeam[t] ? ev.byTeam[t].epa : null);
+    return {
+      key, year: GAME.season, mine: true, base: "#/teams",
+      teams: eventTeams(),
+      matches: ((Store.getCache("matches." + key, null) || {}).data) || [],
+      epaOf: evEpa, // predictions use this event's on-device EPA
+      teamEpa: (t) => evEpa(String(t)) ?? season[String(t)] ?? null,
+      seasonEpa: season,
+      epaNote: "this event's on-device EPA",
+      rankings: () => API.getEventRankings(key),
+      awards: () => key === TEST_EVENT_KEY ? Promise.resolve([]) : API.getEventDetail(key).then((d) => d.awards), // the test event isn't on TBA
+      nameOf: (t) => nameFor(t),
+      openTeam: (t) => openTeam(t),
+      winners: [],
+    };
+  }
+
+  /* ---- Current event (#/teams): the sidebar shows its name ------------------ */
   function renderEventsPage(root) {
     const s = Store.getSettings();
-    const own = [["list", "Teams", "bagel"], ["schedule", "Schedule", "calendar"], ["rankings", "Rankings", "trophy"], ["search", "Event search", "search"]];
-    const sub = own.some((t) => t[0] === teamsSub()) ? teamsSub() : "list";
-    const tabsHTML = `<div class="subtabs ev-tabs" id="evTabs">
-        ${own.map(([k, l, ic]) => `<a href="#/teams/${k}" class="${sub === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}</div>`;
-    if (sub === "search") {
-      const key = decodeURIComponent(location.hash.replace(/^#\/?/, "").split("/")[2] || "");
-      root.innerHTML = pageHero({ ic: "search", eyebrow: "Event search", title: "Explore any event",
-        sub: "Look up any event from any year: who's going, rankings, matches and awards. Your selected event stays the same." }) + tabsHTML + `<div id="evBody"></div>`;
-      if (key) renderEventExplore($("#evBody", root), key); else renderEventSearch($("#evBody", root));
-      return;
-    }
+    const raw = (location.hash.replace(/^#\/?/, "") || "").split("/");
+    if (raw[1] === "search") { location.replace("#/events" + (raw[2] ? "/" + raw.slice(2).join("/") : "")); return; } // old links
+    const sub = EV_TABS.some((t) => t[0] === evSubOf(1)) ? evSubOf(1) : "teams";
     if (!s.eventKey) {
-      root.innerHTML = pageHero({ ic: "calendar", eyebrow: "Event", title: "No event selected", sub: "Pick the event you're scouting to load its teams, schedule and rankings, or explore any event with Event search." }) + tabsHTML +
-        `<div class="card">${emptyState("calendar", "Choose an event", "Use the event chip in the sidebar, or the button below.")}
-          <div class="btn-row" style="justify-content:center"><button class="btn primary" id="evChoose">${icon("calendar")} Choose event</button></div></div>`;
+      root.innerHTML = pageHero({ ic: "calendar", eyebrow: "Current event", title: "No event selected", sub: "Pick the event you're scouting to load its teams, schedule, rankings and awards." }) +
+        `<div class="card">${emptyState("calendar", "Choose an event", "Use the event button at the top of the sidebar, or the one below.")}
+          <div class="btn-row" style="justify-content:center"><button class="btn primary" id="evChoose">${icon("calendar")} Choose event</button>
+          <a class="btn ghost" href="#/events">${icon("search")} Browse events</a></div></div>`;
       $("#evChoose", root).onclick = openEventPicker;
       return;
     }
+    const ctx = currentEventCtx();
     const info = currentEventInfo();
-    const cacheM = Store.getCache("matches." + s.eventKey, null);
-    const all = (cacheM ? cacheM.data : []) || [];
+    const all = ctx.matches;
     const played = all.filter((m) => m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0).length;
-    const teams = eventTeams();
     const start = info && info.start_date ? new Date(info.start_date + "T12:00:00") : null;
     const end = info && info.end_date ? new Date(info.end_date + "T12:00:00") : null;
     const status = all.length && played === all.length ? ["done", "Completed"] : played ? ["live", "Live now"]
@@ -1719,26 +1762,23 @@
           </div>
         </div>
         <div class="ev-hero-stats">
-          <div><b data-count="${teams.length}">${teams.length}</b><span>teams</span></div>
+          <div><b data-count="${ctx.teams.length}">${ctx.teams.length}</b><span>teams</span></div>
           <div><b>${played}<small>/${all.length}</small></b><span>matches played</span></div>
           <div class="ev-ring">${ringSVG(pct, "Matches played")}<span>progress</span></div>
         </div>
       </section>
-      ${tabsHTML}
+      ${eventTabsHTML(ctx.base, sub)}
       <div id="evBody"></div>`;
     $("#evChange", root).onclick = openEventPicker;
     countUp(root);
-    const body = $("#evBody", root);
-    if (sub === "schedule") renderSchedule(body);
-    else if (sub === "rankings") renderEventRankings(body);
-    else renderTeamsList(body);
+    renderEventSub($("#evBody", root), sub, ctx);
   }
 
-  /* ---- Event Search: browse ANY event (any year) without changing yours ----
-     #/teams/search            list (year, status + region filters, search)
-     #/teams/search/<eventKey> explorer: teams, rankings, matches, awards */
+  /* ---- Events (#/events): browse ANY event (any year) without changing yours ----
+     #/events               list (year, status + region filters, search)
+     #/events/<key>[/<sub>] that event: Teams, Schedule, Rankings, Awards */
   const EVENT_TYPES = { 0: "Regional", 1: "District", 2: "District Champs", 3: "Champs Division", 4: "Einstein", 5: "District Champs Div.", 6: "Festival of Champions", 7: "Remote", 99: "Offseason", 100: "Preseason" };
-  let esYear = 0, esQuery = "", esStatus = "all", esRegion = "", esTab = "teams";
+  let esYear = 0, esQuery = "", esStatus = "all", esRegion = "";
   const evStatus = (e) => {
     const now = new Date(), a = e.start_date ? new Date(e.start_date + "T00:00:00") : null, b = e.end_date ? new Date(e.end_date + "T23:59:59") : null;
     if (a && now < a) return "upcoming";
@@ -1751,6 +1791,13 @@
     const f = (d, o) => d.toLocaleDateString([], o);
     return b && b - a > 0 ? `${f(a, { month: "short", day: "numeric" })} – ${f(b, a.getMonth() === b.getMonth() ? { day: "numeric" } : { month: "short", day: "numeric" })}` : f(a, { month: "short", day: "numeric" });
   };
+  function renderEventsSearchPage(root) {
+    const key = decodeURIComponent((location.hash.replace(/^#\/?/, "") || "").split("/")[1] || "");
+    if (key) { root.innerHTML = `<div id="evBody"></div>`; renderEventExplore($("#evBody", root), key); return; }
+    root.innerHTML = pageHero({ ic: "search", eyebrow: "Events", title: "Explore any event",
+      sub: "Look up any event from any year: who's going, the schedule, rankings and awards. Your selected event stays the same." }) + `<div id="evBody"></div>`;
+    renderEventSearch($("#evBody", root));
+  }
   async function renderEventSearch(body) {
     const year = esYear || GAME.season;
     const years = []; for (let y = GAME.season + 1; y >= 1992; y--) years.push(y);
@@ -1786,7 +1833,7 @@
         return `<section class="es-group"><h3 class="es-month">${icon("calendar")} ${esc(label)} <span class="muted">${groups[k].length}</span></h3>
           <div class="es-grid">${groups[k].map((e, i) => {
             const st = evStatus(e);
-            return `<a class="es-card${e.key === mine ? " mine" : ""}" href="#/teams/search/${esc(e.key)}" style="animation-delay:${Math.min(i, 16) * 20}ms">
+            return `<a class="es-card${e.key === mine ? " mine" : ""}" href="#/events/${esc(e.key)}" style="animation-delay:${Math.min(i, 16) * 20}ms">
               <span class="es-top"><span class="es-type">${esc(EVENT_TYPES[e.event_type] || "Event")}</span><span class="ev-status ${st}"><i></i>${st === "done" ? "Completed" : st === "live" ? "Live" : "Upcoming"}</span></span>
               <b class="es-name">${esc(shortEventName(e.name))}</b>
               <span class="es-meta">${icon("calendar")} ${esc(evDates(e))}</span>
@@ -1806,18 +1853,29 @@
     body.innerHTML = `<div class="card tp-loading"><span class="tp-spin"></span>Loading event…</div>`;
     let d;
     try { d = await API.getEventDetail(key); } catch (e) {
-      if (body.isConnected) body.innerHTML = `<div class="ds-crumbs"><a class="btn ghost sm" href="#/teams/search">${icon("chevron-left")} All events</a></div>
+      if (body.isConnected) body.innerHTML = `<div class="ds-crumbs"><a class="btn ghost sm" href="#/events">${icon("chevron-left")} All events</a></div>
         <div class="card">${emptyState("globe", "Couldn't load this event", "Check the event code, or connect to wifi and try again.")}</div>`;
       return;
     }
     if (!body.isConnected) return;
     const e = d.info, year = e.year, st = evStatus(e), mine = Store.getSettings().eventKey === key;
+    const sub = EV_TABS.some((t) => t[0] === evSubOf(2)) ? evSubOf(2) : "teams";
     const played = d.matches.filter((m) => m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0).length;
     const winners = d.awards.filter((a) => a.award_type === 1).flatMap((a) => a.recipient_list.map((r) => r.team_key && r.team_key.replace("frc", ""))).filter(Boolean);
-    const rank = {}; d.rankings.forEach((r) => { rank[r.team_key.replace("frc", "")] = r; });
-    const epaOf = (t) => d.epa[t] && d.epa[t].epa;
+    const sbEpa = (t) => (d.epa[String(t)] ? d.epa[String(t)].epa : null);
+    const ctx = {
+      key, year, mine, base: "#/events/" + encodeURIComponent(key),
+      teams: d.teams, matches: d.matches,
+      epaOf: sbEpa, teamEpa: sbEpa, seasonEpa: null,
+      epaNote: "Statbotics EPA at this event",
+      rankings: () => Promise.resolve({ rankings: d.rankings }),
+      awards: () => Promise.resolve(d.awards),
+      nameOf: (t) => (d.teams.find((x) => String(x.team_number) === String(t)) || {}).nickname || nameFor(t),
+      openTeam: (t) => (year === GAME.season ? openTeam(t) : (location.hash = "#/team/" + t + "/" + year)),
+      winners,
+    };
     body.innerHTML = `
-      <div class="ds-crumbs"><a class="btn ghost sm" href="#/teams/search">${icon("chevron-left")} All events</a>
+      <div class="ds-crumbs"><a class="btn ghost sm" href="#/events">${icon("chevron-left")} All events</a>
         <div class="btn-row">
           ${year === GAME.season && !mine ? `<button class="btn primary sm" id="exSet">${icon("calendar")} Make this my event</button>` : ""}
           ${mine ? `<span class="badge green dot">Your event</span>` : ""}
@@ -1836,79 +1894,22 @@
           <div><b>${d.awards.length}</b><span>awards</span></div>
         </div>
       </section>
-      <div class="subtabs" id="exTabs">${[["teams", "Teams", "bagel"], ["rankings", "Rankings", "trophy"], ["matches", "Matches", "list"], ["awards", "Awards", "star"]]
-        .map(([k, l, ic]) => `<button data-ex="${k}" class="${esTab === k ? "on" : ""}">${icon(ic)} ${l}</button>`).join("")}</div>
+      ${eventTabsHTML(ctx.base, sub)}
       <div id="exBody"></div>`;
-    const set = $("#exSet", body); if (set) set.onclick = () => selectEvent(key, e.name).then(() => { location.hash = "#/teams/list"; });
-    const exBody = $("#exBody", body);
-    const openT = (t) => (year === GAME.season ? openTeam(t) : (location.hash = "#/team/" + t + "/" + year));
-    const draw = () => {
-      if (esTab === "rankings") {
-        if (!d.rankings.length) { exBody.innerHTML = `<div class="card">${emptyState("trophy", "No rankings", "Rankings appear once qualification matches are played.")}</div>`; return; }
-        const maxRp = Math.max(0.01, ...d.rankings.map((r) => (r.sort_orders && r.sort_orders[0]) || 0));
-        exBody.innerHTML = `<section class="card"><div class="er-list">${d.rankings.map((r, i) => {
-          const t = r.team_key.replace("frc", ""), rec = r.record || {}, rp = (r.sort_orders && r.sort_orders[0]) || 0;
-          return `<button class="er-row${r.rank <= 8 ? " cap" : ""}${t === OUR_TEAM ? " ours" : ""}" data-t="${esc(t)}" data-tfill="${esc(t)}" style="animation-delay:${Math.min(i, 24) * 15}ms">
-            <span class="er-rank">${r.rank}</span><img class="team-avatar" data-avatar="${esc(t)}" alt="" />
-            <span class="er-id"><b>${esc(t)}</b><span>${esc((d.teams.find((x) => String(x.team_number) === t) || {}).nickname || "")}</span></span>
-            <span class="er-rp"><span class="er-track"><i style="width:${Math.round(rp / maxRp * 100)}%"></i></span><b>${fmt(rp, 2)}</b><small>RP</small></span>
-            <span class="er-rec">${rec.wins ?? 0}-${rec.losses ?? 0}-${rec.ties ?? 0}</span>
-            <span class="er-epa">${epaOf(t) != null ? fmt(epaOf(t)) : "–"}<small>EPA</small></span></button>`;
-        }).join("")}</div></section>`;
-      } else if (esTab === "matches") {
-        if (!d.matches.length) { exBody.innerHTML = `<div class="card">${emptyState("list", "No matches yet", "The schedule appears once it's posted.")}</div>`; return; }
-        const order = { qm: 0, ef: 1, qf: 2, sf: 3, f: 4 };
-        const ms = d.matches.slice().sort((a, b) => (order[a.comp_level] - order[b.comp_level]) || (a.set_number - b.set_number) || (a.match_number - b.match_number));
-        const row = (m) => {
-          const red = m.alliances.red.team_keys.map((k) => k.replace("frc", "")), blue = m.alliances.blue.team_keys.map((k) => k.replace("frc", ""));
-          const rs = m.alliances.red.score, bs = m.alliances.blue.score, done = rs >= 0 && bs >= 0;
-          const lbl = (m.comp_level === "qm" ? "Q" + m.match_number : m.comp_level.toUpperCase() + (m.comp_level === "sf" ? m.set_number : m.match_number));
-          const chip = (t) => `<span class="sr-team${t === OUR_TEAM ? " hl" : ""}">${t}</span>`;
-          return `<div class="sched-row static"><span class="sr-label">${esc(lbl)}<small>${done ? "final" : ""}</small></span>
-            <span class="sr-alliance red ${done && rs > bs ? "won" : ""}">${red.map(chip).join("")}</span>
-            <span class="sr-score">${done ? `<b class="${rs > bs ? "w" : ""}">${rs}</b><span class="sr-dash">–</span><b class="${bs > rs ? "w" : ""}">${bs}</b>` : `<span class="sr-vs">vs</span>`}</span>
-            <span class="sr-alliance blue ${done && bs > rs ? "won" : ""}">${blue.map(chip).join("")}</span></div>`;
-        };
-        const q = ms.filter((m) => m.comp_level === "qm"), po = ms.filter((m) => m.comp_level !== "qm");
-        exBody.innerHTML = `${q.length ? `<section class="card ev-sched"><div class="sr-head"><h3>${icon("list")} Qualifications</h3><span class="hint">${q.length}</span></div><div class="sched-list">${q.map(row).join("")}</div></section>` : ""}
-          ${po.length ? `<section class="card ev-sched" style="margin-top:16px"><div class="sr-head"><h3>${icon("trophy")} Playoffs</h3><span class="hint">${po.length}</span></div><div class="sched-list">${po.map(row).join("")}</div></section>` : ""}`;
-      } else if (esTab === "awards") {
-        if (!d.awards.length) { exBody.innerHTML = `<div class="card">${emptyState("star", "No awards yet", "Awards are posted as the event finishes.")}</div>`; return; }
-        exBody.innerHTML = `<div class="tp-award-grid">${d.awards.map((a, i) => `<div class="card tp-award-card" style="--i:${i}">
-          ${icon(BANNER_TYPES.includes(a.award_type) ? "banner" : "trophy")}<b>${esc(a.name)}</b>
-          <span>${a.recipient_list.map((r) => r.team_key ? `<a class="ex-chip" href="#/team/${esc(r.team_key.replace("frc", ""))}/${year}">${esc(r.team_key.replace("frc", ""))}</a>${r.awardee ? " " + esc(r.awardee) : ""}` : esc(r.awardee || "")).join(" ")}</span></div>`).join("")}</div>`;
-      } else {
-        if (!d.teams.length) { exBody.innerHTML = `<div class="card">${emptyState("bagel", "No teams listed yet", "Teams appear as they register.")}</div>`; return; }
-        exBody.innerHTML = `<div class="ds-grid">${d.teams.map((t, i) => {
-          const n = String(t.team_number), r = rank[n], e2 = epaOf(n);
-          return teamTileHTML(n, `${e2 != null ? `<span class="ev-pill">EPA <b>${fmt(e2)}</b></span>` : ""}${r ? `<span class="ev-pill">#<b>${r.rank}</b></span>` : ""}${winners.includes(n) ? `<span class="ev-pill">${icon("trophy")}won</span>` : ""}`,
-            { style: `animation-delay:${Math.min(i, 30) * 14}ms` });
-        }).join("")}</div>`;
-        // names come from this event's roster (they may not be in our caches)
-        $$("[data-tteam]", exBody).forEach((b) => { const t = d.teams.find((x) => String(x.team_number) === b.dataset.tteam); const nm = $(".ds-name", b); if (t && nm && !nm.textContent.trim()) nm.textContent = t.nickname || ""; });
-        wireTeamTiles(exBody, openT);
-        return;
-      }
-      const ts = [...new Set($$("[data-t]", exBody).map((x) => x.dataset.t))];
-      paintAvatars(exBody, ts); paintTeamFills(exBody, ts);
-      $$("[data-t]", exBody).forEach((x) => x.onclick = () => openT(x.dataset.t));
-    };
-    $$("#exTabs button", body).forEach((b) => b.onclick = () => { esTab = b.dataset.ex; $$("#exTabs button", body).forEach((x) => x.classList.toggle("on", x === b)); draw(); });
-    draw();
+    const set = $("#exSet", body); if (set) set.onclick = () => selectEvent(key, e.name).then(() => { location.hash = "#/teams/" + sub; });
+    renderEventSub($("#exBody", body), sub, ctx);
   }
 
-  function renderTeamsList(root) {
-    const s = Store.getSettings();
-    const teams = eventTeams();
+  /* ---- Teams subpage --------------------------------------------------------- */
+  function renderTeamsList(root, ctx) {
+    const teams = ctx.teams;
     if (!teams.length) {
-      root.innerHTML = `<div class="card">${emptyState("teams", "No team list loaded",
-        "This event's team list loads from The Blue Alliance once you're online.")}</div>`;
+      root.innerHTML = `<div class="card">${emptyState("teams", ctx.mine ? "No team list loaded" : "No teams listed yet",
+        ctx.mine ? "This event's team list loads from The Blue Alliance once you're online." : "Teams appear as they register.")}</div>`;
       return;
     }
-    let epaMap = buildSeasonEpa();
-    const ev = currentEventEpa();
-    const epaOf = (num) => (ev && ev.byTeam[num] ? ev.byTeam[num].epa : null) ?? epaMap[String(num)] ?? null;
-    let rankMap = {}; // team# -> { rank, wr, rec }
+    const epaOf = (num) => ctx.teamEpa(num);
+    let rankMap = {}; // team# -> { rank, wr }
     const sorts = [["number", "#"], ["name", "A–Z"], ["epa", "EPA"], ["rank", "Rank"], ["win", "Win %"]];
     root.innerHTML = `
       <div class="card ev-toolbar">
@@ -1922,12 +1923,13 @@
       <div id="teamList"></div>`;
 
     const listEl = $("#teamList", root);
+    const nick = (t) => t.nickname || t.name || ctx.nameOf(t.team_number) || "";
     function draw(filter = "") {
       const f = filter.toLowerCase();
-      const pits = allPits();
-      let list = teams.filter((t) => !f || String(t.team_number).includes(f) || (t.nickname || "").toLowerCase().includes(f));
+      const pits = ctx.mine ? allPits() : {};
+      let list = teams.filter((t) => !f || String(t.team_number).includes(f) || nick(t).toLowerCase().includes(f));
       list = list.slice().sort((a, b) => {
-        if (teamSort === "name") return (a.nickname || "").localeCompare(b.nickname || "");
+        if (teamSort === "name") return nick(a).localeCompare(nick(b));
         if (teamSort === "epa") return (epaOf(b.team_number) ?? -1e9) - (epaOf(a.team_number) ?? -1e9);
         if (teamSort === "rank") return ((rankMap[a.team_number] || {}).rank || 1e9) - ((rankMap[b.team_number] || {}).rank || 1e9);
         if (teamSort === "win") return ((rankMap[b.team_number] || {}).wr ?? -1) - ((rankMap[a.team_number] || {}).wr ?? -1);
@@ -1937,10 +1939,12 @@
       if (evView === "grid") {
         listEl.innerHTML = `<div class="ds-grid ev-grid">${list.map((t, i) => {
           const n = String(t.team_number), rk = rankMap[n] || {}, e = epaOf(n);
-          return teamTileHTML(n, `${e != null ? `<span class="ev-pill">EPA <b>${fmt(e)}</b></span>` : ""}${rk.rank ? `<span class="ev-pill">#<b>${rk.rank}</b></span>` : ""}${rk.wr != null ? `<span class="ev-pill"><b>${Math.round(rk.wr * 100)}</b>%</span>` : ""}${pits[n] ? `<span class="ev-pill">${icon("check")}pit</span>` : ""}`,
+          return teamTileHTML(n, `${e != null ? `<span class="ev-pill">EPA <b>${fmt(e)}</b></span>` : ""}${rk.rank ? `<span class="ev-pill">#<b>${rk.rank}</b></span>` : ""}${rk.wr != null ? `<span class="ev-pill"><b>${Math.round(rk.wr * 100)}</b>%</span>` : ""}${ctx.winners.includes(n) ? `<span class="ev-pill">${icon("trophy")}won</span>` : ""}${pits[n] ? `<span class="ev-pill">${icon("check")}pit</span>` : ""}`,
             { style: `animation-delay:${Math.min(i, 30) * 15}ms` });
         }).join("")}</div>`;
-        wireTeamTiles(listEl);
+        // names come from this event's roster (other events' teams may not be in our caches)
+        $$("[data-tteam]", listEl).forEach((b) => { const t = teams.find((x) => String(x.team_number) === b.dataset.tteam); const nm = $(".ds-name", b); if (t && nm && !nm.textContent.trim()) nm.textContent = nick(t); });
+        wireTeamTiles(listEl, ctx.openTeam);
         return;
       }
       listEl.innerHTML = `<div class="team-list">${list.map((t) => {
@@ -1948,24 +1952,24 @@
         return `<button class="team-row" data-team="${n}" data-tfill="${n}">
           <img class="team-avatar tr-icon" data-avatar="${n}" alt="" />
           <span class="tr-robot">${photo ? `<img src="${esc(photo)}" alt="robot" />` : `<span class="tr-robot-ph">${icon("robot")}</span>`}</span>
-          <span class="tr-id"><span class="tr-num">${n}</span><span class="tr-name">${esc(t.nickname || t.name || "")}</span></span>
+          <span class="tr-id"><span class="tr-num">${n}</span><span class="tr-name">${esc(nick(t))}</span></span>
           <span class="tr-stat"><span class="trs-val">${e != null ? fmt(e, 1) : "–"}</span><span class="trs-label">EPA</span></span>
           <span class="tr-stat"><span class="trs-val">${rk.rank ? "#" + rk.rank : "–"}</span><span class="trs-label">Rank</span></span>
           <span class="tr-stat"><span class="trs-val">${rk.wr != null ? Math.round(rk.wr * 100) + "%" : "–"}</span><span class="trs-label">Win</span></span>
         </button>`;
       }).join("")}</div>`;
-      $$("[data-team]", listEl).forEach((c) => c.onclick = () => openTeam(c.dataset.team));
+      $$("[data-team]", listEl).forEach((c) => c.onclick = () => ctx.openTeam(c.dataset.team));
       paintAvatars(listEl, list.map((t) => t.team_number));
       paintTeamFills(listEl, list.map((t) => String(t.team_number)));
     }
     draw();
-    if (!Object.keys(epaMap).length) {
+    if (ctx.seasonEpa && !Object.keys(ctx.seasonEpa).length) {
       API.sbYearLeaderboard(GAME.season).then((res) => {
-        (res && res.rows || []).forEach((r) => { epaMap[String(r.team)] = r.epa; });
-        if (Object.keys(epaMap).length && root.isConnected) draw($("#teamSearch", root).value);
+        (res && res.rows || []).forEach((r) => { ctx.seasonEpa[String(r.team)] = r.epa; });
+        if (Object.keys(ctx.seasonEpa).length && root.isConnected) draw($("#teamSearch", root).value);
       }).catch(() => {});
     }
-    if (s.eventKey) API.getEventRankings(s.eventKey).then(({ rankings }) => {
+    ctx.rankings().then(({ rankings }) => {
       rankMap = {};
       (rankings || []).forEach((r) => {
         const tn = String(r.team_key).replace("frc", "");
@@ -1988,13 +1992,12 @@
     });
   }
 
-  /* ---- Schedule subpage (quals + playoffs, click for match breakdown) ------ */
+  /* ---- Schedule subpage (quals + playoffs, click for win odds + match video) -- */
   const COMP_ORDER = { qm: 0, ef: 1, qf: 2, sf: 3, f: 4 };
   const COMP_LABEL = { qm: "Q", ef: "EF", qf: "QF", sf: "SF", f: "F" };
-  function renderSchedule(root) {
-    const s = Store.getSettings();
-    const cache = s.eventKey ? Store.getCache("matches." + s.eventKey, null) : null;
-    const all = (cache ? cache.data : []) || [];
+  const ytVideos = (m) => (m.videos || []).filter((v) => v && v.type === "youtube" && v.key);
+  function renderSchedule(root, ctx) {
+    const all = ctx.matches || [];
     if (!all.length) {
       root.innerHTML = `<div class="card">${emptyState("calendar", "No schedule yet", "The match schedule loads once it's posted on The Blue Alliance (needs wifi to fetch).")}</div>`;
       return;
@@ -2006,8 +2009,7 @@
     const teamsOf = (m, c) => (m.alliances[c].team_keys || []).map((k) => k.replace("frc", ""));
     const played = (m) => m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0;
     const label = (m) => COMP_LABEL[m.comp_level] + (m.comp_level === "qm" || m.comp_level === "f" ? m.match_number : (m.set_number || m.match_number));
-    const ev = currentEventEpa();
-    const epaOf = (t) => (ev && ev.byTeam[t]) ? ev.byTeam[t].epa : null;
+    const epaOf = ctx.epaOf;
     const probOf = (m) => {
       const r = teamsOf(m, "red"), b = teamsOf(m, "blue");
       if (![...r, ...b].every((t) => epaOf(t) != null)) return null;
@@ -2039,14 +2041,14 @@
         const red = teamsOf(m, "red"), blue = teamsOf(m, "blue"), done = played(m);
         const rWon = done && m.alliances.red.score > m.alliances.blue.score;
         const bWon = done && m.alliances.blue.score > m.alliances.red.score;
-        const p = probOf(m), ours = red.includes(OUR_TEAM) || blue.includes(OUR_TEAM);
+        const p = probOf(m), ours = red.includes(OUR_TEAM) || blue.includes(OUR_TEAM), vid = ytVideos(m).length;
         const chip = (t) => `<span class="sr-team${t === q || t === OUR_TEAM ? " hl" : ""}">${t}</span>`;
         return `<button class="sched-row${ours ? " ours" : ""}${done ? "" : " upcoming"}" data-mi="${all.indexOf(m)}" data-mkey="${esc(m.key || "")}">
-          <span class="sr-label">${esc(label(m))}<small>${done ? "final" : esc(fmtTime(m))}</small></span>
+          <span class="sr-label">${esc(label(m))}${vid ? `<i class="sr-vid" title="Match video">${icon("play")}</i>` : ""}<small>${done ? "final" : esc(fmtTime(m))}</small></span>
           <span class="sr-alliance red ${rWon ? "won" : ""}">${red.map(chip).join("")}</span>
           <span class="sr-score">${done ? `<b class="${rWon ? "w" : ""}">${m.alliances.red.score}</b><span class="sr-dash">–</span><b class="${bWon ? "w" : ""}">${m.alliances.blue.score}</b>` : `<span class="sr-vs">vs</span>`}</span>
           <span class="sr-alliance blue ${bWon ? "won" : ""}">${blue.map(chip).join("")}</span>
-          ${p != null ? `<span class="sr-prob" title="Win probability (event EPA)"><i style="width:${Math.round(p * 100)}%"></i></span>` : ""}
+          ${p != null ? `<span class="sr-prob" title="Win probability (${esc(ctx.epaNote)})"><i style="width:${Math.round(p * 100)}%"></i></span>` : ""}
         </button>`;
       };
       const quals = list.filter((m) => m.comp_level === "qm"), po = list.filter((m) => m.comp_level !== "qm");
@@ -2056,7 +2058,7 @@
         ${po.length ? `<section class="card ev-sched" style="margin-top:16px"><div class="sr-head"><h3>${icon("trophy")} Playoffs</h3><span class="hint">${po.length} matches</span></div>
           <div class="sched-list">${po.map(row).join("")}</div></section>` : ""}`
         : `<div class="card">${emptyState("search", "No matches", q ? `No matches for team ${q} with this filter.` : "Nothing matches this filter.")}</div>`;
-      $$(".sched-row", bodyEl).forEach((b) => b.onclick = () => openMatchDetail(all[+b.dataset.mi]));
+      $$(".sched-row", bodyEl).forEach((b) => b.onclick = () => openMatchDetail(all[+b.dataset.mi], ctx));
     };
     draw();
     $("#schedTeam", root).oninput = (e) => { evSchedTeam = e.target.value.replace(/\D/g, ""); draw(); };
@@ -2067,49 +2069,59 @@
     });
     $("#schedNext", root).onclick = () => {
       let next = $(".sched-row.upcoming", bodyEl);
-      if (!next) { evSchedFilter = "all"; evSchedTeam = ""; renderSchedule(root); next = $(".sched-row.upcoming", root); }
+      if (!next) { evSchedFilter = "all"; evSchedTeam = ""; renderSchedule(root, ctx); next = $(".sched-row.upcoming", root); }
       if (!next) { toast("Every match has been played"); return; }
       next.scrollIntoView({ behavior: "smooth", block: "center" });
       next.classList.add("flash"); setTimeout(() => next.classList.remove("flash"), 1600);
     };
   }
 
-  /* ---- Rankings subpage (TBA rankings + on-device event EPA) --------------- */
-  function renderEventRankings(root) {
-    const s = Store.getSettings();
+  /* ---- Rankings subpage ---------------------------------------------------- */
+  function renderEventRankings(root, ctx) {
     root.innerHTML = `<div class="card tp-loading"><span class="tp-spin"></span>Loading rankings…</div>`;
-    API.getEventRankings(s.eventKey).then(({ rankings, fromCache }) => {
+    ctx.rankings().then(({ rankings, fromCache }) => {
       if (!root.isConnected) return;
       if (!rankings || !rankings.length) { root.innerHTML = `<div class="card">${emptyState("trophy", "No rankings yet", "Rankings appear once qualification matches are played.")}</div>`; return; }
-      const ev = currentEventEpa();
       const rps = rankings.map((r) => (r.sort_orders && r.sort_orders[0]) || 0);
       const maxRp = Math.max(0.01, ...rps);
       root.innerHTML = `<section class="card ev-ranks">
         <div class="sr-head"><h3>${icon("trophy")} Qualification rankings</h3><span class="hint">${fromCache ? "cached · " : ""}top 8 are usually alliance captains</span></div>
         <div class="er-list">${rankings.map((r, i) => {
           const t = String(r.team_key).replace("frc", ""), rec = r.record || {}, rp = (r.sort_orders && r.sort_orders[0]) || 0;
-          const e = ev && ev.byTeam[t];
+          const e = ctx.epaOf(t);
           return `<button class="er-row${r.rank <= 8 ? " cap" : ""}${t === OUR_TEAM ? " ours" : ""}" data-team="${esc(t)}" data-tfill="${esc(t)}" style="animation-delay:${Math.min(i, 24) * 18}ms">
             <span class="er-rank">${r.rank}</span>
             <img class="team-avatar" data-avatar="${esc(t)}" alt="" />
-            <span class="er-id"><b>${esc(t)}</b><span>${esc(nameFor(t))}</span></span>
+            <span class="er-id"><b>${esc(t)}</b><span>${esc(ctx.nameOf(t))}</span></span>
             <span class="er-rp"><span class="er-track"><i style="width:${Math.round(rp / maxRp * 100)}%"></i></span><b>${fmt(rp, 2)}</b><small>RP</small></span>
             <span class="er-rec">${rec.wins ?? 0}-${rec.losses ?? 0}-${rec.ties ?? 0}</span>
-            <span class="er-epa">${e ? fmt(e.epa) : "–"}<small>EPA</small></span>
+            <span class="er-epa">${e != null ? fmt(e) : "–"}<small>EPA</small></span>
           </button>`;
         }).join("")}</div></section>`;
       const ts = rankings.map((r) => String(r.team_key).replace("frc", ""));
       paintAvatars(root, ts); paintTeamFills(root, ts);
-      $$("[data-team]", root).forEach((b) => b.onclick = () => openTeam(b.dataset.team));
+      $$("[data-team]", root).forEach((b) => b.onclick = () => ctx.openTeam(b.dataset.team));
     }).catch(() => { if (root.isConnected) root.innerHTML = `<div class="card">${emptyState("globe", "Rankings need wifi", "Connect once to load this event's rankings.")}</div>`; });
   }
 
-  function openMatchDetail(m) {
+  /* ---- Awards subpage ------------------------------------------------------ */
+  function renderEventAwards(root, ctx) {
+    root.innerHTML = `<div class="card tp-loading"><span class="tp-spin"></span>Loading awards…</div>`;
+    ctx.awards().then((awards) => {
+      if (!root.isConnected) return;
+      if (!awards || !awards.length) { root.innerHTML = `<div class="card">${emptyState("star", "No awards yet", "Awards are posted as the event finishes.")}</div>`; return; }
+      root.innerHTML = `<div class="tp-award-grid">${awards.map((a, i) => `<div class="card tp-award-card" style="--i:${i}">
+        ${icon(BANNER_TYPES.includes(a.award_type) ? "banner" : "trophy")}<b>${esc(a.name)}</b>
+        <span>${(a.recipient_list || []).map((r) => r.team_key ? `<a class="ex-chip" href="#/team/${esc(r.team_key.replace("frc", ""))}/${ctx.year}">${esc(r.team_key.replace("frc", ""))}</a>${r.awardee ? " " + esc(r.awardee) : ""}` : esc(r.awardee || "")).join(" ")}</span></div>`).join("")}</div>`;
+    }).catch(() => { if (root.isConnected) root.innerHTML = `<div class="card">${emptyState("globe", "Awards need wifi", "Connect once to load this event's awards.")}</div>`; });
+  }
+
+  /* ---- A match: win odds, final score, both alliances, and the match video ----- */
+  function openMatchDetail(m, ctx) {
     if (!m) return;
-    // Win probability is based on this EVENT's EPA (computed on-device from played
-    // qual matches). If any team on the match has no event EPA yet → "Unknown".
-    const ev = currentEventEpa();
-    const epaOf = (t) => (ev && ev.byTeam[t]) ? ev.byTeam[t].epa : null;
+    ctx = ctx || currentEventCtx();
+    // Win probability from the event's EPA. If any team on the match has no EPA → "Unknown".
+    const epaOf = ctx.epaOf;
     const teamsOf = (c) => (m.alliances[c].team_keys || []).map((k) => k.replace("frc", ""));
     const red = teamsOf("red"), blue = teamsOf("blue");
     const haveAll = [...red, ...blue].every((t) => epaOf(t) != null);
@@ -2119,27 +2131,31 @@
     const played = m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0;
     const label = (COMP_LABEL[m.comp_level] || "") + (m.comp_level === "qm" ? m.match_number : (m.set_number || m.match_number));
     const maxEpa = Math.max(1, ...[...red, ...blue].map((t) => epaOf(t) || 0));
+    const vids = ytVideos(m);
     const teamLine = (t, col) => {
       const e = epaOf(t);
       return `<button class="md-team" data-team="${t}">
         <img class="team-avatar" data-avatar="${t}" data-ally="${col}" alt="" />
-        <span class="md-tinfo"><span class="md-tnum">${t}</span><span class="md-tname">${esc(teamName(t))}</span></span>
+        <span class="md-tinfo"><span class="md-tnum">${t}</span><span class="md-tname">${esc(ctx.nameOf(t))}</span></span>
         <span class="md-ebar"><span class="md-ebar-fill" style="width:${Math.round((e || 0) / maxEpa * 100)}%"></span></span>
         <span class="md-eval">${e != null ? fmt(e, 1) : "–"}</span>
       </button>`;
     };
     modal(`${m.comp_level === "qm" ? "Qualification " + m.match_number : label}`, `
       <div class="md-wrap">
+        ${vids.length ? `<div class="md-video"><button class="md-play" type="button" data-yt="${esc(vids[0].key)}" aria-label="Play the match video">
+            <img src="https://i.ytimg.com/vi/${esc(vids[0].key)}/hqdefault.jpg" alt="" loading="lazy" /><span class="md-play-ic">${icon("play")}</span></button>
+          ${vids.length > 1 ? `<div class="md-vids">${vids.map((v, i) => `<button class="btn ghost sm${i ? "" : " on"}" type="button" data-ytswap="${esc(v.key)}">${icon("play")} Video ${i + 1}</button>`).join("")}</div>` : ""}</div>` : ""}
         <div class="md-prob">
           ${pct != null ? `
           <div class="md-prob-head"><span class="md-prob-red">${pct}%</span>
             <span class="md-prob-mid">win probability${played ? "" : " · estimate"}</span>
             <span class="md-prob-blue">${100 - pct}%</span></div>
           <div class="md-prob-bar"><span class="mpb-red" style="width:${pct}%"></span><span class="mpb-blue" style="width:${100 - pct}%"></span></div>
-          <p class="hint" style="margin:6px 0 0;text-align:center">Estimate from this event's on-device EPA (not an official prediction).</p>
+          <p class="hint" style="margin:6px 0 0;text-align:center">Estimate from ${esc(ctx.epaNote)} (not an official prediction).</p>
           ` : `
           <div class="md-prob-head" style="justify-content:center"><span class="md-prob-mid" style="font-size:1rem">Win probability · Unknown</span></div>
-          <p class="hint" style="margin:6px 0 0;text-align:center">No event EPA yet — it appears once these teams have played qualification matches at this event.</p>
+          <p class="hint" style="margin:6px 0 0;text-align:center">${ctx.mine ? "No event EPA yet: it appears once these teams have played qualification matches at this event." : "Statbotics doesn't have EPA for every team in this match yet."}</p>
           `}
         </div>
         ${played ? `<div class="md-final"><span class="mf-red">${m.alliances.red.score}</span><span class="mf-vs">final</span><span class="mf-blue">${m.alliances.blue.score}</span></div>` : ""}
@@ -2150,7 +2166,20 @@
       </div>`,
       (body, close) => {
         paintAvatars(body, [...red, ...blue]);
-        $$(".md-team", body).forEach((b) => b.onclick = () => { close(); openTeam(b.dataset.team); });
+        $$(".md-team", body).forEach((b) => b.onclick = () => { close(); ctx.openTeam(b.dataset.team); });
+        // the video only loads (privacy-friendly youtube-nocookie) when you press play
+        const play = (key) => {
+          const box = $(".md-video", body); if (!box) return;
+          const frame = document.createElement("iframe");
+          frame.className = "md-frame";
+          frame.src = `https://www.youtube-nocookie.com/embed/${encodeURIComponent(key)}?autoplay=1&rel=0`;
+          frame.title = "Match video";
+          frame.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
+          frame.allowFullscreen = true;
+          const old = $(".md-play, .md-frame", box); if (old) old.replaceWith(frame);
+        };
+        const pb = $(".md-play", body); if (pb) pb.onclick = () => play(pb.dataset.yt);
+        $$("[data-ytswap]", body).forEach((b) => b.onclick = () => { $$("[data-ytswap]", body).forEach((x) => x.classList.toggle("on", x === b)); play(b.dataset.ytswap); });
       });
   }
 
@@ -2536,7 +2565,7 @@
             <header class="tp-ev-head">
               <div>
                 <span class="tp-ev-week">${esc(week)} · ${esc(dateRange(e))}</span>
-                <h3 class="tp-ev-name"><a class="tp-ev-link" href="#/teams/search/${esc(e.key)}" title="Open this event">${esc(e.name)}${icon("arrow-right")}</a></h3>
+                <h3 class="tp-ev-name"><a class="tp-ev-link" href="#/events/${esc(e.key)}" title="Open this event">${esc(e.name)}${icon("arrow-right")}</a></h3>
                 <span class="tp-ev-loc">${icon("map-pin")} ${esc([e.city, e.state_prov, e.country].filter(Boolean).join(", "))}</span>
               </div>
               ${po ? `<span class="tp-po${won ? " gold" : ""}">${won ? icon("trophy") : icon("flag")} ${esc(po)}</span>` : ""}
@@ -2572,7 +2601,7 @@
       el.innerHTML = `<div class="sr-head"><h3>${icon("banner")} Blue banners <span class="muted">${ban.length}</span></h3>
           <span class="hint">event wins, Impact / Chairman's &amp; Engineering Inspiration</span></div>
         <div class="bb-strip">${ban.map((a, i) => `
-          <a class="bb-banner" href="#/teams/search/${esc(a.event_key)}" style="--i:${i}" title="${esc(a.name)} · ${esc(evName[a.event_key] || a.event_key)}: open the event">
+          <a class="bb-banner" href="#/events/${esc(a.event_key)}" style="--i:${i}" title="${esc(a.name)} · ${esc(evName[a.event_key] || a.event_key)}: open the event">
             ${FIRST_MARK}
             <b>${esc(bannerName(a))}</b>
             <span class="bb-year">${a.year}</span>
@@ -7442,7 +7471,7 @@
       const evRow = (r) => {
         const e = r.ev;
         const where = [e.city, e.state_prov].filter(Boolean).join(", ");
-        return `<a class="gs-item ev${i === active ? " on" : ""}" role="option" id="gsOpt${i}" data-i="${i++}" href="#/teams/search/${encodeURIComponent(e.key)}">
+        return `<a class="gs-item ev${i === active ? " on" : ""}" role="option" id="gsOpt${i}" data-i="${i++}" href="#/events/${encodeURIComponent(e.key)}">
           <span class="gs-ev-ico">${icon("calendar")}<b>${String(r.year).slice(2)}</b></span>
           <span class="gs-main"><b>${mark(e.short_name || e.name, q)}</b><span>${r.year}${where ? " · " + esc(where) : ""}${e.start_date ? " · " + esc(evDates(e)) : ""}</span></span>
           ${e.key === Store.getSettings().eventKey ? `<span class="gs-tag mine">Your event</span>` : ""}</a>`;
@@ -7526,7 +7555,9 @@
       chip.onclick = openEventPicker; }
     // app sidebar links are plain #/route links; tapping the page you're on just closes the phone drawer
     $("#gnav").addEventListener("click", (e) => { const a = e.target.closest("[data-g]"); if (a && a.dataset.g === current()) { app.classList.remove("nav-open"); syncNavLock(); } });
-    $("#nav").addEventListener("click", (e) => { const a = e.target.closest("[data-route]"); if (a && a.dataset.route === current()) { app.classList.remove("nav-open"); syncNavLock(); } });
+    $("#nav").addEventListener("click", (e) => {
+      const off = e.target.closest(".nv-off");
+      if (off) { e.preventDefault(); afterEventPick = "#/" + off.dataset.route; openEventMenu(); return; } const a = e.target.closest("[data-route]"); if (a && a.dataset.route === current()) { app.classList.remove("nav-open"); syncNavLock(); } });
 
     window.addEventListener("hashchange", router);
     if (!location.hash) location.hash = "#/home";
