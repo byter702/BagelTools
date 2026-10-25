@@ -66,8 +66,8 @@ window.CONFIG = {
      Settings → Season; each year's scouting data is kept completely separate. */
   defaultSeason: 2026,
 
-  /* --- Dashboard countdowns ---------------------------------------------------
-     Shown as one card on the Dashboard with ‹ › arrows to flip between them.
+  /* --- Home countdowns --------------------------------------------------------
+     Shown as one card on the home page with ‹ › arrows to flip between them.
      `at` is an ISO time with its UTC offset; past ones hide automatically. */
   countdowns: [
     { label: "2027 Kickoff", sub: "BIOCORE game reveal", where: "Livestream · 9:00 AM PT", at: "2027-01-09T09:00:00-08:00" },

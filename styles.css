@@ -3895,3 +3895,8 @@ body.is-home .tb-brand { margin-right: 6px; }
 .bp-av { --av-ring: #fff; box-shadow: 0 0 0 1.5px var(--av-ring); }
 .bp-av.xs { border: 0; }
 :root[data-theme="light"] .bp-av { --av-ring: #000; }
+
+/* ==== v112: home = app tiles, then the countdowns, live event and team spotlight ==== */
+.hub-extra { margin-top: 26px; animation: htIn .75s cubic-bezier(.2,.9,.25,1.05) .35s backwards; }
+.hub-extra > .section:first-child { margin-top: 0; }
+@media (prefers-reduced-motion: reduce) { .hub-extra { animation: none; } }

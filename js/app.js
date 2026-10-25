@@ -726,7 +726,7 @@
      ======================================================================== */
   const APPS = [
     { id: "dashboard", name: "Dashboard", icon: "dashboard", accent: "#ffc718", hidden: true, blurb: "Your Bagel Bucks, the leaderboard and the whole team",
-      pages: [["dashboard", "Overview", "dashboard", "Your day at a glance"], ["profile", "Profile", "user", "Your Bagel Bucks and scouting"],
+      pages: [["profile", "Profile", "user", "Your Bagel Bucks and scouting"],
         ["members", "Members", "teams", "Leaderboard and roster"]] },
     { id: "scouting", name: "Scouting", icon: "binoculars", accent: "#5bbde2", blurb: "Scout every match and pit, then build the pick list",
       pages: [["match", "Match Scouting", "binoculars", "Scout a robot in a match"], ["pit", "Pit Scouting", "robot", "Robot specs and photos"],
@@ -747,7 +747,7 @@
   const appFor = (route) => APPS.find((a) => a.id === ROUTE_APP[route]) || APPS[0];
   const reduceMotion = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // ---- sidebar: main links (Home, Dashboard, Profile, Members, Fantasy) on every page,
+  // ---- sidebar: main links (Home, Profile, Members, Fantasy) on every page,
   // then the open app's own pages below them ----
   const MAIN_APPS = new Set(["dashboard", "fantasy"]); // their pages ARE the main links
   function renderSidebar(appDef, active) {
@@ -782,26 +782,18 @@
 
   // ---- home ----
   function renderHome(root) {
-    const me = Store.getMe(), u = Auth.currentUser(), s = Store.getSettings();
+    const u = Auth.currentUser(), s = Store.getSettings();
     const hr = new Date().getHours();
     const greet = hr < 5 ? "Up late" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
-    const board = allScouters().slice().sort((a, b) => (b.bb || 0) - (a.bb || 0));
-    const rank = board.findIndex((x) => x.id === me.id) + 1;
     const reqs = Object.keys(Store.getRequests()).length;
     const tile = (a, i) => {
       const href = a.href || "#/" + a.pages[0][0];
-      const wide = a.id === "dashboard";
-      return `<a class="hub-tile${wide ? " wide" : ""}" href="${esc(href)}" data-app="${a.id}" style="--app:${a.accent};--i:${i}"${a.href ? ` target="_blank" rel="noopener"` : ""}>
+      return `<a class="hub-tile" href="${esc(href)}" data-app="${a.id}" style="--app:${a.accent};--i:${i}"${a.href ? ` target="_blank" rel="noopener"` : ""}>
         <span class="ht-spot" aria-hidden="true"></span>
         <span class="ht-mark" aria-hidden="true">${icon(a.icon)}</span>
         <span class="ht-ico">${icon(a.icon)}</span>
         <span class="ht-txt"><b>${esc(a.name)}</b><span>${esc(a.blurb)}</span></span>
-        ${wide ? `<span class="ht-stats">
-            <span><b data-count="${me.bb || 0}">${(me.bb || 0).toLocaleString()}</b><small data-s="BB">Bagel Bucks</small></span>
-            <span><b>${rank ? "#" + rank : "–"}</b><small data-s="rank">of ${board.length} on the leaderboard</small></span>
-            <span><b data-count="${matchCountOf(me)}">${matchCountOf(me)}</b><small data-s="matches">matches scouted</small></span>
-            <span><b data-count="${pitCountOf(me)}">${pitCountOf(me)}</b><small data-s="pits">pits scouted</small></span></span>`
-          : `<span class="ht-pages">${a.pages.map((p) => `<span>${icon(p[2])}${esc(p[1])}</span>`).join("")}</span>`}
+        <span class="ht-pages">${a.pages.map((p) => `<span>${icon(p[2])}${esc(p[1])}</span>`).join("")}</span>
         <span class="ht-go">${icon("arrow-right")}</span>
       </a>`;
     };
@@ -814,12 +806,21 @@
           <p class="pg-sub">${greet}${u ? `, <b>${esc(u.first)}</b>` : ""}. ${s.eventName ? `You're on <b>${esc(s.eventName)}</b>.` : "Pick an app to get going."}</p>
         </header>
         <div class="hub-grid" style="--cols:${apps.length}">${apps.map(tile).join("")}</div>
+        <div class="hub-extra">
+          ${countdownHTML()}
+          <div id="liveSection"></div>
+          <section class="section" id="spotlight"></section>
+        </div>
       </section>
       <div class="hub-corner">
         <a class="hub-mini" href="#/settings" title="Settings" aria-label="Settings">${icon("settings")}</a>
         <a class="hub-mini" href="#/admin" title="Admin" aria-label="Admin">${icon("shield")}<span class="nav-badge" id="reqBadge"${reqs ? "" : " hidden"}>${reqs || ""}</span></a>
       </div>`;
-    countUp(root);
+    // what used to be on the Dashboard: countdowns, the live event (only while one is
+    // in progress) and the team spotlight
+    initCountdown(root);
+    loadLiveSection(root);
+    initSpotlight(root);
     // pointer spotlight + a gentle 3D tilt that follows the cursor
     $$(".hub-tile", root).forEach((t) => {
       t.addEventListener("pointermove", (e) => {
@@ -864,7 +865,7 @@
      ======================================================================== */
   const routes = {
     home: { title: "Home", render: renderHome },
-    dashboard: { title: "Dashboard", render: renderDashboard },
+    dashboard: { title: "Home", render: () => location.replace("#/home") }, // old links: the Dashboard is part of home now
     profile: { title: "Profile", render: renderProfilePage },
     members: { title: "Members", render: renderMembers },
     teams: { title: "Event", render: renderEventsPage },
@@ -1116,64 +1117,7 @@
   /* ===========================================================================
      VIEW: DASHBOARD
      ======================================================================== */
-  function renderDashboard(root) {
-    const matches = allMatches();
-    const pits = allPits();
-    const s = Store.getSettings();
-    const teams = eventTeams();
-    const stats = allScoutedTeams().map(computeStats).filter((x) => x.matches > 0);
-    stats.sort((a, b) => b.avgCycles - a.avgCycles);
-
-    const me = Store.getMe(), u = Auth.currentUser();
-    const hr = new Date().getHours();
-    const greet = hr < 5 ? "Up late" : hr < 12 ? "Good morning" : hr < 18 ? "Good afternoon" : "Good evening";
-    const pitN = Object.keys(pits).length;
-    root.innerHTML = `
-      <section class="db-hero">
-        <div class="db-hero-txt">
-          <span class="pg-eyebrow">${esc(new Date().toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" }))} · ${esc(GAME.seasonLabel)}</span>
-          <h2 class="db-hello">${greet}${u ? `, <span>${esc(u.first)}</span>` : ""}</h2>
-          <p class="pg-sub">${s.eventName ? `Scouting <b>${esc(s.eventName)}</b>.` : "Pick an event to load teams, the schedule and live stats."}</p>
-        </div>
-        <div class="db-hero-stats">
-          <a class="db-chip y" href="#/profile"><b data-count="${me.bb || 0}">${me.bb || 0}</b><span>${BB}</span></a>
-          <a class="db-chip" href="#/profile"><b data-count="${matchCountOf(me)}">${matchCountOf(me)}</b><span>your matches</span></a>
-          <a class="db-chip" href="#/profile"><b data-count="${pitCountOf(me)}">${pitCountOf(me)}</b><span>your pits</span></a>
-        </div>
-      </section>
-
-      <section class="card db-event">
-        <div class="db-event-txt">
-          <span class="pg-eyebrow">${icon("calendar")} Current event</span>
-          <span class="db-event-name">${s.eventName ? esc(s.eventName) : "No event selected"}</span>
-          <span class="hint">${s.eventName ? (teams.length ? `${teams.length} teams loaded` : "Loaded") : "Choose your event to load teams, schedule & stats."}</span>
-        </div>
-        <div class="db-event-kpis">
-          <div><b>${teams.length || "–"}</b><span>teams</span></div>
-          <div><b>${stats.length}</b><span>with data</span></div>
-          <div><b>${matches.length}</b><span>matches</span></div>
-          <div><b>${pitN}</b><span>pits</span></div>
-        </div>
-        <div class="db-event-btns">
-          ${s.eventName ? `<a class="btn ghost sm" href="#/teams">${icon("bagel")} Event page</a>` : ""}
-          <button class="btn primary sm" id="chooseEvent">${icon("calendar")} ${s.eventName ? "Change" : "Choose event"}</button>
-        </div>
-      </section>
-
-      ${countdownHTML()}
-
-      <div id="liveSection"></div>
-
-      <section class="section" id="spotlight"></section>`;
-
-    const ce = $("#chooseEvent", root); if (ce) ce.onclick = openEventPicker;
-    countUp(root);
-    initCountdown(root);
-    initSpotlight(root);
-    loadLiveSection(root);
-  }
-
-  /* ---- Dashboard team spotlight: a random team every 10 s ------------------
+  /* ---- Home team spotlight: a random team every 10 s -----------------------
      Pool = the current event's teams (else every scouted team). Shows the team in
      its colors with event rank/record, EPA, and what our scouts saw. */
   let spotTimer = null, spotIdx = 0, spotPool = null, spotKey = "";
@@ -1327,7 +1271,7 @@
     </div>`;
     $$("[data-team]", el).forEach((r) => r.onclick = () => openTeam(r.dataset.team));
   }
-  /* ---- Dashboard countdowns (CONFIG.countdowns) -----------------------------
+  /* ---- Home countdowns (CONFIG.countdowns) ----------------------------------
      One card; ‹ › arrows (or dots / swipe / arrow keys) flip between upcoming
      dates with a slide animation, the day count rolls up, and a live h:m:s ticks. */
   let cdIndex = 0, cdTimer = null;
@@ -3750,9 +3694,9 @@
     }
     if (!teams.length) {
       root.innerHTML = bar + `<div class="card">${emptyState("list", "No event teams",
-        "Pick your event on the Dashboard to build alliance selections and mashups for the teams competing.")}
-        <div class="btn-row" style="justify-content:center"><button class="btn primary" data-go="dashboard">${icon("calendar")} Choose event</button></div></div>`;
-      const g = $("[data-go]", root); if (g) g.onclick = () => go("dashboard");
+        "Pick your event to build alliance selections and mashups for the teams competing.")}
+        <div class="btn-row" style="justify-content:center"><button class="btn primary" data-go="event">${icon("calendar")} Choose event</button></div></div>`;
+      const g = $("[data-go]", root); if (g) g.onclick = openEventPicker;
       return;
     }
     root.innerHTML = bar + `<div id="pickBody"></div>`;
@@ -5808,7 +5752,7 @@
           <div><b>${esc(evk)}</b></div>
           <button class="btn ${approved ? "danger" : "primary"} sm" id="bbApproveBtn">${approved ? "Turn off earning" : "Approve for BB earning (everyone)"}</button>
         </div>`
-          : `<p class="hint">Pick an event on the Dashboard first, then approve it here.</p>`}
+          : `<p class="hint">Pick an event first (the event button in the top bar), then approve it here.</p>`}
       </div>
       ${(() => {
         const last = Cloud.getBBBoosts().slice(-1)[0];
