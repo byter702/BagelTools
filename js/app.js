@@ -997,10 +997,13 @@
       <button class="evp-all" type="button">${icon("calendar")}<span>Browse every ${year} event</span>${icon("arrow-right")}</button>`;
     document.body.appendChild(pop);
     btn.setAttribute("aria-expanded", "true");
+    // opens under the sidebar button, lined up with its left edge (or above it if there's no room below)
     const place = () => {
       const r = btn.getBoundingClientRect(), w = Math.min(380, innerWidth - 20);
-      pop.style.width = w + "px"; pop.style.top = Math.round(r.bottom + 10) + "px";
-      pop.style.left = Math.round(Math.max(10, Math.min(innerWidth - w - 10, r.left + r.width / 2 - w / 2))) + "px";
+      pop.style.width = w + "px";
+      pop.style.left = Math.round(Math.max(10, Math.min(innerWidth - w - 10, r.left))) + "px";
+      const h = pop.offsetHeight, below = r.bottom + 8;
+      pop.style.top = Math.round(below + h > innerHeight - 10 && r.top - h - 8 > 10 ? r.top - h - 8 : below) + "px";
     };
     place();
     let events = ((Store.getCache("events." + year, null) || {}).data) || [];

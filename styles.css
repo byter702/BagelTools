@@ -3900,3 +3900,16 @@ body.is-home .tb-brand { margin-right: 6px; }
 .hub-extra { margin-top: 26px; animation: htIn .75s cubic-bezier(.2,.9,.25,1.05) .35s backwards; }
 .hub-extra > .section:first-child { margin-top: 0; }
 @media (prefers-reduced-motion: reduce) { .hub-extra { animation: none; } }
+
+/* ==== v113: the event switcher lives in the sidebar, under the logo ==== */
+.sb-event { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 52px; padding: 7px 10px 7px 7px; margin: 2px 0 10px; cursor: pointer; text-align: left;
+  border-radius: 15px; border: 1.5px solid var(--border-strong); background: var(--surface-2); color: var(--text); font: inherit;
+  transition: border-color .2s ease, box-shadow .3s ease, transform .3s cubic-bezier(.2,.9,.25,1.4); }
+.sb-event:hover, .sb-event[aria-expanded="true"] { border-color: var(--secondary); box-shadow: 0 10px 24px -16px var(--secondary); }
+.sb-event:active { transform: scale(.98); }
+.sb-event .tbe-ico { width: 34px; height: 34px; border-radius: 11px; }
+.sb-event.none .tbe-ico { background: var(--surface); color: var(--secondary); border: 1.5px dashed color-mix(in srgb, var(--secondary) 60%, transparent); }
+.sb-event .tbe-txt { flex: 1; }
+.sb-event .tbe-txt b { font-size: .9rem; }
+.sb-event .tbe-chev { width: 16px; height: 16px; flex: none; color: var(--text-mut); transition: transform .3s ease; }
+.sb-event[aria-expanded="true"] .tbe-chev { transform: rotate(180deg); }
