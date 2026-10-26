@@ -943,6 +943,9 @@ const PartsUI = (() => {
     });
   }
 
-  return { init, board, mine, guide };
+  // Called by the router on every page change (the page being drawn sets it again).
+  function unmount() { mounted = null; pending = false; }
+
+  return { init, board, mine, guide, unmount };
 })();
 window.PartsUI = PartsUI;

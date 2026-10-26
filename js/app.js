@@ -923,6 +923,10 @@
     renderSidebar(isHome ? null : appFor(route.navAs || r), route.navAs || r);
     app.classList.remove("nav-open");
     document.body.classList.remove("nav-lock");
+    // Parts hangs its handlers on the shared #view and redraws itself on live data:
+    // clear both on every page change so they can't take over the next page.
+    ["onclick", "onchange", "onkeydown", "ondragstart", "ondragover", "ondragleave", "ondrop"].forEach((k) => { view[k] = null; });
+    if (window.PartsUI && PartsUI.unmount) PartsUI.unmount();
     view.innerHTML = "";
     route.render(view);
     view.focus({ preventScroll: true });
