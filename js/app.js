@@ -785,7 +785,7 @@
       const name = evNavName();
       evItem.classList.toggle("nv-off", !name);
       $(".nv-txt b", evItem).textContent = name || "No event";
-      $(".nv-txt small", evItem).textContent = name ? "Teams, schedule, rankings, awards" : "Pick an event to open it";
+      $(".nv-txt small", evItem).textContent = name ? "Teams, schedule, rankings, bracket" : "Pick an event to open it";
       evItem.title = name ? Store.getSettings().eventName : "Pick an event first";
     }
     const idx = Math.max(0, items.findIndex((a) => a.dataset.route === active));
@@ -1700,8 +1700,9 @@
      Your current event (#/teams/<sub>) and any event you look up (#/events/<key>/<sub>)
      share the exact same subpages, built from an event "context":
        { key, year, mine, base, teams, matches, epaOf, teamEpa, epaNote,
-         rankings() → Promise<{rankings}>, awards() → Promise<[]>, nameOf, openTeam, winners } */
-  const EV_TABS = [["teams", "Teams", "bagel"], ["schedule", "Schedule", "calendar"], ["rankings", "Rankings", "trophy"], ["awards", "Awards", "star"]];
+         rankings() → Promise<{rankings}>, awards() → Promise<[]>, alliances() → Promise<[]>,
+         info() → Promise<event>, liveMatches() (fresh results, or null), live, nameOf, openTeam, winners } */
+  const EV_TABS = [["teams", "Teams", "bagel"], ["schedule", "Schedule", "calendar"], ["rankings", "Rankings", "trophy"], ["bracket", "Bracket", "bracket"], ["awards", "Awards", "star"]];
   const evSubOf = (i) => { const p = (location.hash.replace(/^#\/?/, "") || "").split("/")[i] || "teams"; return p === "list" ? "teams" : p; };
   function eventTabsHTML(base, sub) {
     return `<div class="subtabs ev-tabs">${EV_TABS.map(([k, l, ic]) => `<a href="${base}/${k}" class="${sub === k ? "on" : ""}">${icon(ic)} ${esc(l)}</a>`).join("")}</div>`;
@@ -1709,6 +1710,7 @@
   function renderEventSub(body, sub, ctx) {
     if (sub === "schedule") renderSchedule(body, ctx);
     else if (sub === "rankings") renderEventRankings(body, ctx);
+    else if (sub === "bracket") renderEventBracket(body, ctx);
     else if (sub === "awards") renderEventAwards(body, ctx);
     else renderTeamsList(body, ctx);
   }
@@ -1726,6 +1728,10 @@
       epaNote: "this event's on-device EPA",
       rankings: () => API.getEventRankings(key),
       awards: () => key === TEST_EVENT_KEY ? Promise.resolve([]) : API.getEventDetail(key).then((d) => d.awards), // the test event isn't on TBA
+      alliances: () => API.eventAlliances(key),
+      info: () => API.eventInfo(key).catch(() => currentEventInfo()),
+      liveMatches: () => liveMatches(key),
+      live: true,
       nameOf: (t) => nameFor(t),
       openTeam: (t) => openTeam(t),
       winners: [],
@@ -1739,7 +1745,7 @@
     if (raw[1] === "search") { location.replace("#/events" + (raw[2] ? "/" + raw.slice(2).join("/") : "")); return; } // old links
     const sub = EV_TABS.some((t) => t[0] === evSubOf(1)) ? evSubOf(1) : "teams";
     if (!s.eventKey) {
-      root.innerHTML = pageHero({ ic: "calendar", eyebrow: "Current event", title: "No event selected", sub: "Pick the event you're scouting to load its teams, schedule, rankings and awards." }) +
+      root.innerHTML = pageHero({ ic: "calendar", eyebrow: "Current event", title: "No event selected", sub: "Pick the event you're scouting to load its teams, schedule, rankings, playoff bracket and awards." }) +
         `<div class="card">${emptyState("calendar", "Choose an event", "Use the event button at the top of the sidebar, or the one below.")}
           <div class="btn-row" style="justify-content:center"><button class="btn primary" id="evChoose">${icon("calendar")} Choose event</button>
           <a class="btn ghost" href="#/events">${icon("search")} Browse events</a></div></div>`;
@@ -1802,7 +1808,7 @@
     const key = decodeURIComponent((location.hash.replace(/^#\/?/, "") || "").split("/")[1] || "");
     if (key) { root.innerHTML = `<div id="evBody"></div>`; renderEventExplore($("#evBody", root), key); return; }
     root.innerHTML = pageHero({ ic: "search", eyebrow: "Events", title: "Explore any event",
-      sub: "Look up any event from any year: who's going, the schedule, rankings and awards. Your selected event stays the same." }) + `<div id="evBody"></div>`;
+      sub: "Look up any event from any year: who's going, the schedule, rankings, playoff bracket and awards. Your selected event stays the same." }) + `<div id="evBody"></div>`;
     renderEventSearch($("#evBody", root));
   }
   async function renderEventSearch(body) {
@@ -1877,6 +1883,10 @@
       epaNote: "Statbotics EPA at this event",
       rankings: () => Promise.resolve({ rankings: d.rankings }),
       awards: () => Promise.resolve(d.awards),
+      alliances: () => API.eventAlliances(key),
+      info: () => Promise.resolve(e),
+      liveMatches: st === "live" ? () => API.eventMatchesLive(key) : null,
+      live: st === "live",
       nameOf: (t) => (d.teams.find((x) => String(x.team_number) === String(t)) || {}).nickname || nameFor(t),
       openTeam: (t) => (year === GAME.season ? openTeam(t) : (location.hash = "#/team/" + t + "/" + year)),
       winners,
@@ -2044,28 +2054,31 @@
         return true;
       };
       const list = sorted.filter(keep);
-      const row = (m) => {
+      const row = (m, vidCol) => {
         const red = teamsOf(m, "red"), blue = teamsOf(m, "blue"), done = played(m);
         const rWon = done && m.alliances.red.score > m.alliances.blue.score;
         const bWon = done && m.alliances.blue.score > m.alliances.red.score;
-        const p = probOf(m), ours = red.includes(OUR_TEAM) || blue.includes(OUR_TEAM), vid = ytVideos(m).length;
+        const p = probOf(m), ours = red.includes(OUR_TEAM) || blue.includes(OUR_TEAM), vid = ytVideos(m)[0];
         const chip = (t) => `<span class="sr-team${t === q || t === OUR_TEAM ? " hl" : ""}">${t}</span>`;
         return `<button class="sched-row${ours ? " ours" : ""}${done ? "" : " upcoming"}" data-mi="${all.indexOf(m)}" data-mkey="${esc(m.key || "")}">
-          <span class="sr-label">${esc(label(m))}${vid ? `<i class="sr-vid" title="Match video">${icon("play")}</i>` : ""}<small>${done ? "final" : esc(fmtTime(m))}</small></span>
+          <span class="sr-label">${esc(label(m))}<small>${done ? "final" : esc(fmtTime(m))}</small></span>
           <span class="sr-alliance red ${rWon ? "won" : ""}">${red.map(chip).join("")}</span>
           <span class="sr-score">${done ? `<b class="${rWon ? "w" : ""}">${m.alliances.red.score}</b><span class="sr-dash">–</span><b class="${bWon ? "w" : ""}">${m.alliances.blue.score}</b>` : `<span class="sr-vs">vs</span>`}</span>
           <span class="sr-alliance blue ${bWon ? "won" : ""}">${blue.map(chip).join("")}</span>
+          ${!vidCol ? "" : vid ? `<span class="sr-watch" data-watch title="Watch the match video"><img src="https://i.ytimg.com/vi/${esc(vid.key)}/mqdefault.jpg" alt="" loading="lazy" /><i>${icon("play")}</i></span>` : `<span class="sr-watch none" aria-hidden="true"></span>`}
           ${p != null ? `<span class="sr-prob" title="Win probability (${esc(ctx.epaNote)})"><i style="width:${Math.round(p * 100)}%"></i></span>` : ""}
         </button>`;
       };
       const quals = list.filter((m) => m.comp_level === "qm"), po = list.filter((m) => m.comp_level !== "qm");
+      const qv = quals.some((m) => ytVideos(m).length), pv = po.some((m) => ytVideos(m).length);
       bodyEl.innerHTML = list.length ? `
         ${quals.length ? `<section class="card ev-sched"><div class="sr-head"><h3>${icon("list")} Qualifications</h3><span class="hint">${quals.length} matches</span></div>
-          <div class="sched-list">${quals.map(row).join("")}</div></section>` : ""}
+          <div class="sched-list${qv ? " has-vid" : ""}">${quals.map((m) => row(m, qv)).join("")}</div></section>` : ""}
         ${po.length ? `<section class="card ev-sched" style="margin-top:16px"><div class="sr-head"><h3>${icon("trophy")} Playoffs</h3><span class="hint">${po.length} matches</span></div>
-          <div class="sched-list">${po.map(row).join("")}</div></section>` : ""}`
+          <div class="sched-list${pv ? " has-vid" : ""}">${po.map((m) => row(m, pv)).join("")}</div></section>` : ""}`
         : `<div class="card">${emptyState("search", "No matches", q ? `No matches for team ${q} with this filter.` : "Nothing matches this filter.")}</div>`;
-      $$(".sched-row", bodyEl).forEach((b) => b.onclick = () => openMatchDetail(all[+b.dataset.mi], ctx));
+      // the row opens the match; its video button opens it and starts the video
+      $$(".sched-row", bodyEl).forEach((b) => b.onclick = (e) => openMatchDetail(all[+b.dataset.mi], ctx, { play: !!e.target.closest("[data-watch]") }));
     };
     draw();
     $("#schedTeam", root).oninput = (e) => { evSchedTeam = e.target.value.replace(/\D/g, ""); draw(); };
@@ -2123,8 +2136,447 @@
     }).catch(() => { if (root.isConnected) root.innerHTML = `<div class="card">${emptyState("globe", "Awards need wifi", "Connect once to load this event's awards.")}</div>`; });
   }
 
+  /* ---- Bracket subpage: the playoff bracket, every alliance, and how strong each one is ----
+     8-alliance double elimination (2023+) gets the full upper + lower bracket with
+     connector lines; older formats (best-of-3 quarterfinals…) get a series bracket.
+     Strength = an alliance's top 3 EPA added up. Title odds play the rest of the bracket
+     out from those strengths a few thousand times (an estimate, like every win % here). */
+  let pbSort = "seed";
+  // [column, row, lower?] for each double-elimination match; the finals sit between both brackets
+  const PB_POS = { m1: [0, 0], m2: [0, 1], m3: [0, 2], m4: [0, 3], m7: [1, .5], m8: [1, 2.5], m11: [2, 1.5],
+    m5: [0, 0, 1], m6: [0, 1, 1], m10: [1, 0, 1], m9: [1, 1, 1], m12: [2, .5, 1], m13: [3, .5, 1] };
+  const PB_LEVEL = { ef: "Eighterfinals", qf: "Quarterfinals", sf: "Semifinals", f: "Finals" };
+  const PB_ROLE = ["Captain", "1st pick", "2nd pick", "3rd pick"];
+  const PB = { PAD: 6, HEAD: 22, ROW: 32, GAP: 4, GAMES: 34 };
+  PB.H = PB.PAD * 2 + PB.HEAD + PB.GAP * 2 + PB.ROW * 2;
+  function renderEventBracket(root, ctx) {
+    root.innerHTML = `<div class="card tp-loading"><span class="tp-spin"></span>Loading the bracket…</div>`;
+    const tn = (k) => String(k).replace("frc", "");
+    const played = (m) => !!(m && m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0);
+    const keysOf = (m, c) => (((m.alliances || {})[c] || {}).team_keys || []).map(tn);
+    const pct = (p) => Math.round(p * 100);
+    const oddsTxt = (o) => (o >= .995 ? "99+" : o > 0 && o < .01 ? "<1" : String(pct(o))) + "%";
+    const timeOf = (m) => { const u = m && (m.actual_time || m.predicted_time || m.time); return u ? new Date(u * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""; };
+    const full = (m) => (ctx.matches || []).find((x) => x.key && x.key === m.key) || m; // keeps the match videos
+    let alliances = [], info = null, ms = ctx.matches || [], loaded = false, intro = true, lastW = 0, timer = 0, cur = null;
+
+    // Alliances, strengths and win odds: the same for every format.
+    const model = () => {
+      const A = alliances.map((a, i) => {
+        const picks = (a.picks || []).map(tn), backup = a.backup && a.backup.in ? tn(a.backup.in) : null;
+        const known = picks.map((t) => ctx.teamEpa(t)).filter((x) => x != null).sort((x, y) => y - x);
+        const n = Math.min(3, picks.length);
+        let str = null;
+        if (known.length) {
+          const avg = known.reduce((s, x) => s + x, 0) / known.length, top = known.slice(0, n);
+          str = top.reduce((s, x) => s + x, 0) + (n - top.length) * avg; // a team without EPA counts as the alliance average
+        }
+        return { seed: i + 1, picks, backup, str, partial: known.length < n, ours: picks.includes(OUR_TEAM) || backup === OUR_TEAM };
+      });
+      const seedOf = {};
+      A.forEach((a) => a.picks.concat(a.backup ? [a.backup] : []).forEach((t) => { seedOf[t] = a.seed; }));
+      const sideSeed = (m, c) => { const t = keysOf(m, c).find((x) => seedOf[x]); return t ? seedOf[t] : null; };
+      const winSeed = (m) => {
+        if (!played(m)) return null;
+        const w = m.winning_alliance || (m.alliances.red.score > m.alliances.blue.score ? "red" : m.alliances.blue.score > m.alliances.red.score ? "blue" : "");
+        return w ? sideSeed(m, w) : null;
+      };
+      const scoreOf = (m, seed) => {
+        if (!played(m)) return null;
+        const c = sideSeed(m, "red") === seed ? "red" : sideSeed(m, "blue") === seed ? "blue" : null;
+        return c ? m.alliances[c].score : null;
+      };
+      const strs = A.map((a) => a.str).filter((x) => x != null);
+      const avgStr = strs.length ? strs.reduce((s, x) => s + x, 0) / strs.length : null;
+      const S = (seed) => (A[seed - 1] && A[seed - 1].str != null ? A[seed - 1].str : avgStr);
+      const odds = (r, b) => (avgStr == null || !r || !b ? null : winProb(S(r), S(b)));
+      [...A].sort((x, y) => (y.str ?? -1) - (x.str ?? -1)).forEach((a, i) => { a.power = a.str != null ? i + 1 : null; });
+      const pt = info && info.playoff_type;
+      const de8 = A.length >= 8 && (pt != null ? pt === 10 : Number(ctx.year) >= 2023);
+      return { A, sideSeed, winSeed, scoreOf, S, odds, avgStr, maxStr: Math.max(1, ...strs), de8 };
+    };
+
+    // 8-alliance double elimination: sf set n = match n, then the best-of-3 finals.
+    const de8Model = (M) => {
+      const sets = {};
+      ms.filter((m) => m.comp_level === "sf").forEach((m) => { (sets["m" + m.set_number] = sets["m" + m.set_number] || []).push(m); });
+      Object.values(sets).forEach((l) => l.sort((a, b) => a.match_number - b.match_number));
+      const fins = ms.filter((m) => m.comp_level === "f").sort((a, b) => a.match_number - b.match_number);
+      const actual = Bets.bracketActual(ms, alliances), parts = Bets.bracketParticipants(actual);
+      const finWins = {};
+      fins.forEach((m) => { const w = M.winSeed(m); if (w) finWins[w] = (finWins[w] || 0) + 1; });
+      const rec = {}, out = {}, dropped = {};
+      M.A.forEach((a) => { rec[a.seed] = { w: 0, l: 0 }; });
+      const tally = (w, l) => { if (rec[w]) rec[w].w++; if (rec[l]) rec[l].l++; };
+      Bets.DE8.forEach((d) => {
+        if (d.id === "f" || !actual[d.id]) return;
+        const w = actual[d.id], p = parts[d.id], l = p.red === w ? p.blue : p.red;
+        tally(w, l);
+        if (d.lower) out[l] = d.round; else dropped[l] = true;
+      });
+      fins.forEach((m) => { const w = M.winSeed(m), p = parts.f || {}; if (w) tally(w, p.red === w ? p.blue : p.red); });
+      const champ = actual.f || null, finalist = champ && parts.f ? (parts.f.red === champ ? parts.f.blue : parts.f.red) : null;
+      const started = Object.keys(actual).length > 0 || ms.some((m) => (m.comp_level === "sf" || m.comp_level === "f") && played(m));
+      // the next match: the first one with both alliances known and no winner yet
+      const nextId = (Bets.DE8.find((d) => !actual[d.id] && parts[d.id] && parts[d.id].red && parts[d.id].blue) || {}).id || null;
+      const repOf = {};
+      Bets.DE8.forEach((d) => { const g = d.id === "f" ? fins : (sets[d.id] || []); repOf[d.id] = g.find((m) => !played(m)) && !actual[d.id] ? g.find((m) => !played(m)) : (g.filter(played).pop() || g[0] || null); });
+      let title = null;
+      if (champ) title = { [champ]: 1 };
+      else if (M.avgStr != null) {
+        title = {};
+        const N = 4000;
+        for (let r = 0; r < N; r++) {
+          const win = {}, part = {};
+          for (const d of Bets.DE8) {
+            const side = (sp) => sp.seed || (sp.W ? win[sp.W] : (part[sp.L].red === win[sp.L] ? part[sp.L].blue : part[sp.L].red));
+            const red = side(d.red), blue = side(d.blue), p = winProb(M.S(red), M.S(blue));
+            part[d.id] = { red, blue };
+            if (d.id !== "f") { const a = actual[d.id]; win[d.id] = a === red || a === blue ? a : (Math.random() < p ? red : blue); continue; }
+            let wr = finWins[red] || 0, wb = finWins[blue] || 0;
+            while (wr < 2 && wb < 2) { if (Math.random() < p) wr++; else wb++; }
+            win.f = wr >= 2 ? red : blue;
+          }
+          title[win.f] = (title[win.f] || 0) + 1;
+        }
+        Object.keys(title).forEach((k) => { title[k] /= N; });
+      }
+      const status = (seed) => {
+        if (champ === seed) return ["champ", "Champions"];
+        if (finalist === seed) return ["final", "Finalists"];
+        if (out[seed]) return ["out", "Out · Lower R" + out[seed]];
+        if (parts.f && (parts.f.red === seed || parts.f.blue === seed)) return ["alive", "In the finals"];
+        if (!started) return ["ready", "Ready"];
+        return ["alive", dropped[seed] ? "Alive · Lower" : "Alive · Upper"];
+      };
+      const nextLabel = !nextId ? "" : nextId === "f" ? `Finals · Game ${fins.filter(played).length + 1}`
+        : (() => { const d = Bets.DE8.find((x) => x.id === nextId); return `M${nextId.slice(1)} · ${d.lower ? "Lower" : "Upper"} R${d.round}`; })();
+      return { sets, fins, actual, parts, finWins, rec, champ, finalist, started, nextId, nextLabel, repOf, title, status,
+        winnerOf: (id) => (id === "f" ? champ : actual[id] || null), sidesOf: (id) => parts[id] || {} };
+    };
+
+    // Older formats: every level (QF, SF, F…) is a column of best-of-3 series.
+    const seriesModel = (M) => {
+      const levels = ["ef", "qf", "sf", "f"].filter((l) => ms.some((m) => m.comp_level === l));
+      const rec = {}, out = {};
+      M.A.forEach((a) => { rec[a.seed] = { w: 0, l: 0 }; });
+      const cols = levels.map((l) => {
+        const by = {};
+        ms.filter((m) => m.comp_level === l).forEach((m) => { const n = m.set_number || 1; (by[n] = by[n] || []).push(m); });
+        return Object.keys(by).map(Number).sort((a, b) => a - b).map((n) => {
+          const games = by[n].sort((a, b) => a.match_number - b.match_number);
+          const red = M.sideSeed(games[0], "red"), blue = M.sideSeed(games[0], "blue"), wins = {};
+          games.forEach((m) => { const w = M.winSeed(m); if (!w) return; wins[w] = (wins[w] || 0) + 1; const lo = w === red ? blue : red; if (rec[w]) rec[w].w++; if (rec[lo]) rec[lo].l++; });
+          const wr = wins[red] || 0, wb = wins[blue] || 0, done = games.every(played);
+          const winner = wr >= 2 ? red : wb >= 2 ? blue : done && wr !== wb ? (wr > wb ? red : blue) : null;
+          if (winner) out[winner === red ? blue : red] = l;
+          return { id: l + n, level: l, n, games, red, blue, wins, winner, bo3: games.length > 1 || l !== "ef" };
+        });
+      });
+      const sets = cols.flat(), byId = {};
+      sets.forEach((s) => { byId[s.id] = s; });
+      const last = cols.length && levels[levels.length - 1] === "f" ? cols[cols.length - 1][0] : null;
+      const champ = last && last.winner, finalist = champ ? (champ === last.red ? last.blue : last.red) : null;
+      const started = sets.some((s) => s.games.some(played));
+      const nx = sets.find((s) => !s.winner && s.red && s.blue && s.games.some((m) => !played(m)));
+      const title = champ ? { [champ]: 1 } : null;
+      const status = (seed) => {
+        if (champ === seed) return ["champ", "Champions"];
+        if (finalist === seed) return ["final", "Finalists"];
+        if (out[seed]) return ["out", "Out · " + PB_LEVEL[out[seed]]];
+        return started ? ["alive", "Alive"] : ["ready", "Ready"];
+      };
+      const repOf = {};
+      sets.forEach((s) => { repOf[s.id] = s.games.find((m) => !played(m)) && !s.winner ? s.games.find((m) => !played(m)) : (s.games.filter(played).pop() || s.games[0]); });
+      return { cols, levels, byId, rec, champ, finalist, started, title, status, repOf,
+        finWins: last ? last.wins : {}, nextId: nx ? nx.id : null,
+        nextLabel: nx ? `${COMP_LABEL[nx.level]}${nx.level === "f" ? "" : nx.n} · Game ${nx.games.filter(played).length + 1}` : "",
+        winnerOf: (id) => (byId[id] || {}).winner || null, sidesOf: (id) => byId[id] || {} };
+    };
+
+    /* ---- the top: champion, or the next match + who's favored -------------- */
+    const allySide = (M, seed, color) => {
+      const a = M.A[seed - 1]; if (!a) return `<div class="pb-ns ${color} tbd"><span class="pb-ns-seed">TBD</span></div>`;
+      return `<button type="button" class="pb-ns ${color}${a.ours ? " ours" : ""}" data-al="${seed}">
+        <span class="pb-ns-seed">Alliance ${seed}</span>
+        <span class="pb-ns-avs">${a.picks.slice(0, 3).map((t) => `<img class="team-avatar" data-avatar="${esc(t)}" data-ally="${color}" alt="" />`).join("")}</span>
+        <b>${a.picks.slice(0, 3).map(esc).join(" · ")}</b></button>`;
+    };
+    const heroHTML = (M, X) => {
+      if (X.champ) {
+        const a = M.A[X.champ - 1], f = X.finalist, fw = X.finWins || {};
+        return `<section class="pb-hero champ">
+          <span class="pb-trophy" aria-hidden="true">${icon("trophy")}</span>
+          <span class="pb-eyebrow">${icon("trophy")} Event champions</span>
+          <h3 class="pb-title">Alliance ${a.seed}</h3>
+          <div class="pb-champs">${a.picks.concat(a.backup ? [a.backup] : []).map((t, i) => `<button type="button" class="pb-ch${t === OUR_TEAM ? " me" : ""}" data-team="${esc(t)}" style="--i:${i}">
+            <img class="team-avatar" data-avatar="${esc(t)}" alt="" /><b>${esc(t)}</b><span>${esc(ctx.nameOf(t) || "")}</span></button>`).join("")}</div>
+          ${f ? `<p class="pb-sub">Beat Alliance ${f} in the finals${fw[X.champ] ? `, ${fw[X.champ] || 0}–${fw[f] || 0}` : ""}</p>` : ""}
+        </section>`;
+      }
+      const sides = X.nextId ? X.sidesOf(X.nextId) : {}, o = X.nextId ? M.odds(sides.red, sides.blue) : null;
+      const when = X.nextId ? timeOf(X.repOf[X.nextId]) : "";
+      const fav = X.title ? Object.entries(X.title).sort((x, y) => y[1] - x[1])[0] : null;
+      const ours = M.A.find((a) => a.ours);
+      const facts = [
+        fav ? `<button type="button" class="pb-fact" data-al="${fav[0]}">${icon("star")}<span>Favorite</span><b>Alliance ${fav[0]} · ${oddsTxt(fav[1])}</b></button>` : "",
+        ours ? `<button type="button" class="pb-fact ours" data-al="${ours.seed}">${icon("bagel")}<span>${OUR_TEAM} is on</span><b>Alliance ${ours.seed} · ${esc(X.status(ours.seed)[1])}</b></button>`
+          : ctx.teams.some((t) => String(t.team_number) === OUR_TEAM) ? `<span class="pb-fact dim">${icon("bagel")}<span>${OUR_TEAM}</span><b>Not on an alliance</b></span>` : "",
+      ].join("");
+      return `<section class="pb-hero">
+        <span class="pb-eyebrow"><i class="pb-live${X.started ? "" : " idle"}"></i>${X.started ? "Playoffs in progress" : "Alliances are set"}${when ? ` · ${esc(when)}` : ""}</span>
+        <h3 class="pb-title">${X.nextId ? `${X.started ? "Up next" : "First match"} <b>${esc(X.nextLabel)}</b>` : "Waiting on the next match"}</h3>
+        ${X.nextId ? `<div class="pb-next">${allySide(M, sides.red, "red")}
+          <div class="pb-vs">${o != null ? `<b class="r">${pct(o)}%</b>` : ""}<span>vs</span>${o != null ? `<b class="b">${100 - pct(o)}%</b>` : ""}</div>
+          ${allySide(M, sides.blue, "blue")}</div>
+          ${o != null ? `<div class="pb-nbar" title="Win odds from alliance strength"><i style="width:${pct(o)}%"></i></div>` : ""}` : ""}
+        ${facts ? `<div class="pb-facts">${facts}</div>` : ""}
+      </section>`;
+    };
+    const powerHTML = (M, X) => {
+      const list = [...M.A].sort((x, y) => (y.str ?? -1) - (x.str ?? -1));
+      return `<section class="card pb-power">
+        <div class="sr-head"><h3>${icon("chart")} Alliance strength</h3><span class="hint">top 3 EPA added up${X.title && !X.champ ? " · title odds" : ""}</span></div>
+        <div class="pb-pw-list">${list.map((a, i) => {
+          const st = X.status(a.seed)[0], o = X.title && !X.champ && st !== "out" ? X.title[a.seed] || 0 : null;
+          return `<button type="button" class="pb-pw ${st}${a.ours ? " ours" : ""}" data-al="${a.seed}" style="--i:${i}">
+            <span class="pb-pw-seed">A${a.seed}</span>
+            <img class="team-avatar" data-avatar="${esc(a.picks[0] || "")}" alt="" />
+            <span class="pb-pw-bar"><i style="width:${a.str != null ? Math.max(6, Math.round(a.str / M.maxStr * 100)) : 0}%"></i><b>${a.picks.slice(0, 3).map(esc).join(" · ")}</b><em>${a.str != null ? (a.partial ? "~" : "") + fmt(a.str, 0) : "–"}</em></span>
+            ${o != null ? `<span class="pb-pw-odds">${oddsTxt(o)}</span>` : st === "champ" ? `<span class="pb-pw-odds">${icon("trophy")}</span>` : st === "out" ? `<span class="pb-pw-odds out">out</span>` : ""}
+          </button>`;
+        }).join("")}</div>
+      </section>`;
+    };
+
+    /* ---- the bracket itself ------------------------------------------------ */
+    const geo = () => {
+      const avail = Math.max(300, (root.clientWidth || 900) - 34);
+      const G = avail < 700 ? 30 : 46;
+      return { G, W: Math.max(164, Math.min(240, Math.floor((avail - 4 * G) / 5))) };
+    };
+    const rowY = (top, side) => top + PB.PAD + PB.HEAD + PB.GAP + PB.ROW / 2 + (side === "blue" ? PB.ROW + PB.GAP : 0);
+    const elbow = (x1, y1, x2, y2, G) => {
+      const xm = x2 - G / 2;
+      if (Math.abs(y2 - y1) < 1) return `M${x1} ${y1}H${x2}`;
+      const r = Math.min(9, Math.abs(y2 - y1) / 2), s = y2 > y1 ? 1 : -1;
+      return `M${x1} ${y1}H${xm - r}Q${xm} ${y1} ${xm} ${y1 + s * r}V${y2 - s * r}Q${xm} ${y2} ${xm + r} ${y2}H${x2}`;
+    };
+    const layoutDE8 = (W, G) => {
+      const S = PB.H + 18, LBL = 32, yU = LBL, yL = yU + 3 * S + PB.H + 26 + LBL, pos = {};
+      Object.entries(PB_POS).forEach(([id, [c, r, low]]) => { pos[id] = { x: c * (W + G), y: Math.round((low ? yL : yU) + r * S) }; });
+      const mid = (pos.m11.y + pos.m13.y + PB.H) / 2;
+      pos.f = { x: 4 * (W + G), y: Math.round(mid - (PB.H + PB.GAMES) / 2) };
+      const edges = [];
+      Bets.DE8.forEach((d) => ["red", "blue"].forEach((side) => { const sp = d[side]; if (sp.W) edges.push({ from: sp.W, to: d.id, side }); }));
+      return { pos, edges, width: 5 * W + 4 * G, height: yL + S + PB.H + 8,
+        labels: [{ x: 0, y: 0, t: "Upper bracket", ic: "trophy" }, { x: 0, y: yL - LBL, t: "Lower bracket", ic: "chevron-down" }, { x: pos.f.x, y: pos.f.y - LBL, t: "Finals", ic: "star" }] };
+    };
+    const layoutSeries = (X, W, G) => {
+      const S = PB.H + 18, LBL = 32, pos = {}, edges = [], cols = X.cols;
+      const h0 = Math.max(...cols.map((c) => c.length));
+      cols.forEach((col, k) => col.forEach((s, i) => {
+        const prev = cols[k - 1];
+        const y = k && prev.length === col.length * 2 ? (pos[prev[2 * i].id].y + pos[prev[2 * i + 1].id].y) / 2
+          : LBL + ((h0 - col.length) * S) / 2 + i * S;
+        pos[s.id] = { x: k * (W + G), y: Math.round(y) };
+        if (k && prev.length === col.length * 2) [prev[2 * i], prev[2 * i + 1]].forEach((f, j) => {
+          edges.push({ from: f.id, to: s.id, side: f.winner && f.winner === s.blue ? "blue" : f.winner && f.winner === s.red ? "red" : j ? "blue" : "red" });
+        });
+      }));
+      return { pos, edges, width: cols.length * (W + G) - G, height: LBL + h0 * S + 8,
+        labels: X.levels.map((l, k) => ({ x: k * (W + G), y: 0, t: PB_LEVEL[l], ic: l === "f" ? "star" : "trophy" })) };
+    };
+    const boxHTML = (M, X, id, p) => {
+      const isF = id === "f" && M.de8, d = M.de8 ? Bets.DE8.find((x) => x.id === id) : null, ser = M.de8 ? null : X.byId[id];
+      const sides = X.sidesOf(id), w = X.winnerOf(id), rep = X.repOf[id];
+      const next = X.nextId === id, ours = [sides.red, sides.blue].some((s) => s && M.A[s - 1] && M.A[s - 1].ours);
+      const o = !w && sides.red && sides.blue ? M.odds(sides.red, sides.blue) : null;
+      const showSc = isF ? X.fins.some(played) : ser && ser.bo3 ? ser.games.some(played) : played(rep);
+      const score = (seed) => (isF ? X.finWins[seed] || 0 : ser ? (ser.bo3 ? ser.wins[seed] || 0 : M.scoreOf(rep, seed)) : M.scoreOf(rep, seed));
+      const tbdText = (side) => {
+        const sp = d && d[side];
+        return sp && sp.W ? `Winner of M${sp.W.slice(1)}` : sp && sp.L ? `Loser of M${sp.L.slice(1)}` : "TBD";
+      };
+      const row = (side) => {
+        const seed = sides[side];
+        if (!seed) return `<div class="pb-row tbd ${side}"><span class="pb-seed">?</span><span class="pb-tm"><small>${esc(tbdText(side))}</small></span></div>`;
+        const a = M.A[seed - 1] || { picks: [] }, cap = a.picks[0] || "", sc = score(seed);
+        return `<button type="button" class="pb-row ${side}${w ? (w === seed ? " win" : " lose") : ""}${a.ours ? " ours" : ""}" data-open="${id}">
+          <span class="pb-seed">${seed}</span><img class="team-avatar" data-avatar="${esc(cap)}" data-ally="${side}" alt="" />
+          <span class="pb-tm"><b>${esc(cap)}</b><small>${a.picks.slice(1, 3).map(esc).join(" · ")}</small></span>
+          <span class="pb-sc">${showSc && sc != null ? sc : ""}</span></button>`;
+      };
+      const head = isF ? `<b>Finals</b><span>Best of 3</span>`
+        : d ? `<b>M${id.slice(1)}</b><span>${d.lower ? "Lower" : "Upper"} · R${d.round}</span>`
+        : `<b>${COMP_LABEL[ser.level]}${ser.level === "f" ? "" : ser.n}</b><span>${ser.bo3 ? "Best of 3" : ""}</span>`;
+      const tag = w ? "Final" : next ? (X.started ? "Up next" : "First up") : rep && !played(rep) ? timeOf(rep) : "";
+      const games = isF ? `<div class="pb-games">${[0, 1, 2].map((g) => {
+        const m = X.fins[g];
+        if (!m) return `<span class="pb-g none">G${g + 1}</span>`;
+        if (!played(m)) return `<button type="button" class="pb-g up" data-game="${g}">G${g + 1}<small>${esc(timeOf(m) || "soon")}</small></button>`;
+        const gw = M.winSeed(m), rs = M.scoreOf(m, sides.red), bs = M.scoreOf(m, sides.blue);
+        return `<button type="button" class="pb-g ${gw && gw === sides.red ? "r" : gw ? "b" : ""}" data-game="${g}">G${g + 1}<small>${rs ?? "–"}–${bs ?? "–"}</small></button>`;
+      }).join("")}</div>` : "";
+      return `<div class="pb-m${d && d.lower ? " lower" : ""}${isF ? " fin" : ""}${w ? " done" : ""}${next ? " next" : ""}${ours ? " ours" : ""}" style="left:${p.x}px;top:${p.y}px">
+        <div class="pb-mh">${head}${tag ? `<em>${esc(tag)}</em>` : ""}</div>
+        ${row("red")}${row("blue")}${games}
+        ${o != null ? `<span class="pb-prob" title="Red ${pct(o)}% · Blue ${100 - pct(o)}% (from alliance strength)"><i style="width:${pct(o)}%"></i></span>` : ""}
+      </div>`;
+    };
+    const drawBoard = (M, X) => {
+      const sc = $(".pb-scroll", root); if (!sc) return;
+      const keep = sc.scrollLeft, first = intro, { W, G } = geo();
+      lastW = W;
+      if (!M.de8 && !X.cols.length) {
+        sc.innerHTML = `<div class="pb-wait">${icon("calendar")} The bracket appears once the playoff matches are scheduled.</div>`;
+        return;
+      }
+      const L = M.de8 ? layoutDE8(W, G) : layoutSeries(X, W, G);
+      const lines = L.edges.map((e) => {
+        const a = L.pos[e.from], b = L.pos[e.to], won = X.winnerOf(e.from);
+        const ours = won && M.A[won - 1] && M.A[won - 1].ours;
+        return `<path class="pb-ln${won ? " on" : ""}${ours ? " ours" : ""}" pathLength="1" style="--d:${Math.round(a.x / (W + G)) * 160}"
+          d="${elbow(a.x + W, a.y + PB.H / 2, b.x, rowY(b.y, e.side), G)}" />`;
+      }).join("");
+      sc.innerHTML = `<div class="pb-canvas${first ? " intro" : ""}" style="--w:${W}px;width:${L.width}px;height:${L.height}px">
+        <svg class="pb-lines" width="${L.width}" height="${L.height}" viewBox="0 0 ${L.width} ${L.height}" aria-hidden="true">${lines}</svg>
+        ${L.labels.map((l) => `<span class="pb-lbl" style="left:${l.x}px;top:${l.y}px">${icon(l.ic)} ${esc(l.t)}</span>`).join("")}
+        ${Object.entries(L.pos).map(([id, p]) => boxHTML(M, X, id, p)).join("")}
+      </div>`;
+      intro = false;
+      sc.classList.toggle("over", sc.scrollWidth > sc.clientWidth + 4);
+      sc.scrollLeft = keep;
+      // on a phone, start the bracket at the match that's up next
+      const nb = first && $(".pb-m.next", sc);
+      if (nb && nb.offsetLeft + W > sc.clientWidth) sc.scrollLeft = Math.max(0, nb.offsetLeft - 24);
+      paintAvatars(sc, M.A.map((a) => a.picks[0]).filter(Boolean));
+      sc.onclick = (ev) => {
+        const g = ev.target.closest("[data-game]"), r = ev.target.closest("[data-open]");
+        const m = g ? X.fins[+g.dataset.game] : r ? X.repOf[r.dataset.open] : null;
+        if (m) openMatchDetail(full(m), ctx);
+        else if (r) toast("This match isn't on the schedule yet");
+      };
+    };
+
+    /* ---- every alliance ------------------------------------------------------ */
+    const alliesHTML = (M, X) => {
+      const odds = (a) => (X.title ? X.title[a.seed] || 0 : 0);
+      const order = [...M.A].sort(pbSort === "str" ? (x, y) => (y.str ?? -1) - (x.str ?? -1)
+        : pbSort === "odds" ? (x, y) => odds(y) - odds(x) || x.seed - y.seed : (x, y) => x.seed - y.seed);
+      return order.map((a, i) => {
+        const [st, stl] = X.status(a.seed), r = X.rec[a.seed], o = X.title && !X.champ && st !== "out" ? odds(a) : null;
+        const team = (t, role, cls = "") => {
+          const e = ctx.teamEpa(t);
+          return `<button type="button" class="pb-t${t === OUR_TEAM ? " me" : ""}${cls}" data-team="${esc(t)}">
+            <img class="team-avatar" data-avatar="${esc(t)}" alt="" />
+            <span class="pb-tid"><b>${esc(t)}</b><small>${esc(role)}</small></span>
+            <span class="pb-nm">${esc(ctx.nameOf(t) || "")}</span><em>${e != null ? fmt(e, 0) : "–"}<small>EPA</small></em></button>`;
+        };
+        return `<article class="pb-al ${st}${a.ours ? " ours" : ""}" id="pbA${a.seed}" data-tfill="${esc(a.picks[0] || "")}" style="--i:${i}">
+          <header><span class="pb-al-seed">${a.seed}</span>
+            <span class="pb-al-h"><b>Alliance ${a.seed}</b><span class="pb-st ${st}">${st === "alive" ? "<i></i>" : st === "champ" ? icon("trophy") : ""}${esc(stl)}${r && r.w + r.l ? ` · ${r.w}–${r.l}` : ""}</span></span>
+            ${o != null ? `<span class="pb-al-odds"><b>${oddsTxt(o)}</b><small>title odds</small></span>` : ""}</header>
+          <div class="pb-al-teams">${a.picks.map((t, j) => team(t, PB_ROLE[j] || "Pick")).join("")}${a.backup ? team(a.backup, "Backup", " bk") : ""}</div>
+          <footer class="pb-str"><span>Strength</span><span class="pb-meter"><i style="width:${a.str != null ? Math.max(4, Math.round(a.str / M.maxStr * 100)) : 0}%"></i></span>
+            <b>${a.str != null ? (a.partial ? "~" : "") + fmt(a.str, 0) : "–"}</b>${a.power ? `<span class="pb-pow" title="Strength rank among the 8 alliances">#${a.power}</span>` : ""}</footer>
+        </article>`;
+      }).join("");
+    };
+    const drawAllies = (M, X) => {
+      const el = $("#pbAllies", root); if (!el) return;
+      el.innerHTML = alliesHTML(M, X);
+      const ts = M.A.flatMap((a) => a.picks.concat(a.backup ? [a.backup] : []));
+      paintAvatars(el, ts); paintTeamFills(el, M.A.map((a) => a.picks[0]).filter(Boolean));
+      $$("[data-team]", el).forEach((b) => b.onclick = () => ctx.openTeam(b.dataset.team));
+    };
+    const jumpTo = (seed) => {
+      const card = $("#pbA" + seed, root); if (!card) return;
+      card.scrollIntoView({ behavior: "smooth", block: "center" });
+      card.classList.remove("flash"); void card.offsetWidth; card.classList.add("flash");
+    };
+
+    const drawEmpty = () => {
+      root.innerHTML = `<div class="card pb-empty">${emptyState("bracket", "No alliances yet", "The bracket fills in once alliance selection is done.")}<div id="pbCaps"></div></div>`;
+      ctx.rankings().then(({ rankings }) => {
+        const top = (rankings || []).slice(0, 8).map((r) => tn(r.team_key)), el = $("#pbCaps", root);
+        if (!el || !top.length) return;
+        el.innerHTML = `<p class="hint">If selection started now, the captains would be:</p>
+          <div class="pb-caps">${top.map((t, i) => `<button type="button" class="pb-cap${t === OUR_TEAM ? " me" : ""}" data-team="${esc(t)}"><span>${i + 1}</span><img class="team-avatar" data-avatar="${esc(t)}" alt="" /><b>${esc(t)}</b></button>`).join("")}</div>`;
+        paintAvatars(el, top);
+        $$("[data-team]", el).forEach((b) => b.onclick = () => ctx.openTeam(b.dataset.team));
+      }).catch(() => {});
+    };
+    const draw = () => {
+      if (!root.isConnected) return;
+      if (!alliances.length) { cur = null; drawEmpty(); return; }
+      const M = model(), X = M.de8 ? de8Model(M) : seriesModel(M);
+      const keep = ($(".pb-scroll", root) || {}).scrollLeft || 0;
+      cur = { M, X };
+      root.innerHTML = `
+        <div class="pb-top">${heroHTML(M, X)}${powerHTML(M, X)}</div>
+        <section class="card pb-board">
+          <div class="sr-head"><h3>${icon("bracket")} Playoff bracket</h3><span class="hint">${M.de8 ? "Double elimination · " : ""}tap a match for scores and video<span class="pb-swipe"> · swipe to see it all</span></span></div>
+          <div class="pb-scroll"></div>
+        </section>
+        <section class="pb-allies-wrap">
+          <div class="sr-head pb-ah"><h3>${icon("teams")} Alliances</h3>
+            <div class="seg" id="pbSort">${[["seed", "Seed"], ["str", "Strength"]].concat(X.title && !X.champ ? [["odds", "Title odds"]] : []).map(([k, l]) => `<button data-s="${k}" class="${pbSort === k ? "on" : ""}">${l}</button>`).join("")}</div></div>
+          <div class="pb-allies" id="pbAllies"></div>
+        </section>`;
+      drawBoard(M, X);
+      const sc = $(".pb-scroll", root); if (sc && keep) sc.scrollLeft = keep;
+      drawAllies(M, X);
+      const top = $(".pb-top", root);
+      paintAvatars(top, M.A.flatMap((a) => a.picks.concat(a.backup ? [a.backup] : [])));
+      $$("[data-team]", top).forEach((b) => b.onclick = () => ctx.openTeam(b.dataset.team));
+      $$("[data-al]", top).forEach((b) => b.onclick = () => jumpTo(b.dataset.al));
+      $$("#pbSort button", root).forEach((b) => b.onclick = () => {
+        pbSort = b.dataset.s;
+        $$("#pbSort button", root).forEach((x) => x.classList.toggle("on", x === b));
+        drawAllies(M, X);
+      });
+    };
+
+    // Live: while the playoffs run, check for new results every minute (TBA only, no cloud reads).
+    const load = async () => {
+      const [al, inf, live] = await Promise.all([
+        ctx.alliances().catch(() => null),
+        info || ctx.info().catch(() => null),
+        ctx.liveMatches ? ctx.liveMatches().catch(() => null) : null,
+      ]);
+      if (!root.isConnected) return;
+      if (al) alliances = al;
+      if (inf) info = inf;
+      if (live && live.length) ms = live;
+      if (!al && !loaded) { root.innerHTML = `<div class="card">${emptyState("globe", "The bracket needs wifi", "Connect once to load this event's alliances and playoff matches.")}</div>`; return; }
+      loaded = true;
+      draw();
+      clearTimeout(timer);
+      if (ctx.live && !(cur && cur.X.champ)) {
+        const tick = () => { if (!root.isConnected) return; if (document.hidden) timer = setTimeout(tick, 60000); else load(); };
+        timer = setTimeout(tick, 60000);
+      }
+    };
+    if (window.ResizeObserver) {
+      const ro = new ResizeObserver(() => {
+        if (!root.isConnected) { ro.disconnect(); return; }
+        if (cur && geo().W !== lastW) drawBoard(cur.M, cur.X);
+      });
+      ro.observe(root);
+      window.addEventListener("hashchange", () => { ro.disconnect(); clearTimeout(timer); }, { once: true });
+    }
+    if (ctx.seasonEpa && !Object.keys(ctx.seasonEpa).length) {
+      API.sbYearLeaderboard(GAME.season).then((res) => {
+        (res && res.rows || []).forEach((r) => { ctx.seasonEpa[String(r.team)] = r.epa; });
+        if (loaded && Object.keys(ctx.seasonEpa).length) draw();
+      }).catch(() => {});
+    }
+    load();
+  }
+
   /* ---- A match: win odds, final score, both alliances, and the match video ----- */
-  function openMatchDetail(m, ctx) {
+  function openMatchDetail(m, ctx, opts = {}) {
     if (!m) return;
     ctx = ctx || currentEventCtx();
     // Win probability from the event's EPA. If any team on the match has no EPA → "Unknown".
@@ -2136,7 +2588,7 @@
     const blueEpa = blue.reduce((s, t) => s + (epaOf(t) || 0), 0);
     const pct = haveAll ? Math.round(winProb(redEpa, blueEpa) * 100) : null;
     const played = m.alliances && m.alliances.red.score >= 0 && m.alliances.blue.score >= 0;
-    const label = (COMP_LABEL[m.comp_level] || "") + (m.comp_level === "qm" ? m.match_number : (m.set_number || m.match_number));
+    const label = (COMP_LABEL[m.comp_level] || "") + (m.comp_level === "qm" || m.comp_level === "f" ? m.match_number : (m.set_number || m.match_number));
     const maxEpa = Math.max(1, ...[...red, ...blue].map((t) => epaOf(t) || 0));
     const vids = ytVideos(m);
     const teamLine = (t, col) => {
@@ -2186,6 +2638,7 @@
           const old = $(".md-play, .md-frame", box); if (old) old.replaceWith(frame);
         };
         const pb = $(".md-play", body); if (pb) pb.onclick = () => play(pb.dataset.yt);
+        if (opts.play && pb) play(pb.dataset.yt);
         $$("[data-ytswap]", body).forEach((b) => b.onclick = () => { $$("[data-ytswap]", body).forEach((x) => x.classList.toggle("on", x === b)); play(b.dataset.ytswap); });
       });
   }
