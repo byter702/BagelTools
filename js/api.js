@@ -465,6 +465,10 @@ const API = (() => {
       rankings: (rankings && rankings.rankings) || [], matches: matches || [], awards: awards || [], epa };
   }
 
+  // Auto Scout: an event's full matches (videos + score breakdowns) and one match, in memory.
+  const eventMatchesFull = (key) => tbaMem("/event/" + key + "/matches").then((d) => Array.isArray(d) ? d : []);
+  const matchFull = (key) => tbaMem("/match/" + key);
+
   // A team's whole history on TBA: every award and every event, all years.
   async function getTeamHistory(team) {
     const tk = teamKey(team);
@@ -725,6 +729,7 @@ const API = (() => {
 
   return { teamKey, verifyKey, hasKey, effectiveKey, getEvents, getEventTeams, getEventMatches, getTeamColors, getTeamAvatar, sbEpa,
     getTeamInfo, getTeamYears, eventsForYear, sbEventPreds, eventMatchesLive, eventsFullYear, eventAlliances, eventInfo, teamEventKeys, eventOprs,
+    eventMatchesFull, matchFull,
     hasNexusKey, nexusPitMap,
     // Prime 702-aware reads (pass raw = true for the real numbers: betting, fantasy)
     sbYearLeaderboard: (year, maxAgeMs, raw) => sbYearLeaderboard(year, maxAgeMs).then((r) => raw ? r : Object.assign({}, r, { rows: primeRows(r.rows) })),

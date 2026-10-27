@@ -746,6 +746,7 @@
         ["members", "Members", "teams", "Leaderboard and roster"]] },
     { id: "scouting", name: "Scouting", icon: "binoculars", accent: "#5bbde2", blurb: "Scout every match and pit, then build the pick list",
       pages: [["match", "Match Scouting", "binoculars", "Scout a robot in a match"], ["pit", "Pit Scouting", "robot", "Robot specs and photos"],
+        ["autoscout", "Auto Scout", "scan", "Let the match video scout"],
         ["data", "Data", "database", "Search, rankings, spreadsheet"], ["picklist", "Pick List", "picklist", "Alliances, Mashup, Bracket"]] },
     { id: "statistics", name: "Statistics", icon: "chart", accent: "#4ade80", blurb: "Teams, events and matchups by the numbers",
       pages: [["bagelstats", "Teams", "podium", "EPA leaderboards"], ["compare", "Compare", "compare", "Head to head + charts"],
@@ -899,6 +900,7 @@
     events: { title: "Events", render: renderEventsSearchPage },
     match: { title: "Match Scouting", render: renderMatch },
     pit: { title: "Pit Scouting", render: renderPit },
+    autoscout: { title: "Auto Scout", render: (root) => (window.AutoScoutUI ? AutoScoutUI.page(root) : (root.innerHTML = `<div class="card">${emptyState("scan", "Auto Scout didn't load", "Reload the page to try again.")}</div>`)) },
     bagelstats: { title: "Teams", render: renderBagelStats },
     compare: { title: "Compare", render: renderCompare },
     matchup: { title: "Matchup", render: renderMatchup },
@@ -941,6 +943,7 @@
     // clear both on every page change so they can't take over the next page.
     ["onclick", "onchange", "onkeydown", "ondragstart", "ondragover", "ondragleave", "ondrop"].forEach((k) => { view[k] = null; });
     if (window.PartsUI && PartsUI.unmount) PartsUI.unmount();
+    if (window.AutoScoutUI) AutoScoutUI.unmount(); // stops its video, capture and tracking
     view.innerHTML = "";
     route.render(view);
     view.focus({ preventScroll: true });
@@ -8137,6 +8140,7 @@
     initGlobalSearch();
     // BagelParts (the Parts app) draws with the same helpers as every other page
     PartsUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, notifyBanner, pageHero, emptyState, scouterAvatar, allScouters, scouterName });
+    if (window.AutoScoutUI) AutoScoutUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, pageHero, emptyState, nameFor, shortEventName, paintTeamFills, scoutDisplayName });
     const userName = $("#userChipName");
     if (userName) { userName.title = "View your profile"; userName.onclick = () => { location.hash = "#/profile"; }; }
     const chip = $("#eventChip");

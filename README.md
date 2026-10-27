@@ -25,7 +25,7 @@ shows just that app's pages. Everything shares one account, the member roster, a
 
 | App | Pages | What it's for |
 |-----|-------|---------------|
-| **Scouting** (cyan) | Match Scouting · Pit Scouting · Data · Pick List | Scout every match and pit, read the data, and build the pick list. |
+| **Scouting** (cyan) | Match Scouting · Pit Scouting · Auto Scout · Data · Pick List | Scout every match and pit, read the data, and build the pick list. |
 | **Statistics** (green) | Teams (BagelStats) · Compare · Event · Events · Matchup | Teams, events and matchups by the numbers (EPA, ranks, charts, predictions). |
 | **Parts** (orange) | Board · My Parts · Guide | Track every robot part from Onshape to done, and who's building it. |
 | **Fantasy** (pink) | Fantasy Alliance | Season-long draft league paid in Bagel Bucks. |
@@ -94,6 +94,12 @@ their browser (localStorage); with cloud sync on, everyone's data aggregates aut
   climb, defense, driver skill, notes). Edit or delete past records.
 - **Pit Scouting** — robot capabilities (drivetrain, scoring/intake, climb, auto, role). Questions are
   editable in Admin. Shows a live **Nexus pit map** (green = scouted) when a Nexus key and map are available.
+- **Auto Scout** (beta) — scouts a match from its TBA video. Pick an event and match, connect the YouTube video
+  (Chrome/Edge tab capture, "Share this tab") or load a video file, tag the start of auto, the field view, both hubs
+  and the six robots, and it follows every robot and every fuel launch (live ETA, field map, pauses to ask when it
+  loses a robot). Each alliance's official TBA hub count is split period by period by who was shooting, so robots
+  add up to the scoreboard; climbs come from TBA. Shots, accuracy and balls/second are video estimates. Engine:
+  `js/autoscout.js` (no libraries); page: `js/autoscout-ui.js`; per-season settings: `GAME.autoScout`.
 - **Data** — an always-visible, searchable spreadsheet of every match (and a tab for pits), plus export
   (JSON / CSV), import (merge or replace) and clear-data. With cloud sync it shows the whole team's data.
 - **Pick List** — **Alliance selection** (8 alliances × Captain/1st/2nd/3rd, EPA-sorted pool, trait filter,
@@ -141,6 +147,7 @@ World/State numbers come from Statbotics (needs internet; everything else keeps 
 | Accounts, Bagel Bucks, presence, leaderboard | **Firestore** (`scouters/…`) — account-based, shared across devices |
 | Bets, alliance predictions, brackets, Fantasy | **Firestore** (transactions) — `betlines`, `bets`, `apreds`, `brackets`, `fantasy` |
 | Parts board + files | **Firestore** — `bparts/state` (one transactional doc) + `bpfiles/` (chunked PDFs/DXFs) |
+| Auto Scout results | This browser, plus **Firestore** `autoscout/{matchKey}` (per season) when the rules allow it |
 
 The shared features (Parts, Bets, Fantasy, team leaderboard/presence) need Firebase configured; scouting by
 itself works with none of it.

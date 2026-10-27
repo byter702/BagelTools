@@ -625,6 +625,24 @@
       }, function (e) { log("device watch failed", e); });
     },
 
+    // ---- Auto Scout results (autoscout/{matchKey}, per season) ----
+    // Read on demand (no listener). These go through their own error path, not log():
+    // until the rules list "autoscout", a refusal here must not raise the red
+    // "database blocked" bar for everyone; the results stay on this device instead.
+    saveAutoScout: function (doc) {
+      if (!this.enabled() || !doc || !doc.key) return Promise.reject(new Error("cloud off"));
+      return db.collection(col("autoscout")).doc(doc.key).set(clean(doc));
+    },
+    listAutoScout: function (eventKey) {
+      if (!this.enabled() || !eventKey) return Promise.resolve([]);
+      return db.collection(col("autoscout")).where("event", "==", eventKey).get()
+        .then(function (snap) { return snap.docs.map(function (d) { return d.data(); }); });
+    },
+    deleteAutoScout: function (key) {
+      if (!this.enabled() || !key) return Promise.reject(new Error("cloud off"));
+      return db.collection(col("autoscout")).doc(key).delete();
+    },
+
     onFormChange: function (cb) { if (typeof cb === "function") formCbs.push(cb); },
     // Members an admin trusts to open/lock match betting from Match Scouting (all seasons).
     getBetHosts: function () { var d = cache.config.betHosts; return (d && Array.isArray(d.ids)) ? d.ids : []; },

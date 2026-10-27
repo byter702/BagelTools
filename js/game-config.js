@@ -128,6 +128,50 @@ const GAME_2026 = {
     { key: "pitNotes", label: "Comments", type: "text",
       placeholder: "Team demeanor, reliability, anything useful…" },
   ],
+
+  /* --------------------------------------------------------------------------
+     AUTO SCOUT (Scouting → Auto Scout): what the video engine looks for this
+     season and how to read the official result from TBA.
+     ------------------------------------------------------------------------ */
+  autoScout: {
+    piece: "yellow",          // FUEL is a yellow ball (pixel test in autoscout.js)
+    pieceName: "Fuel", pieceNamePlural: "Fuel", goalName: "Hub",
+    field: { w: 651.2, h: 317.7 },   // inches
+    // Match clock in seconds from the start of auto. Auto is 20 s, then ~3 s while
+    // the field switches to teleop; pieces still in the air then count for auto.
+    periods: [
+      { id: "auto",       label: "Auto",       short: "AUTO",       start: 0,   end: 23 },
+      { id: "transition", label: "Transition", short: "TRANSITION", start: 23,  end: 33 },
+      { id: "shift1",     label: "Shift 1",    short: "SHIFT 1",    start: 33,  end: 58 },
+      { id: "shift2",     label: "Shift 2",    short: "SHIFT 2",    start: 58,  end: 83 },
+      { id: "shift3",     label: "Shift 3",    short: "SHIFT 3",    start: 83,  end: 108 },
+      { id: "shift4",     label: "Shift 4",    short: "SHIFT 4",    start: 108, end: 133 },
+      { id: "endgame",    label: "End Game",   short: "END GAME",   start: 133, end: 166 },
+    ],
+    // TBA score_breakdown → hub counts per period, plus each robot's tower climb.
+    official(match) {
+      const TOWER_END = { Level1: 10, Level2: 20, Level3: 30 }, TOWER_AUTO = { Level1: 15 };
+      const out = {};
+      ["red", "blue"].forEach((al) => {
+        const b = match && match.score_breakdown && match.score_breakdown[al];
+        if (!b || !b.hubScore) return;
+        const h = b.hubScore;
+        out[al] = {
+          periods: { auto: h.autoCount || 0, transition: h.transitionCount || 0, shift1: h.shift1Count || 0, shift2: h.shift2Count || 0,
+            shift3: h.shift3Count || 0, shift4: h.shift4Count || 0, endgame: h.endgameCount || 0 },
+          total: h.totalCount || 0,
+          piecePoints: 1, // each FUEL in an active hub is 1 point (inactive-hub FUEL isn't counted)
+          climbs: [1, 2, 3].map((n) => (TOWER_AUTO[b["autoTowerRobot" + n]] || 0) + (TOWER_END[b["endGameTowerRobot" + n]] || 0)),
+          climbLabels: [1, 2, 3].map((n) => {
+            const a = b["autoTowerRobot" + n], e = b["endGameTowerRobot" + n];
+            const lv = (s) => (s && s !== "None" ? "L" + String(s).replace(/\D/g, "") : "");
+            return [lv(a) && "Auto " + lv(a), lv(e)].filter(Boolean).join(" + ");
+          }),
+        };
+      });
+      return out;
+    },
+  },
 };
 
 // 2027 "BIOCORE" (revealed at Kickoff, Jan 9 2027). Until then the defaults are a
@@ -153,6 +197,8 @@ const GAME_2027 = {
     { key: "weight", label: "Robot weight (lbs)", type: "number", min: 0 },
     { key: "pitNotes", label: "Comments", type: "text", placeholder: "Team demeanor, reliability, anything useful…" },
   ],
+  // Auto Scout gets its BIOCORE entry (game piece, periods, TBA fields) after kickoff.
+  autoScout: null,
 };
 
 const SEASONS = [GAME_2026, GAME_2027];
