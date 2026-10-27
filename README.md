@@ -54,7 +54,7 @@ Wager BB on the event as it happens:
 - **Playoff brackets** — a 100 BB entry to fill an 8-alliance double-elimination bracket.
 
 ### Fantasy Alliance
-A season-long fantasy league (by grade: Freshman / Sophomore / Junior / Senior). Draft a roster of robots
+A season-long fantasy league (by grade: Freshman / Sophomore & Junior / Senior). Draft a roster of robots
 with a fantasy budget, earn weekly prizes and chase a grand prize, all paid in BB. Stalled draft turns
 auto-pick after a few minutes so a league never stalls.
 

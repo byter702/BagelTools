@@ -27,7 +27,10 @@ const Bets = (() => {
   const FP_START = 200, ROSTER = 4, MIN_PRICE = 5;
   const WEEK_WIN = 250, GRAND_PRIZE = 10000;
   const AUTO_PICK_MS = 3 * 60 * 1000;   // a stalled draft turn can be auto-picked after 3 min
-  const LEAGUES = [["freshman", "Freshman"], ["sophomore", "Sophomore"], ["junior", "Junior"], ["senior", "Senior"]];
+  const LEAGUES = [["freshman", "Freshman"], ["sophomore", "Sophomore & Junior"], ["senior", "Senior"]];
+  // Leagues folded into another one: Junior joined Sophomore (2026-10-26). Its doc id
+  // stays "sophomore" so nothing already saved there moves.
+  const MERGED = { junior: "sophomore" };
 
   // 8-alliance double elimination (TBA playoff_type 10): sf1..sf13, then finals.
   const DE8 = [
@@ -67,7 +70,30 @@ const Bets = (() => {
       const next = {};
       snap.docs.forEach((d) => { next[d.id] = d.data(); });
       cache[name] = next; ready[name] = true; fire();
+      if (name === "fantasy" && !snap.metadata.fromCache) foldLeagues(watchedYear);
     }, (e) => { console.warn("[Bets] listen " + name + " failed", e); ready[name] = true; fire(); });
+  }
+  // Anyone still in a folded league moves into the one it joined, the first time any
+  // device sees them there, as long as neither league has started its draft.
+  const foldTried = {};
+  function foldLeagues(year) {
+    const d = db(); if (!d || !year) return;
+    Object.entries(MERGED).forEach(([from, to]) => {
+      const F = cache.fantasy[leagueId(year, from)];
+      if (!F || !Object.keys(F.members || {}).length || foldTried[year + from]) return;
+      foldTried[year + from] = true;
+      const fromRef = d.collection("fantasy").doc(leagueId(year, from)), toRef = d.collection("fantasy").doc(leagueId(year, to));
+      d.runTransaction(async (tx) => {
+        const fs = await tx.get(fromRef), ts = await tx.get(toRef);
+        const A = fs.exists ? fs.data() : null;
+        if (!A || !Object.keys(A.members || {}).length || (A.draft && A.draft.status !== "waiting")) return;
+        const B = ts.exists ? ts.data() : { id: leagueId(year, to), year, league: to, members: {}, draft: { status: "waiting" }, rosters: {}, trades: [], weeks: {} };
+        if (B.draft && B.draft.status !== "waiting") return;
+        Object.entries(A.members).forEach(([uid, m]) => { if (!B.members[uid]) B.members[uid] = m; });
+        tx.set(toRef, B);
+        tx.set(fromRef, Object.assign({}, A, { members: {}, mergedInto: to }));
+      }).catch((e) => { foldTried[year + from] = false; console.warn("[Bets] league merge failed", e); });
+    });
   }
   let watchedEvent = null, watchedUser = null, watchedYear = null;
   // Live data for one event (+ my own bets everywhere, + the fantasy year).
