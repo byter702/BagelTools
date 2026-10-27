@@ -258,7 +258,7 @@ const AutoScoutUI = (() => {
       t0: null, roi: { x: 0, y: 0.09, w: 1, h: 0.91 }, hubs: { red: null, blue: null }, corners: null,
       robots: [...teamsOf(m, "red").map((t, i) => ({ team: t, alliance: "red", slot: i })), ...teamsOf(m, "blue").map((t, i) => ({ team: t, alliance: "blue", slot: i }))]
         .map((r) => ({ ...r, box: null, color: SLOT[r.alliance][r.slot] })),
-      tool: "start", pick: null, speed: 1, ask: ls.get("ask", true), asked: {}, lostPrompt: null, check: false, lastPhase: null,
+      tool: "start", pick: null, speed: 1, wide: false, ask: ls.get("ask", true), asked: {}, lostPrompt: null, check: false, lastPhase: null,
       engine: null, running: false, paused: false, proc: null, lastImg: null, t: 0, rate: [], startWall: 0, lastPanel: 0,
       destroyed: false, raf: 0,
     };
@@ -305,9 +305,11 @@ const AutoScoutUI = (() => {
     }
     function contentRect() {
       const w = stage.clientWidth, h = stage.clientHeight, [fw, fh] = frameSize();
-      if (st.kind !== "file") return { x: 0, y: 0, w, h };
-      const s = Math.min(w / fw, h / fh);
-      return { x: (w - fw * s) / 2, y: (h - fh * s) / 2, w: fw * s, h: fh * s };
+      let r = { x: 0, y: 0, w, h };
+      if (st.kind === "file") { const s = Math.min(w / fw, h / fh); r = { x: (w - fw * s) / 2, y: (h - fh * s) / 2, w: fw * s, h: fh * s }; }
+      // zoomed out (field corners, robots off screen): the frame shrinks to leave room around it
+      if (st.step === "tag" && st.wide) { const k = 0.62; r = { x: r.x + r.w * (1 - k) / 2, y: r.y + r.h * (1 - k) / 2, w: r.w * k, h: r.h * k }; }
+      return r;
     }
     const toScreen = (nx, ny) => { const c = contentRect(); return [c.x + nx * c.w, c.y + ny * c.h]; };
     const toNorm = (sx, sy) => { const c = contentRect(); return [(sx - c.x) / c.w, (sy - c.y) / c.h]; };
@@ -488,9 +490,11 @@ const AutoScoutUI = (() => {
       const r = st.robots[i]; if (!r || !st.still) return;
       const p = procOf(st.still, st.roi);
       const [x, y] = nToP(p, st.roi, nx, ny);
-      const others = st.robots.filter((o) => o.box);
+      const others = st.robots.filter((o) => o.box && !o.off);
       const avgW = others.length ? others.reduce((s, o) => s + boxNToP(p, st.roi, o.box).w, 0) / others.length : p.W * 0.065;
-      r.box = boxPToN(p, st.roi, AutoScout.snapBox(p.img.data, p.W, p.H, x, y, r.alliance, avgW));
+      r.off = nx < 0 || nx > 1 || ny < 0 || ny > 1;
+      // off screen: a box at the tap (it's found when it drives in); on screen: snap to its bumper
+      r.box = boxPToN(p, st.roi, r.off ? { x: x - avgW / 2, y: y - avgW * 0.45, w: avgW, h: avgW * 0.9 } : AutoScout.snapBox(p.img.data, p.W, p.H, x, y, r.alliance, avgW));
       // next untagged robot
       const next = st.robots.findIndex((o) => !o.box);
       st.pick = next >= 0 ? next : null;
@@ -562,7 +566,9 @@ const AutoScoutUI = (() => {
         if (st.step === "tag" || (st.step === "track" && st.paused)) ovl.style.cursor = st.pick != null ? "crosshair" : "default";
         return;
       }
-      let [nx, ny] = toNorm(sx, sy); nx = clamp(nx, 0, 1); ny = clamp(ny, 0, 1);
+      let [nx, ny] = toNorm(sx, sy);
+      const outside = drag.kind === "box-move" || drag.kind === "box-size" || drag.kind === "corner";
+      nx = clamp(nx, outside ? -0.6 : 0, outside ? 1.6 : 1); ny = clamp(ny, outside ? -0.6 : 0, outside ? 1.6 : 1);
       if (drag.kind === "roi-corner") {
         const r = st.roi, x2 = r.x + r.w, y2 = r.y + r.h;
         let [ax, ay, bx, by] = [r.x, r.y, x2, y2];
@@ -571,7 +577,10 @@ const AutoScoutUI = (() => {
       } else if (drag.kind === "roi-move") {
         st.roi.x = clamp(nx - drag.ox, 0, 1 - st.roi.w); st.roi.y = clamp(ny - drag.oy, 0, 1 - st.roi.h);
       } else if (drag.kind === "hub") { st.hubs[drag.al].x = nx; st.hubs[drag.al].y = ny; }
-      else if (drag.kind === "box-move") { const b = st.robots[drag.i].box; b.x = clamp(nx - drag.ox, 0, 1 - b.w); b.y = clamp(ny - drag.oy, 0, 1 - b.h); }
+      else if (drag.kind === "box-move") {
+        const rb = st.robots[drag.i], b = rb.box; b.x = nx - drag.ox; b.y = ny - drag.oy;
+        const cx = b.x + b.w / 2, cy = b.y + b.h / 2; rb.off = cx < 0 || cx > 1 || cy < 0 || cy > 1;
+      }
       else if (drag.kind === "box-size") { const b = st.robots[drag.i].box; b.w = Math.max(0.012, nx - b.x); b.h = Math.max(0.012, ny - b.y); }
       else if (drag.kind === "corner") st.corners[drag.k] = [nx, ny];
       redraw();
@@ -598,7 +607,19 @@ const AutoScoutUI = (() => {
       octx.clearRect(0, 0, W, Hh);
       const tagging = st.step === "tag", tracking = st.step === "track";
       // tags go on the still of the start of auto (it also hides YouTube's pause overlays)
-      if (tagging && st.tool !== "start" && st.still) { const c = contentRect(); octx.drawImage(st.still, c.x, c.y, c.w, c.h); }
+      if (tagging && st.tool !== "start" && st.still) {
+        const c = contentRect();
+        if (st.wide) { // everything around the video is "off screen"
+          octx.fillStyle = "#070b10"; octx.fillRect(0, 0, W, Hh);
+          octx.strokeStyle = "rgba(255,255,255,.05)"; octx.lineWidth = 1;
+          for (let gx = -Hh; gx < W; gx += 14) { octx.beginPath(); octx.moveTo(gx, Hh); octx.lineTo(gx + Hh, 0); octx.stroke(); }
+        }
+        octx.drawImage(st.still, c.x, c.y, c.w, c.h);
+        if (st.wide) {
+          octx.strokeStyle = "rgba(255,255,255,.5)"; octx.setLineDash([5, 4]); octx.strokeRect(c.x, c.y, c.w, c.h); octx.setLineDash([]);
+          octx.font = "700 11px Orbitron, system-ui, sans-serif"; octx.fillStyle = "rgba(255,255,255,.55)"; octx.fillText("OFF SCREEN", 10, 18);
+        }
+      }
       if (!tagging && !tracking) return;
       if (tracking && st.cap && st.cap.mode === "crop" && !st.paused) return; // our drawing would be read back in
       const r = st.roi, [rx, ry] = toScreen(r.x, r.y), [rx2, ry2] = toScreen(r.x + r.w, r.y + r.h);
@@ -629,7 +650,14 @@ const AutoScoutUI = (() => {
       const view = tracking && st.view;
       st.robots.forEach((rb, i) => {
         let b = rb.box, est = false, firing = 0;
-        if (view && view.robots[i] && st.procGeo) { b = boxPToN(st.procGeo, st.roi, view.robots[i]); est = view.robots[i].est; firing = view.robots[i].firing; }
+        if (view && view.robots[i] && st.procGeo) {
+          b = boxPToN(st.procGeo, st.roi, view.robots[i]); est = view.robots[i].est; firing = view.robots[i].firing;
+          if (view.robots[i].off) { // pinned to the edge of the video, pointing where it is
+            const [ex, ey] = toScreen(clamp(b.x + b.w / 2, 0.01, 0.95), clamp(b.y + b.h / 2, 0.04, 0.97));
+            label(Math.min(ex, W - 120), ey, rb.team + " · off screen", rb.color, { size: 10 });
+            return;
+          }
+        }
         if (!b) return;
         const [x, y] = toScreen(b.x, b.y), [x2, y2] = toScreen(b.x + b.w, b.y + b.h);
         const picked = st.pick === i;
@@ -729,9 +757,10 @@ const AutoScoutUI = (() => {
           <div class="as-chips">${["red", "blue"].map((al) => `<button class="as-chip ${al}${st.pick === al ? " on" : ""}${st.hubs[al] ? " set" : ""}" data-hub="${al}">${st.hubs[al] ? icon("check") : icon("target")} ${al === "red" ? "Red" : "Blue"} hub</button>`).join("")}</div>
           <label class="as-range">Ring size <input type="range" id="asHubR" min="0.012" max="0.07" step="0.002" value="${(st.hubs.red || st.hubs.blue || { r: 0.028 }).r}" /></label>`,
         robots: `<p class="hint">Pick a team, then tap that robot on the video. The box snaps to its bumper; drag it or its corner to fix it.</p>
-          <div class="as-chips robots">${st.robots.map((r, i) => `<button class="as-chip rb${st.pick === i ? " on" : ""}${r.box ? " set" : ""}" data-rb="${i}" style="--c:${r.color}"><i></i>${esc(r.team)}${r.box ? icon("check") : ""}</button>`).join("")}</div>
-          <div class="btn-row"><button class="btn ghost sm" id="asAuto">${icon("zap")} Find robots for me</button>${st.robots.some((r) => r.box) ? `<button class="btn ghost sm" id="asClearRb">${icon("x")} Clear</button>` : ""}</div>`,
-        corners: `<p class="hint">Drag the four dots onto the corners of the field carpet (far left, far right, near right, near left). It only places robots on the field map.</p>
+          <div class="as-chips robots">${st.robots.map((r, i) => `<button class="as-chip rb${st.pick === i ? " on" : ""}${r.box ? " set" : ""}" data-rb="${i}" style="--c:${r.color}" title="${r.off ? "Starts off screen" : ""}"><i></i>${esc(r.team)}${r.off ? icon("eye-off") : r.box ? icon("check") : ""}</button>`).join("")}</div>
+          <p class="hint">${icon("eye-off")} Robot not in the video yet? Zoom out and tap roughly where it is, outside the picture. Auto Scout picks it up when it drives in.</p>
+          <div class="btn-row"><button class="btn ghost sm" id="asWide">${icon(st.wide ? "x" : "eye-off")} ${st.wide ? "Back to normal view" : "Zoom out"}</button><button class="btn ghost sm" id="asAuto">${icon("zap")} Find robots for me</button>${st.robots.some((r) => r.box) ? `<button class="btn ghost sm" id="asClearRb">${icon("x")} Clear</button>` : ""}</div>`,
+        corners: `<p class="hint">Drag the four dots onto the corners of the field carpet (far left, far right, near right, near left). The view is zoomed out: if a corner is cut off, put its dot where it would be outside the picture.</p>
           <div class="btn-row"><button class="btn ghost sm" id="asCornersReset">Reset</button></div>`,
       };
       {
@@ -753,11 +782,13 @@ const AutoScoutUI = (() => {
     }
     function wireTag() {
       $$("[data-tool]", side).forEach((b) => b.onclick = async () => {
-        const k = b.dataset.tool;
-        st.tool = st.tool === k ? k : k;
+        const k = b.dataset.tool, prev = st.tool;
+        st.tool = k;
         if (k === "robots" && st.pick == null) { const n = st.robots.findIndex((r) => !r.box); st.pick = n >= 0 ? n : null; }
         if (k === "hubs") st.pick = st.hubs.red ? (st.hubs.blue ? null : "blue") : "red";
         if (k === "corners" && !st.corners) st.corners = defaultCorners();
+        // corners always zoom out; the robots tool keeps its own zoom toggle
+        st.wide = k === "corners" || (k === "robots" && prev === "robots" && st.wide);
         drawSide(); redraw();
       });
       $$("[data-seek]", side).forEach((b) => b.onclick = () => { seek(videoTime() + Number(b.dataset.seek)); setTimeout(updateClock, 150); });
@@ -783,7 +814,8 @@ const AutoScoutUI = (() => {
       const hr = $("#asHubR", side); if (hr) hr.oninput = () => { ["red", "blue"].forEach((al) => { if (st.hubs[al]) st.hubs[al].r = Number(hr.value); }); redraw(); };
       $$("[data-rb]", side).forEach((b) => b.onclick = () => { const i = Number(b.dataset.rb); st.pick = st.pick === i ? null : i; drawSide(true); redraw(); });
       const af = $("#asAuto", side); if (af) af.onclick = () => { autoFind(); drawSide(); redraw(); };
-      const cr = $("#asClearRb", side); if (cr) cr.onclick = () => { st.robots.forEach((r) => { r.box = null; }); st.pick = 0; drawSide(); redraw(); };
+      const wd = $("#asWide", side); if (wd) wd.onclick = () => { st.wide = !st.wide; drawSide(); redraw(); };
+      const cr = $("#asClearRb", side); if (cr) cr.onclick = () => { st.robots.forEach((r) => { r.box = null; r.off = false; }); st.pick = 0; drawSide(); redraw(); };
       const cc = $("#asCornersReset", side); if (cc) cc.onclick = () => { st.corners = defaultCorners(); redraw(); };
       $$("[data-speed]", side).forEach((b) => b.onclick = () => { st.speed = Number(b.dataset.speed); drawSide(); });
       const ask = $("#asAsk", side); if (ask) ask.onchange = () => { st.ask = ask.checked; ls.set("ask", st.ask); };
@@ -804,8 +836,9 @@ const AutoScoutUI = (() => {
       const corners = (st.corners || defaultCorners()).map(([a, b]) => nToP(p, roi, a, b));
       st.engine = AutoScout.create({
         width: p.W, height: p.H, piece: cfg.piece, field: cfg.field, periods: cfg.periods, hubs, corners,
-        robots: st.robots.map((r) => ({ team: r.team, alliance: r.alliance, box: boxNToP(p, roi, r.box) })),
+        robots: st.robots.map((r) => ({ team: r.team, alliance: r.alliance, box: boxNToP(p, roi, r.box), off: !!r.off })),
       });
+      st.wide = false;
       st.step = "track"; st.running = true; st.paused = false; st.pick = null; st.t = 0; st.rate = []; st.view = null; st.lastFrame = null; st.lastProcT = null; st.skip = 0;
       st.lastPhase = null; st.check = false; st.lostPrompt = null; st.asked = {}; st.lastProcWall = performance.now() + 3000;
       drawSide(); redraw();

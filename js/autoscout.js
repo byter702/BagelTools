@@ -189,12 +189,20 @@ const AutoScout = (() => {
       for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) { const i = y * W + x; if (fieldCol[i] === 1) { if (!fieldCol[i - 1]) fieldCol[i - 1] = 2; if (!fieldCol[i + 1]) fieldCol[i + 1] = 2; if (!fieldCol[i - W]) fieldCol[i - W] = 2; if (!fieldCol[i + W]) fieldCol[i + W] = 2; } }
     }
     const near1 = new Uint8Array(N), rowTmp = new Uint8Array(N); // near1: piece-colored within a few px a frame ago
+    const lumaOld = new Uint8Array(N); let lumaAt = -99; // a luma copy, refreshed every 5 frames
+    let M_ON = true, M_THR = 2, M_FRAMES = 120, M_LOST = false, B_EMA = false;
     const stack = new Int32Array(N);
     const thumbNow = new Float32Array(32 * 18), thumbRef = new Float32Array(32 * 18);
     let warm = 0, frames = 0, skipped = 0, lastT = null, haveRef = false, offField = false, px = null;
     const fieldW = (cfg.field && cfg.field.w) || 651.2, fieldH = (cfg.field && cfg.field.h) || 317.7;
     const Hm = cfg.corners ? homography(cfg.corners, [[0, 0], [fieldW, 0], [fieldW, fieldH], [0, fieldH]]) : null;
     const periods = cfg.periods || [];
+    // is image point (x, y) on (or just off) the field? (no corners set: anywhere)
+    const onField = (x, y) => {
+      if (!Hm) return true;
+      const [X, Y] = applyH(Hm, x, y);
+      return X > -0.06 * fieldW && X < 1.06 * fieldW && Y > -0.12 * fieldH && Y < 1.15 * fieldH;
+    };
     const periodAt = (t) => { for (const p of periods) if (t < p.end) return p.id; return periods.length ? periods[periods.length - 1].id : "match"; };
     const gImg = 9.81 * (W / 16.5) * 0.8; // gravity in px/s² (roughly; the field is ~16.5 m across)
 
@@ -216,9 +224,10 @@ const AutoScout = (() => {
     const robots = cfg.robots.map((r, i) => {
       const b = r.box, cy = b.y + b.h / 2;
       return {
-        i, team: String(r.team), alliance: r.alliance,
+        i, team: String(r.team), alliance: r.alliance, pend: null,
+        off: !!r.off || b.x + b.w / 2 < 0 || b.x + b.w / 2 > W || b.y + b.h / 2 < 0 || b.y + b.h / 2 > H,
         cx: b.x + b.w / 2, cy, vx: 0, vy: 0, k: b.w / sizeAt(cy), aspect: b.h / b.w,
-        tpl: new Float32Array(TS), cost: 18, matches: 0, lost: 0, weak: 0, bumper: 0, bOff: [0, 0.04], sure: 0, seen: 0,
+        tpl: new Float32Array(TS), gal: [], galAt: 0, still: 0, h0: new Float32Array(64), hr: new Float32Array(64), colorBad: 0, cost: 18, matches: 0, lost: 0, weak: 0, bumper: 0, bOff: [0, 0.04], sure: 0, seen: 0,
         launched: 0, byPeriod: {}, series: [], heat: new Float32Array(72), makes: 0, misses: 0, passes: 0, traced: 0,
         path: [], // where it was on the field: [t, X, Y, estimated?]
       };
@@ -245,8 +254,14 @@ const AutoScout = (() => {
       for (let i = 0; i < GRID; i++) { offX[i] = Math.round(-w / 2 + (i + 0.5) * w / GRID); offY[i] = Math.round(-h / 2 + (i + 0.5) * h / GRID); }
     }
     // Mean |difference| per channel between a robot's template and the box at (cx, cy).
-    function costAt(r, cx, cy) {
-      const x0 = Math.round(cx), y0 = Math.round(cy), t = r.tpl;
+    // how well a robot's gallery of looks matches the box at (cx, cy): the best one
+    function lookAt(r, cx, cy) {
+      let best = costAt(r.tpl, cx, cy);
+      for (let g = 0; g < r.gal.length; g++) { const c = costAt(r.gal[g], cx, cy); if (c < best) best = c; }
+      return best;
+    }
+    function costAt(t, cx, cy) {
+      const x0 = Math.round(cx), y0 = Math.round(cy);
       let s = 0, o = 0;
       for (let j = 0; j < GRID; j++) {
         const y = y0 + offY[j];
@@ -277,10 +292,33 @@ const AutoScout = (() => {
       return tot ? hit / tot : 0;
     }
     function seedTemplate(r) {
+      if (r.off) { r.gal = []; r.galAt = frames; return; } // nothing to see yet
       const b = boxOf(r);
       sampleInto(r.tpl, r.cx, r.cy, b.w, b.h);
+      r.gal = [Float32Array.from(r.tpl)]; r.galAt = frames;
+      histAt(r.cx, r.cy, b.w, b.h, r.h0); r.hr.set(r.h0);
       r.bumper = Math.min(0.5, bumperAt(r, r.cx, r.cy, b.w, b.h));
       r.cost = 18; r.lost = 0; r.weak = 0;
+    }
+    function searchAll(r, taken) {
+      const cands = [];
+      for (let cy = 0; cy < H; cy += 6 * u) {
+        const w = r.k * sizeAt(cy), h = w * r.aspect, step = Math.max(4, Math.round(w / 5));
+        setOffsets(w, h);
+        for (let cx = w / 2; cx < W - w / 2; cx += step) {
+          if (!onField(cx, cy + h / 2)) continue; // robots stand on the carpet
+          // not where another robot already is
+          if (robots.some((o, k) => o !== r && taken[k] && Math.abs(taken[k].x - cx) < taken[k].w * 0.6 && Math.abs(taken[k].y - cy) < taken[k].h * 0.6)) continue;
+          cands.push([lookAt(r, cx, cy), cx, cy, w, h]);
+        }
+      }
+      cands.sort((a, b) => a[0] - b[0]);
+      let best = null;
+      cands.slice(0, 6).forEach(([c, cx, cy, w, h]) => {
+        const col = colorMatch(r, cx, cy, w, h);
+        if (!best || c + (1 - col) * 40 < best.c + (1 - best.col) * 40) best = { x: cx, y: cy, c, col, w, h, reseed: false };
+      });
+      return best;
     }
     function trackRobot(r, dt) {
       const px0 = r.cx + r.vx * dt, py0 = r.cy + r.vy * dt;
@@ -289,7 +327,7 @@ const AutoScout = (() => {
       const w = r.k * sizeAt(py0), h = w * r.aspect;
       setOffsets(w, h);
       const score = (cx, cy) => {
-        let c = costAt(r, cx, cy);
+        let c = lookAt(r, cx, cy);
         if (r.bumper > 0.12) c += 20 * Math.max(0, r.bumper - bumperAt(r, cx, cy, w, h)) / r.bumper;
         const d = Math.hypot(cx - px0, cy - py0) / R;
         return c + 6 * d * d;
@@ -322,13 +360,67 @@ const AutoScout = (() => {
             if (on) { if (x - last > 1 && x - last <= 4 * u) for (let k = last + 1; k < x; k++) mov[row + k] = 1; last = x; }
           }
         }
-        blobs(mov, W, H, stack, Math.round(14 * u * u), Math.round(1800 * u * u)).forEach((b) => {
+        const parts = [];
+        blobs(mov, W, H, stack, Math.round(10 * u * u), Math.round(2600 * u * u)).forEach((b) => {
           const bw = b.x1 - b.x0 + 1, bh = b.y1 - b.y0 + 1, ew = sizeAt(b.y1);
-          if (bw < 0.3 * ew || bw > 1.45 * ew || bh > 0.75 * ew || bw / bh < 1.2 || b.n / (bw * bh) < 0.28) return;
-          out[al].push({ x: (b.x0 + b.x1) / 2, yb: b.y1, w: bw });
+          if (bw < 0.2 * ew || bw > 2.4 * ew || bh > 0.8 * ew || bw / bh < 1.1 || b.n / (bw * bh) < 0.25) return;
+          parts.push({ x0: b.x0, x1: b.x1, yb: b.y1, n: b.n });
+        });
+        // a robot's front and side bumpers (or a bumper cut by its number) are one robot
+        for (let changed = true; changed;) {
+          changed = false;
+          for (let a = 0; a < parts.length && !changed; a++) for (let c = a + 1; c < parts.length; c++) {
+            const A = parts[a], B = parts[c], ew = sizeAt(Math.max(A.yb, B.yb));
+            const gap = Math.max(A.x0, B.x0) - Math.min(A.x1, B.x1);
+            if (gap > 0.25 * ew || Math.abs(A.yb - B.yb) > 0.35 * ew || Math.max(A.x1, B.x1) - Math.min(A.x0, B.x0) > 1.3 * ew) continue;
+            A.x0 = Math.min(A.x0, B.x0); A.x1 = Math.max(A.x1, B.x1); A.yb = Math.max(A.yb, B.yb); A.n += B.n;
+            parts.splice(c, 1); changed = true; break;
+          }
+        }
+        parts.forEach((b) => {
+          const bw = b.x1 - b.x0 + 1, ew = sizeAt(b.yb);
+          if (bw < 0.3 * ew || !onField((b.x0 + b.x1) / 2, b.yb)) return;
+          // two robots side by side make one long strip: split it
+          if (bw > 1.6 * ew) { const q = bw / 4; out[al].push({ x: b.x0 + q, yb: b.yb, w: bw / 2, n: b.n / 2 }, { x: b.x1 - q, yb: b.yb, w: bw / 2, n: b.n / 2 }); }
+          else out[al].push({ x: (b.x0 + b.x1) / 2, yb: b.yb, w: bw, n: b.n });
         });
       });
       return out;
+    }
+    // A robot's colors as a 64-bin histogram (4 levels per channel) over its box, fuel
+    // left out. It stays the same when the robot turns, unlike its look.
+    const floorBin = new Uint8Array(64);
+    function learnFloor() {
+      const hs = new Float32Array(64); let n = 0;
+      for (let y = 0; y < H; y += 3) for (let x = 0; x < W; x += 3) {
+        const k = y * W + x; if (cls[k] & 7) continue;
+        const q = k * 4; hs[(px[q] >> 6) * 16 + (px[q + 1] >> 6) * 4 + (px[q + 2] >> 6)]++; n++;
+      }
+      const order = [...hs.keys()].sort((a, b) => hs[b] - hs[a]);
+      let cum = 0;
+      for (let k = 0; k < 3 && cum < n * 0.55; k++) { floorBin[order[k]] = 1; cum += hs[order[k]]; }
+    }
+    function histAt(cx, cy, w, h, out) {
+      out.fill(0); let n = 0;
+      for (let j = 0; j < 12; j++) {
+        const y = Math.round(cy - h * 0.45 + (j + 0.5) * h * 0.9 / 12); if (y < 0 || y >= H) continue;
+        for (let i = 0; i < 12; i++) {
+          const x = Math.round(cx - w * 0.45 + (i + 0.5) * w * 0.9 / 12); if (x < 0 || x >= W) continue;
+          const k = y * W + x; if (cls[k] & 1) continue;
+          const q = k * 4, bin = (px[q] >> 6) * 16 + (px[q + 1] >> 6) * 4 + (px[q + 2] >> 6);
+          if (floorBin[bin]) continue;
+          out[bin]++; n++;
+        }
+      }
+      if (n) for (let k = 0; k < 64; k++) out[k] /= n;
+      return n >= 12 ? n : 0;
+    }
+    const bc = (a, b) => { let t = 0; for (let k = 0; k < 64; k++) t += Math.sqrt(a[k] * b[k]); return t; };
+    const hTmp = new Float32Array(64);
+    // how much the box at (cx, cy) has this robot's colors (1 = the same)
+    function colorMatch(r, cx, cy, w, h) {
+      if (!histAt(cx, cy, w, h, hTmp)) return 0.5;
+      return Math.max(bc(hTmp, r.h0), bc(hTmp, r.hr));
     }
     // where a robot's bumper sits in its box (measured when it's tagged)
     function bumperOffset(r, dets) {
@@ -337,40 +429,74 @@ const AutoScout = (() => {
         .sort((p, q) => q.w - p.w)[0];
       r.bOff = inBox ? [(r.cx - inBox.x) / b.w, (b.y + b.h - inBox.yb) / b.h] : [0, 0.04];
     }
+    let W_DIST = 12, W_LOOK = 0.5, W_COL = 60, W_NONE = 22;
     function updateRobots(dt) {
       const dets = detectBumpers();
-      // 1. bumpers: each robot takes the best free bumper near where it should be
+      // 1. Bumpers. Every pairing of a robot with a bumper gets a cost (how far from where
+      //    the robot should be, how much the box there has its colors and its look, how big
+      //    the bumper is); the cheapest way to pair up the whole alliance wins, so two
+      //    robots crossing paths can't both grab the nearest bumper.
       const res = robots.map(() => null);
       ["red", "blue"].forEach((al) => {
-        const team = robots.filter((r) => r.alliance === al), cand = dets[al], pairs = [];
-        team.forEach((r) => {
+        const team = robots.filter((r) => r.alliance === al && !r.off), cand = dets[al];
+        const C = team.map((r) => {
           const px0 = r.cx + r.vx * dt, py0 = r.cy + r.vy * dt, w = r.k * sizeAt(py0), h = w * r.aspect;
-          const R = r.lost > 15 ? 2.2 * w : Math.max(0.55 * w, Math.min(1.6 * w, 0.5 * w + 1.5 * Math.hypot(r.vx, r.vy) * dt));
+          const lostFor = Math.max(r.lost, r.weak);
+          const gate = lostFor > 30 ? 3 * w : lostFor > 8 ? 1.6 * w : Math.max(0.6 * w, Math.min(1.8 * w, 0.55 * w + 1.5 * Math.hypot(r.vx, r.vy) * dt));
           const ex = px0 - r.bOff[0] * w, eyb = py0 + h / 2 - r.bOff[1] * h; // predicted bumper spot
-          cand.forEach((d, di) => {
+          setOffsets(w, h);
+          return cand.map((d) => {
             const dist = Math.hypot(d.x - ex, (d.yb - eyb) * 1.3);
-            if (dist > R) return;
+            if (dist > gate) return null;
             const cx = d.x + r.bOff[0] * w, cy = d.yb + r.bOff[1] * h - h / 2;
-            setOffsets(w, h);
-            const look = costAt(r, cx, cy);
-            pairs.push([dist / R * 18 + look + Math.abs(d.w / w - 0.8) * 10, r.i, di, cx, cy, look, w, h]);
+            const look = lookAt(r, cx, cy), col = colorMatch(r, cx, cy, w, h);
+            const cost = (dist / gate) ** 2 * (lostFor > 30 ? W_DIST / 3 : W_DIST) + Math.max(0, look - r.cost) * W_LOOK + Math.max(0, 0.85 - col) * W_COL + Math.abs(d.w / (0.85 * w) - 1) * 5;
+            return { cost, cx, cy, look, col, w, h };
           });
         });
-        pairs.sort((a, b) => a[0] - b[0]);
-        const usedR = new Set(), usedD = new Set();
-        pairs.forEach(([, ri, di, cx, cy, look, w, h]) => {
-          if (usedR.has(ri) || usedD.has(di)) return;
-          const r = robots[ri];
-          // a bumper that doesn't look like this robot is someone else's... unless this robot
-          // is lost: then its old look is stale, and the nearest free bumper of its color wins
-          const lostLong = r.lost > 15 || r.weak > 15;
-          if (look > (lostLong ? 75 : Math.min(Math.max(r.cost * 2.2, r.cost + 26), 64))) return;
-          usedR.add(ri); usedD.add(di);
-          res[ri] = { x: cx, y: cy, c: look, w, h, bumper: true, reseed: lostLong };
+        const none = team.map((r) => (Math.max(r.lost, r.weak) > 8 ? W_NONE + 10 : W_NONE)); // cost of "no bumper for this robot"
+        let best = Infinity, pick = null;
+        const cur = [], used = new Set();
+        (function go(k, sum) {
+          if (sum >= best) return;
+          if (k === team.length) { best = sum; pick = cur.slice(); return; }
+          cur[k] = -1; go(k + 1, sum + none[k]);
+          C[k].forEach((c, di) => { if (!c || used.has(di)) return; used.add(di); cur[k] = di; go(k + 1, sum + c.cost); used.delete(di); });
+        })(0, 0);
+        (pick || []).forEach((di, k) => {
+          if (di < 0) return;
+          const c = C[k][di], r = team[k];
+          res[r.i] = { x: c.cx, y: c.cy, c: c.look, col: c.col, w: c.w, h: c.h, bumper: true, reseed: Math.max(r.lost, r.weak) > 30 && c.col > 0.55 };
         });
+        // A robot that's off screen comes back as a bumper of its color that nobody else
+        // owns and that stays put for a quarter second (nearest to where it was last).
+        const offs = robots.filter((r) => r.alliance === al && r.off);
+        if (offs.length) {
+          const free = cand.filter((d, di) => !(pick || []).includes(di) &&
+            !team.some((r) => Math.hypot(d.x - r.cx, d.yb - (r.cy + r.k * sizeAt(r.cy) * r.aspect / 2)) < 1.2 * r.k * sizeAt(r.cy)));
+          offs.forEach((r) => {
+            let bd = null, bdist = Infinity;
+            free.forEach((d) => { const dd = Math.hypot(d.x - r.cx, d.yb - r.cy); if (dd < bdist) { bdist = dd; bd = d; } });
+            if (!bd) { r.pend = null; return; }
+            const ew = sizeAt(bd.yb);
+            r.pend = r.pend && Math.hypot(bd.x - r.pend.x, bd.yb - r.pend.yb) < 0.6 * ew ? { x: bd.x, yb: bd.yb, n: r.pend.n + 1 } : { x: bd.x, yb: bd.yb, n: 1 };
+            free.splice(free.indexOf(bd), 1);
+            if (r.pend.n < 8) return;
+            const w = r.k * sizeAt(bd.yb), h = w * r.aspect;
+            r.off = false; r.pend = null; r.cx = bd.x; r.cy = bd.yb + 0.04 * h - h / 2; r.vx = 0; r.vy = 0;
+            r.lost = 0; r.weak = 0; r.colorBad = 0; r.matches = 0; r.cost = 18; r.bOff = [0, 0.04];
+            seedTemplate(r); r.came = (r.came || 0) + 1;
+          });
+        }
       });
       // 2. no bumper (hidden, turned, blurred): search by look around where it should be
-      robots.forEach((r, i) => { if (!res[i]) res[i] = trackRobot(r, dt); });
+      robots.forEach((r, i) => {
+        if (res[i] || r.off) return;
+        let m = trackRobot(r, dt);
+        m.col = colorMatch(r, m.x, m.y, m.w, m.h);
+        if (Math.max(r.lost, r.weak) > 20 && frames % 8 === i % 8) { const g = searchAll(r, res); if (g && g.c + (1 - g.col) * 40 < m.c + (1 - m.col) * 40 - 4) m = g; }
+        res[i] = m.col > 0.6 && m.c < r.cost * 1.7 + 12 ? m : null;
+      });
       // two robots on one spot: the worse match lets go and coasts
       for (let a = 0; a < robots.length; a++) for (let b = a + 1; b < robots.length; b++) {
         const A = res[a], B = res[b];
@@ -381,17 +507,31 @@ const AutoScout = (() => {
         if (iou > 0.45) { if (A.c > B.c) res[a] = null; else res[b] = null; }
       }
       robots.forEach((r, i) => {
+        if (r.off) return;
         const m = res[i];
-        r.lastC = m ? +m.c.toFixed(1) : null; r.lastB = !!(m && m.bumper);
+        r.lastC = m ? +m.c.toFixed(1) : null; r.lastB = !!(m && m.bumper); r.lastCol = m && m.col != null ? +m.col.toFixed(2) : null;
         if (m && (m.bumper || m.c < Math.min(r.cost * 1.8 + 12, 58))) {
           const nvx = (m.x - r.cx) / dt, nvy = (m.y - r.cy) / dt;
           if (m.reseed) { r.vx = 0; r.vy = 0; } else { r.vx = r.vx * 0.55 + nvx * 0.45; r.vy = r.vy * 0.55 + nvy * 0.45; }
           r.cx = m.x; r.cy = m.y; r.lost = 0;
           // the first few matches set what "normal" frame-to-frame change looks like for this robot
           r.cost = r.matches++ < 5 ? Math.max(r.cost * 0.5 + m.c * 0.5, 8) : r.cost * 0.92 + Math.min(m.c, r.cost * 2) * 0.08;
-          sampleInto(tmp, r.cx, r.cy, m.w, m.h);
-          const a = m.reseed ? 1 : 0.08;
-          for (let k = 0; k < TS; k++) r.tpl[k] += (tmp[k] - r.tpl[k]) * a;
+          // Only a bumper-confirmed match teaches the tracker how the robot looks (a look-only
+          // match could be the floor it just left, and learning that is how boxes get stuck).
+          if (m.bumper) {
+            if (B_EMA) r.bumper = r.bumper * 0.9 + Math.min(0.5, bumperAt(r, r.cx, r.cy, m.w, m.h)) * 0.1;
+            sampleInto(tmp, r.cx, r.cy, m.w, m.h);
+            const a = m.reseed ? 1 : 0.05;
+            for (let k = 0; k < TS; k++) r.tpl[k] += (tmp[k] - r.tpl[k]) * a;
+            if (frames - r.galAt > 25 && (m.col == null || m.col > 0.6)) { // a new angle for the gallery, every ~1 s
+              r.galAt = frames; r.gal.push(Float32Array.from(tmp));
+              if (r.gal.length > 5) r.gal.splice(1, 1); // the tagged look always stays
+            }
+          }
+          if (m.col != null) {
+            r.colorBad = m.col < 0.5 ? r.colorBad + 1 : 0;
+            if (m.col > 0.7 && histAt(r.cx, r.cy, m.w, m.h, hTmp)) for (let k = 0; k < 64; k++) r.hr[k] += (hTmp[k] - r.hr[k]) * 0.03;
+          }
         } else {
           r.lost++;
           r.cx += r.vx * dt; r.cy += r.vy * dt; r.vx *= 0.8; r.vy *= 0.8;
@@ -403,9 +543,29 @@ const AutoScout = (() => {
           const b = boxOf(r);
           if (bumperAt(r, r.cx, r.cy, b.w, b.h) < r.bumper * 0.3) r.weak++; else r.weak = 0;
         }
+        const b = boxOf(r), lostFor = Math.max(r.lost, r.weak);
+        if (r.cx < -0.2 * b.w || r.cx > W + 0.2 * b.w || r.cy > H + 0.2 * b.h || r.cy < -0.3 * b.h ||
+          (lostFor > 45 && (r.cx < b.w * 0.8 || r.cx > W - b.w * 0.8 || r.cy > H - b.h * 0.5))) { r.off = true; r.pend = null; r.vx = 0; r.vy = 0; }
       });
     }
-    const unsure = (r) => r.lost > 8 || r.weak > 20;
+    function motionCheck() {
+      if (frames - lumaAt < 5) return;
+      if (lumaAt > 0) robots.forEach((r) => {
+        if (r.off) return;
+        const b = boxOf(r); let e = 0, n = 0;
+        for (let j = 0; j < 8; j++) { const y = Math.round(b.y + (j + 0.5) * b.h / 8); if (y < 0 || y >= H) continue;
+          for (let i = 0; i < 8; i++) { const x = Math.round(b.x + (i + 0.5) * b.w / 8); if (x < 0 || x >= W) continue;
+            const k = y * W + x, q = k * 4; e += Math.abs(((px[q] * 77 + px[q + 1] * 151 + px[q + 2] * 28) >> 8) - lumaOld[k]); n++; } }
+        if (n && e / n < M_THR) r.still += frames - lumaAt; else r.still = 0;
+        if (M_ON && r.still > M_FRAMES) { // scenery: remember its red/blue as the field's, and go find the robot
+          for (let y = Math.max(0, Math.floor(b.y)); y < Math.min(H, b.y + b.h); y++) for (let x = Math.max(0, Math.floor(b.x)); x < Math.min(W, b.x + b.w); x++) { const k = y * W + x; if (cls[k] & 6) fieldCol[k] = 1; }
+          r.still = 0; if (M_LOST) { r.lost = Math.max(r.lost, 31); r.weak = Math.max(r.weak, 21); }
+        }
+      });
+      for (let k = 0, q = 0; k < N; k++, q += 4) lumaOld[k] = (px[q] * 77 + px[q + 1] * 151 + px[q + 2] * 28) >> 8;
+      lumaAt = frames;
+    }
+    const unsure = (r) => r.off || r.lost > 8 || r.weak > 20 || r.colorBad > 20;
 
     /* ================= pieces ================= */
     const hubs = cfg.hubs || {};
@@ -658,8 +818,8 @@ const AutoScout = (() => {
       const dt = lastT == null ? 1 / 30 : Math.max(1 / 90, Math.min(1, t - lastT));
       lastT = t;
       classify(px, N, cls, isPiece);
-      if (frames === 1) { markFieldColors(); robots.forEach(seedTemplate); const d = detectBumpers(); robots.forEach((r) => bumperOffset(r, d)); measurePiece(); }
-      else updateRobots(dt);
+      if (frames === 1) { markFieldColors(); learnFloor(); robots.forEach(seedTemplate); const d = detectBumpers(); robots.forEach((r) => bumperOffset(r, d)); measurePiece(); }
+      else { updateRobots(dt); motionCheck(); }
       // fresh = piece-colored now but in neither of the last two frames
       for (let i = 0; i < N; i++) fresh[i] = (cls[i] & 1) && !prev1[i] && !prev2[i] ? 1 : 0;
       if (warm >= 3) {
@@ -680,6 +840,7 @@ const AutoScout = (() => {
     function relocate(i, box) {
       const r = robots[i]; if (!r || !px) return;
       r.cx = box.x + box.w / 2; r.cy = box.y + box.h / 2; r.vx = 0; r.vy = 0;
+      r.off = r.cx < 0 || r.cx > W || r.cy < 0 || r.cy > H; r.pend = null;
       r.k = box.w / sizeAt(r.cy); r.aspect = box.h / box.w;
       seedTemplate(r);
       bumperOffset(r, detectBumpers());
@@ -688,7 +849,7 @@ const AutoScout = (() => {
     /* ---- what to draw right now ---- */
     function view(t) {
       return {
-        robots: robots.map((r) => Object.assign(boxOf(r), { team: r.team, alliance: r.alliance, est: unsure(r), lostFor: Math.max(r.lost, r.weak), field: fieldPos(r),
+        robots: robots.map((r) => Object.assign(boxOf(r), { team: r.team, alliance: r.alliance, est: unsure(r), off: r.off, lostFor: r.off ? 0 : Math.max(r.lost, r.weak), field: fieldPos(r),
           firing: recentRate(r, t) })),
         tracks: tracks.filter((tr) => tr.pts.length > 2).map((tr) => tr.pts.slice(-8).map((q) => [q.x, q.y])),
         traces: traces.filter((tr) => t - tr.at < 1.2).map((tr) => ({ pts: tr.pts, robot: tr.robot, res: tr.res, age: t - tr.at })),
@@ -774,9 +935,11 @@ const AutoScout = (() => {
     }
 
     // for tuning: what each robot's tracker is thinking
-    const debug = () => robots.map((r) => ({ team: r.team, cost: +r.cost.toFixed(1), lastC: r.lastC, bumperHit: r.lastB, bumper: +r.bumper.toFixed(2), lost: r.lost, weak: r.weak }));
-    const tune = (o) => { if (o.bandUp) BAND_UP = o.bandUp; if (o.bandX != null) BAND_X = o.bandX; if (o.big != null) BIG = o.big; if (o.show != null) SHOW = o.show; if (o.rad != null) RAD = o.rad; if (o.fast != null) FAST = o.fast; if (o.carry != null) CARRY = o.carry; };
-    return { step, view, tally, finish, relocate, periodAt, debug, tune, shown: () => shown, get frames() { return frames; }, get skipped() { return skipped; } };
+    const debug = () => robots.map((r) => ({ team: r.team, cost: +r.cost.toFixed(1), lastC: r.lastC, col: r.lastCol, bumperHit: r.lastB, bumper: +r.bumper.toFixed(2), lost: r.lost, weak: r.weak, colorBad: r.colorBad, x: Math.round(r.cx), y: Math.round(r.cy) }));
+    // for tuning: how alike the robots' color fingerprints are (1 = identical)
+    const colorPairs = () => robots.map((a) => robots.map((b) => +bc(a.h0, b.h0).toFixed(2)));
+    const tune = (o) => { if (o.bandUp) BAND_UP = o.bandUp; if (o.bandX != null) BAND_X = o.bandX; if (o.big != null) BIG = o.big; if (o.show != null) SHOW = o.show; if (o.rad != null) RAD = o.rad; if (o.fast != null) FAST = o.fast; if (o.carry != null) CARRY = o.carry; if (o.wDist != null) W_DIST = o.wDist; if (o.wLook != null) W_LOOK = o.wLook; if (o.wCol != null) W_COL = o.wCol; if (o.wNone != null) W_NONE = o.wNone; if (o.mOn != null) M_ON = o.mOn; if (o.mThr != null) M_THR = o.mThr; if (o.mFrames != null) M_FRAMES = o.mFrames; if (o.mLost != null) M_LOST = o.mLost; if (o.bEma != null) B_EMA = o.bEma; };
+    return { step, view, tally, finish, relocate, periodAt, debug, tune, colorPairs, shown: () => shown, bumpers: () => (px ? detectBumpers() : null), get frames() { return frames; }, get skipped() { return skipped; } };
   }
 
   return { create, findRobots, snapBox, homography, applyH, PIECES };
