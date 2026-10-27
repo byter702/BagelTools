@@ -630,6 +630,9 @@
   let pitPageRefresh = null; // set by renderPit; lets cloud updates refresh the pit list+map live
   const BB = "BB";
   const BB_MATCH = 25, BB_PIT = 15; // earned per new match record / per newly pit-scouted team
+  // New members start with 50 BB: everyone approved from Oct 26, 2026 (9 PM) on.
+  const START_BB = 50, START_BB_SINCE = new Date("2026-10-26T21:00:00-07:00").getTime();
+  const giveStartBB = (first, last) => Cloud.grantStartBB ? Cloud.grantStartBB(Store.scouterIdFor(first, last), START_BB, first, last) : Promise.resolve(false);
   // Playoff matches ("SF3", "F1"…) pay double; qualification matches are plain numbers.
   const isPlayoffMatch = (id) => /^(EF|QF|SF|F)\d/i.test(String(id || "").trim());
   const matchBB = (id) => (isPlayoffMatch(id) ? BB_MATCH * 2 : BB_MATCH);
@@ -6577,7 +6580,11 @@
     $$("[data-bbadd]", root).forEach((b) => b.onclick = () => { const amt = bbAmt(b); if (!amt) return toast("Enter an amount", "err"); Cloud.addBB(amt, b.dataset.bbadd); toast(`+${amt} BB added`); });
     $$("[data-bbsub]", root).forEach((b) => b.onclick = () => { const amt = bbAmt(b); if (!amt) return toast("Enter an amount", "err"); Cloud.addBB(-amt, b.dataset.bbsub); toast(`−${amt} BB removed`); });
 
-    $$("[data-approve]", root).forEach((b) => b.onclick = () => { Store.approveMember(b.dataset.approve); Cloud.pushRoster(); toast("Member approved"); renderAdmin(root); refreshChrome(); });
+    $$("[data-approve]", root).forEach((b) => b.onclick = () => {
+      Store.approveMember(b.dataset.approve); Cloud.pushRoster();
+      const m = Store.getMembers()[b.dataset.approve]; if (m) giveStartBB(m.first, m.last);
+      toast(`Member approved · they start with ${START_BB} BB`); renderAdmin(root); refreshChrome();
+    });
     $$("[data-deny]", root).forEach((b) => b.onclick = () => {
       // they set a password when registering: denying removes it too, so nobody keeps a claim on that name
       const r = Store.getRequests()[b.dataset.deny];
@@ -6634,7 +6641,7 @@
         $("#amSave", body).onclick = () => {
           const f = $("#amFirst", body).value.trim(), l = $("#amLast", body).value.trim();
           if (!f || !l) { toast("Enter a first and last name", "err"); return; }
-          Store.addMember(f, l); Cloud.pushRoster(); close(); toast("Member added"); renderAdmin(root);
+          Store.addMember(f, l); Cloud.pushRoster(); giveStartBB(f, l); close(); toast(`Member added · they start with ${START_BB} BB`); renderAdmin(root);
         };
       });
     };
@@ -8154,6 +8161,10 @@
     Cloud.syncMe();
     Cloud.heartbeat();
     Cloud.releaseMyClaims(); // a fresh load = no active selection, so clear my old claims
+    Cloud.whenConfig(8000).then(() => {
+      const u = Auth.currentUser(), m = u && Store.getMembers()[Store.nameKey(u.first, u.last)];
+      if (m && (m.approvedAt || 0) >= START_BB_SINCE) giveStartBB(u.first, u.last).then((got) => { if (got) toast(`Welcome to BagelTools! You start with ${START_BB} BB`); });
+    });
     // Presence ping. Every open tab reads every other tab's ping, so reads grow with
     // (people online)²: ping every 4 min, only while the tab is actually visible.
     let lastBeat = Date.now();

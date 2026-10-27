@@ -256,6 +256,22 @@
           .catch(function (e) { log("addBB failed", e); });
       } catch (e) { log("addBB threw", e); }
     },
+    // A new member's starting Bagel Bucks: given once per account (startBB marks it),
+    // so approving twice or logging in on several devices never doubles it.
+    grantStartBB: function (id, amount, first, last) {
+      if (!this.enabled() || !id || !(amount > 0)) return Promise.resolve(false);
+      var ref = db.collection("scouters").doc(id);
+      return db.runTransaction(function (tx) {
+        return tx.get(ref).then(function (s) {
+          var d = s.exists ? s.data() : {};
+          if (d.startBB) return false;
+          var doc = { id: id, bb: (d.bb || 0) + amount, startBB: Date.now() };
+          if (!d.first && first) { doc.first = first; doc.last = last || ""; } // approved before ever logging in: keep the name on it
+          tx.set(ref, doc, { merge: true });
+          return true;
+        });
+      }).catch(function (e) { log("grantStartBB failed", e); return false; });
+    },
     // Set a scouter's BB to an exact value (admin edit, or one-time migrate-up).
     setBBValue: function (scouterId, value) {
       if (!this.enabled() || !scouterId) return;
