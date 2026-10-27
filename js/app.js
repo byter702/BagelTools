@@ -630,6 +630,9 @@
   let pitPageRefresh = null; // set by renderPit; lets cloud updates refresh the pit list+map live
   const BB = "BB";
   const BB_MATCH = 25, BB_PIT = 15; // earned per new match record / per newly pit-scouted team
+  // Playoff matches ("SF3", "F1"…) pay double; qualification matches are plain numbers.
+  const isPlayoffMatch = (id) => /^(EF|QF|SF|F)\d/i.test(String(id || "").trim());
+  const matchBB = (id) => (isPlayoffMatch(id) ? BB_MATCH * 2 : BB_MATCH);
 
   // Cloud module is optional; fall back to safe no-ops if cloud.js is absent.
   const Cloud = window.Cloud || {
@@ -645,7 +648,10 @@
     clearAllScoutingData: () => Promise.reject(new Error("cloud off")),
     getScouters: () => [], getSharedBoards: () => [], getSharedTierlists: () => [],
     getAllMatches: () => null, getAllPits: () => null,
-    onChange() {},
+    onChange() {}, isBlocked: () => false, onBlocked() {},
+    getAdmins: () => [], setAdmins: () => Promise.reject(new Error("cloud off")),
+    getHidden: () => [], setHidden: () => Promise.reject(new Error("cloud off")),
+    listDevices: () => Promise.resolve([]), removeDevice: () => Promise.reject(new Error("cloud off")),
   };
 
   // Combined local + cloud records (local wins on conflict). Falls back to local
@@ -703,6 +709,11 @@
       cur.online = cur.online || s.online;
     });
     return [...byName.values()];
+  }
+  // The member list and leaderboard leave out anyone an admin hid (Admin → Members → eye).
+  function visibleScouters() {
+    const hid = new Set(Cloud.getHidden());
+    return allScouters().filter((s) => !hid.has(s.id));
   }
   // always shown with capital first letters, however the name was typed ("jaxson stuck" → "Jaxson Stuck")
   const properName = (s) => (window.Auth && Auth.properName ? Auth.properName(s) : String(s || "").trim());
@@ -1540,7 +1551,7 @@
     const isMe = sc.id === me.id;
     const online = isMe || isOnline(sc);
     const lastM = lastMatchTeamsOf(sc), lastP = lastPitTeamsOf(sc);
-    const rank = allScouters().slice().sort((a, b) => (b.bb || 0) - (a.bb || 0)).findIndex((s) => s.id === sc.id) + 1;
+    const rank = visibleScouters().slice().sort((a, b) => (b.bb || 0) - (a.bb || 0)).findIndex((s) => s.id === sc.id) + 1;
     const tiles = (list, empty) => list.length
       ? `<div class="mb-tiles">${list.map((t, i) => teamTileHTML(t, "", { mini: true, style: `animation-delay:${i * 35}ms` })).join("")}</div>`
       : `<div class="mb-empty">${icon("binoculars")}<span>${empty}</span></div>`;
@@ -1560,7 +1571,7 @@
         <div class="mb-bb"><span class="mb-bb-num" data-count="${sc.bb || 0}">${sc.bb || 0}</span><span class="mb-bb-unit">Bagel Bucks</span></div>
       </section>
       <div class="mb-stats">
-        <a class="tp-tile hl" href="#/members/leaderboard"><span class="tp-tile-l">Leaderboard</span><b class="tp-tile-v">${rank ? `#<span data-count="${rank}">${rank}</span>` : "–"}</b><span class="tp-tile-s">of ${allScouters().length} on the roster</span></a>
+        <a class="tp-tile hl" href="#/members/leaderboard"><span class="tp-tile-l">Leaderboard</span><b class="tp-tile-v">${rank ? `#<span data-count="${rank}">${rank}</span>` : "–"}</b><span class="tp-tile-s">of ${visibleScouters().length} on the roster</span></a>
         <div class="tp-tile"><span class="tp-tile-l">Matches scouted</span><b class="tp-tile-v"><span data-count="${matchCountOf(sc)}">${matchCountOf(sc)}</span></b><span class="tp-tile-s">this season</span></div>
         <div class="tp-tile"><span class="tp-tile-l">Teams pit scouted</span><b class="tp-tile-v"><span data-count="${pitCountOf(sc)}">${pitCountOf(sc)}</span></b><span class="tp-tile-s">this season</span></div>
       </div>
@@ -1589,7 +1600,7 @@
 
   function renderLeaderboard(body) {
     const meId = Store.getMe().id;
-    const scs = allScouters().slice().sort((a, b) =>
+    const scs = visibleScouters().slice().sort((a, b) =>
       (b.bb || 0) - (a.bb || 0) || scouterName(a).localeCompare(scouterName(b)));
     const top = scs[0] ? (scs[0].bb || 0) : 0;
     const podium = scs.slice(0, 3);
@@ -1630,7 +1641,7 @@
   let mbScoutQ = "", rosterSort = "online";
   function renderRoster(body) {
     const meId = Store.getMe().id;
-    const all = allScouters().map((sc) => {
+    const all = visibleScouters().map((sc) => {
       const on = sc.id === meId || isOnline(sc);
       return { sc, m: matchCountOf(sc), p: pitCountOf(sc), on, seen: on ? Date.now() : (sc.lastSeen || 0) };
     });
@@ -3396,15 +3407,21 @@
       if (!team) { banner.hidden = true; banner.innerHTML = ""; return; }
       const num = $("#mNum", root).value;
       banner.hidden = false;
-      banner.className = `ms-banner thero ${ally || ""}`;
+      banner.className = `ms-banner thero ${ally || ""}${Store.getSettings().msBannerMin ? " min" : ""}`;
       banner.dataset.tfill = team;
       banner.innerHTML = `<span class="ms-band" aria-hidden="true"></span>
         <img class="team-avatar thero-av" data-avatar="${esc(team)}" data-ally="${esc(ally || "")}" alt="" />
         <div class="thero-id"><span class="ms-eyebrow">Now scouting${num ? " · " + esc(qTag(num)) : ""}</span>
-          <span class="thero-num">${esc(team)}</span><span class="thero-name">${esc(nameFor(team)) || "&nbsp;"}</span></div>
+          ${num ? `<span class="ms-qtag">${esc(qTag(num))}</span>` : ""}<span class="thero-num">${esc(team)}</span><span class="thero-name">${esc(nameFor(team)) || "&nbsp;"}</span></div>
         ${ally ? `<span class="ms-ally-pill ${ally}">${ally} alliance</span>` : ""}
-        ${liveMode ? `<button type="button" class="ms-desel" id="msDesel" aria-label="Deselect this robot">${icon("x")}<span>Deselect</span></button>` : ""}`;
+        ${liveMode ? `<button type="button" class="ms-desel" id="msDesel" aria-label="Deselect this robot">${icon("x")}<span>Deselect</span></button>` : ""}
+        <button type="button" class="ms-min" id="msMin" aria-label="Shrink the team banner" title="Shrink / expand">${icon("chevron-down")}</button>`;
       const ds = $("#msDesel", banner); if (ds) ds.onclick = () => { const sel = $(".robot-pick.sel", root); if (sel) sel.click(); };
+      $("#msMin", banner).onclick = () => {
+        const min = !banner.classList.contains("min");
+        banner.classList.toggle("min", min); Store.setSettings({ msBannerMin: min });
+        $("#msMin", banner).setAttribute("aria-label", min ? "Expand the team banner" : "Shrink the team banner");
+      };
       paintAvatars(banner, [team]);
       paintTeamFills(form, [team]);
     };
@@ -3521,14 +3538,14 @@
       const ok = Store.saveMatch(entry);
       if (!ok) { toast("Couldn't save — device storage is full. Export & clear old data (Data tab).", "err"); return; }
       if (isNew) {
-        const earn = canEarnBB();
+        const earn = canEarnBB(), pay = matchBB(entry.matchNumber);
         Store.recordMatchScouted(team, earn);
-        if (earn) Cloud.addBB(BB_MATCH); // account-based BB, atomic on the cloud
+        if (earn) Cloud.addBB(pay); // account-based BB, atomic on the cloud
         Cloud.syncMe();
         Cloud.pushMatches();
-        Cloud.pushActivity({ type: "match", team, bb: earn ? BB_MATCH : 0, matchNumber: entry.matchNumber });
+        Cloud.pushActivity({ type: "match", team, bb: earn ? pay : 0, matchNumber: entry.matchNumber });
         // keep the claim so the robot stays locked for others until the record syncs
-        toast(earn ? `Saved · Team ${team} · +${BB_MATCH} BB` : `Saved · Team ${team}`);
+        toast(earn ? `Saved · Team ${team} · +${pay} BB${pay > BB_MATCH ? " (playoffs pay double)" : ""}` : `Saved · Team ${team}`);
       } else {
         Cloud.pushMatches();
         toast("Match updated");
@@ -6127,17 +6144,50 @@
      VIEW: ADMIN PANEL (member roster + access requests)
      ======================================================================== */
   let adminUnlocked = false;
-  let adminCredIds = null, adminCredLoading = false; // Set of scouter ids that have a password
+  // Admin access: the owner (CONFIG.owner) always, members an admin gave it to
+  // (Admin → Members → shield), or the admin PIN typed on this device.
+  function isOwnerUser() {
+    const u = Auth.currentUser(), owner = ((window.CONFIG && CONFIG.owner) || "").trim().toLowerCase();
+    return !!(u && owner) && `${u.first || ""} ${u.last || ""}`.trim().toLowerCase() === owner;
+  }
+  function isAdmin() {
+    if (adminUnlocked || isOwnerUser()) return true;
+    const u = Auth.currentUser();
+    return !!u && Cloud.getAdmins().includes(Store.scouterIdFor(u.first, u.last));
+  }
+  // Ask for the admin password before something big (giving someone admin).
+  function askAdminPin(msg, onOk) {
+    const pin = (window.CONFIG && window.CONFIG.adminPin) || "";
+    if (!pin) return onOk();
+    modal("Admin password", `<p>${esc(msg)}</p>
+      <label class="auth-field" for="apPin"><span class="auth-label">Admin password</span>
+        <span class="auth-input">${icon("key")}<input type="password" id="apPin" autocomplete="off" /></span></label>
+      <div class="login-error" id="apErr" hidden></div>
+      <div class="btn-row" style="justify-content:flex-end;margin-top:16px">
+        <button class="btn ghost" id="apNo">Cancel</button><button class="btn primary" id="apYes">${icon("check")} Confirm</button></div>`,
+    (body, close) => {
+      const input = $("#apPin", body);
+      const go = () => {
+        if (input.value === pin) { close(); onOk(); return; }
+        const e = $("#apErr", body); e.textContent = "Wrong password."; e.hidden = false; input.select();
+      };
+      $("#apNo", body).onclick = close; $("#apYes", body).onclick = go;
+      input.onkeydown = (e) => { if (e.key === "Enter") go(); };
+      input.focus();
+    });
+  }
+  let adminCredIds = null, adminCredLoading = false, adminCredErr = false; // Set of scouter ids that have a password
   function loadAdminCreds(root) {
     if (adminCredLoading || !Cloud.enabled()) return;
     adminCredLoading = true;
-    Cloud.listCredIds().then((ids) => { adminCredIds = new Set(ids); })
-      .catch(() => { adminCredIds = new Set(); })
+    // a failed read must not look like "nobody has a password"
+    Cloud.listCredIds().then((ids) => { adminCredIds = new Set(ids); adminCredErr = false; })
+      .catch(() => { adminCredIds = null; adminCredErr = true; })
       .finally(() => { adminCredLoading = false; if (current() === "admin") renderAdmin(root); });
   }
   function renderAdmin(root) {
     const pin = (window.CONFIG && window.CONFIG.adminPin) || "";
-    if (pin && !adminUnlocked) {
+    if (pin && !isAdmin()) {
       root.innerHTML = `
         <div class="card ad-lock">
           <span class="ad-lock-ico">${icon("lock")}</span>
@@ -6159,15 +6209,21 @@
       return;
     }
 
-    if (!adminCredIds) loadAdminCreds(root);
+    if (!adminCredIds && !adminCredErr) loadAdminCreds(root);
     const requests = Store.getRequests();
     const reqKeys = Object.keys(requests).sort((a, b) => requests[b].ts - requests[a].ts);
     const members = Store.getMembers();
     const memKeys = Object.keys(members).sort((a, b) => (members[a].first || "").localeCompare(members[b].first || ""));
     const dt = (ts) => ts ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "–";
+    // the Members table joins each roster member with their scouter profile
+    const meId = Store.getMe().id, admins = Cloud.getAdmins(), hidden = new Set(Cloud.getHidden());
+    const ownerFull = String((window.CONFIG && CONFIG.owner) || "").trim(), sp = ownerFull.indexOf(" ");
+    const ownerKey = ownerFull ? Store.nameKey(sp > 0 ? ownerFull.slice(0, sp) : ownerFull, sp > 0 ? ownerFull.slice(sp + 1) : "") : "";
+    const scById = new Map(allScouters().map((x) => [x.id, x]));
+    const strays = allScoutersRaw().filter((x) => x.id !== meId && (!members[Store.nameKey(x.first, x.last)] || x.id !== Store.scouterIdFor(x.first, x.last)))
+      .sort((p, q) => scouterName(p).localeCompare(scouterName(q)));
     const tabs = [
       ["requests", "Members", "teams"],
-      ["scouters", "Scouters", "user"],
       ["bagelbucks", "Bagel Bucks", "bagel"],
       ["matchform", "Match form", "binoculars"],
       ["pitform", "Pit form", "clipboard"],
@@ -6206,26 +6262,51 @@
 
       <div class="card">
         <div class="section-head">
-          <div class="row" style="gap:10px">${icon("teams")}<h2 style="margin:0">Registered members (${memKeys.length})</h2></div>
+          <div class="row" style="gap:10px">${icon("teams")}<h2 style="margin:0">Members (${memKeys.length})</h2></div>
           <button class="btn ghost sm" id="addMemberBtn">${icon("plus")} Add member</button>
         </div>
-        ${memKeys.length ? `<div class="table-wrap"><table>
-          <thead><tr><th>Name</th><th>Password</th><th>First seen</th><th>Last seen</th><th></th></tr></thead>
+        ${adminCredErr ? `<div class="ad-warn">${icon("info")}<span>Couldn't load who has a password (the database didn't answer).</span><button class="btn ghost sm" id="credRetry">Retry</button></div>` : ""}
+        ${memKeys.length ? `<div class="table-wrap"><table class="ad-members">
+          <thead><tr><th>Member</th><th>Password</th><th class="num">${BB}</th><th class="num">Matches</th><th class="num">Pits</th><th>Last seen</th><th>Shown · Admin</th><th></th></tr></thead>
           <tbody>${memKeys.map((key) => {
-            const sid = Store.scouterIdFor(members[key].first, members[key].last);
+            const m = members[key], sid = Store.scouterIdFor(m.first, m.last);
+            const sc = scById.get(sid) || { id: sid, first: m.first, last: m.last };
+            const name = properName(m.first + " " + m.last);
             const hasPw = adminCredIds ? adminCredIds.has(sid) : null;
-            return `<tr>
-            <td><b>${esc(members[key].first)} ${esc(members[key].last)}</b></td>
-            <td>${hasPw == null ? `<span class="muted">${Cloud.enabled() ? "…" : "–"}</span>` : hasPw
-              ? `<span class="badge green">Set</span> <button class="btn ghost sm" data-resetpw="${esc(sid)}" data-name="${esc(members[key].first + " " + members[key].last)}">${icon("key")} Reset</button>`
+            const owner = !!ownerKey && Store.nameKey(m.first, m.last) === ownerKey, adm = admins.includes(sid), hid = hidden.has(sid);
+            const seen = Math.max(m.lastSeen || 0, sc.lastSeen || 0);
+            return `<tr class="${hid ? "ad-hid" : ""}">
+            <td><div class="row" style="gap:8px;align-items:center;flex-wrap:nowrap">${scouterAvatar(sc, "sc-avatar sm")}
+              <b>${esc(name)}</b>${sid === meId ? ` <span class="badge cyan">You</span>` : ""}${owner ? ` <span class="badge yellow">Owner</span>` : adm ? ` <span class="badge green">Admin</span>` : ""}</div></td>
+            <td>${hasPw == null ? `<span class="muted">${Cloud.enabled() && !adminCredErr ? "…" : "?"}</span>` : hasPw
+              ? `<span class="badge green">Set</span> <button class="btn ghost sm" data-resetpw="${esc(sid)}" data-name="${esc(name)}">${icon("key")} Reset</button>`
               : `<span class="badge">Not set</span>`}</td>
-            <td class="muted">${esc(dt(members[key].firstSeen))}</td>
-            <td class="muted">${esc(dt(members[key].lastSeen))}</td>
+            <td class="num">${sc.bb || 0}</td>
+            <td class="num">${matchCountOf(sc)}</td>
+            <td class="num">${pitCountOf(sc)}</td>
+            <td class="muted">${seen ? esc(timeAgo(seen)) : "–"}</td>
+            <td><div class="row" style="gap:6px;flex-wrap:nowrap">
+              <button class="icon-btn ad-eye${hid ? " off" : ""}" data-eye="${esc(sid)}" data-name="${esc(name)}" title="${hid ? "Hidden from the member list and leaderboard" : "Shown on the member list and leaderboard"}" aria-label="${hid ? "Show" : "Hide"} ${esc(name)}">${icon(hid ? "eye-off" : "eye")}</button>
+              ${owner ? `<span class="icon-btn ad-shield on owner" title="Owner: always an admin">${icon("crown")}</span>`
+                : `<button class="icon-btn ad-shield${adm ? " on" : ""}" data-admin="${esc(sid)}" data-name="${esc(name)}" title="${adm ? "Admin (tap to take it away)" : "Make admin"}" aria-label="${adm ? "Remove admin" : "Make admin"}: ${esc(name)}">${icon("shield")}</button>`}
+            </div></td>
             <td><button class="icon-btn" data-remove="${esc(key)}" aria-label="Remove member">${icon("trash")}</button></td>
           </tr>`; }).join("")}</tbody></table></div>
-          <p class="hint" style="margin:10px 2px 0">Reset clears a member's password and signs them out everywhere. They create a new one on their next login.</p>`
+          <p class="hint ad-legend">${icon("eye")} Closed eye: left off the member list and leaderboard. ${icon("shield")} Admins open this panel with no PIN. Reset clears a password and signs that person out everywhere.</p>`
           : emptyState("user", "No members yet", "Approve access requests above, or add members manually.")}
       </div>
+      ${strays.length ? `<div class="card" style="margin-top:16px">
+        <div class="row" style="gap:10px;margin-bottom:6px">${icon("user")}<h3 style="margin:0">Leftover scouter profiles (${strays.length})</h3></div>
+        <p class="hint">Profiles that aren't on the roster: old duplicates, or people who were removed. Deleting one takes it off the leaderboard along with its pick list / tier list. Match &amp; pit records are kept.</p>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Name</th><th class="num">${BB}</th><th class="num">Matches</th><th class="num">Pits</th><th>Last seen</th><th></th></tr></thead>
+          <tbody>${strays.map((x) => `<tr>
+            <td><div class="row" style="gap:8px;align-items:center">${scouterAvatar(x, "sc-avatar sm")}<b>${esc(scouterName(x))}</b>${x.id !== Store.scouterIdFor(x.first, x.last) ? ` <span class="badge">dup</span>` : ""}</div></td>
+            <td class="num">${x.bb || 0}</td><td class="num">${matchCountOf(x)}</td><td class="num">${pitCountOf(x)}</td>
+            <td class="muted">${x.lastSeen ? esc(timeAgo(x.lastSeen)) : "–"}</td>
+            <td><button class="icon-btn" data-del-scouter="${esc(x.id)}" data-scouter-name="${esc(scouterName(x))}" aria-label="Delete profile">${icon("trash")}</button></td>
+          </tr>`).join("")}</tbody></table></div>
+      </div>` : ""}
 
       <div class="card" style="margin-top:16px">
         <div class="row" style="gap:10px;margin-bottom:6px">${icon("database")}<h3 style="margin:0">Shared roster & forms</h3></div>
@@ -6243,7 +6324,7 @@
       return `<div class="card">
         <div class="section-head"><div class="row" style="gap:10px">${icon("coins")}<h2 style="margin:0">Bagel Bucks (BB)</h2></div>
           ${evk ? `<span class="badge ${approved ? "green" : ""} dot">${approved ? "Approved" : "Not approved"}</span>` : ""}</div>
-        <p class="hint">Once you approve an event, <b>every</b> scout earns <b>BB</b> on any device — ${BB_MATCH} BB per match, ${BB_PIT} BB per new team pit-scouted — until you turn it off. BB is tied to the account and shared across devices.</p>
+        <p class="hint">Once you approve an event, <b>every</b> scout earns <b>BB</b> on any device — ${BB_MATCH} BB per match (${BB_MATCH * 2} in the playoffs), ${BB_PIT} BB per new team pit-scouted — until you turn it off. BB is tied to the account and shared across devices.</p>
         ${evk ? `<div class="row between" style="align-items:center;gap:12px;flex-wrap:wrap">
           <div><b>${esc(evk)}</b></div>
           <button class="btn ${approved ? "danger" : "primary"} sm" id="bbApproveBtn">${approved ? "Turn off earning" : "Approve for BB earning (everyone)"}</button>
@@ -6275,39 +6356,6 @@
               <button class="btn ghost sm" data-bbsub="${esc(sc.id)}">− Remove</button>
             </div></td></tr>`).join("")}</tbody></table></div>`
           : `<p class="hint">No scouters yet.</p>`}
-      </div>`;
-    })();
-
-    // ---- Section: Scouters (remove accounts / clean up duplicates) ----
-    const scoutersHTML = (() => {
-      const meId = Store.getMe().id;
-      const scs = allScoutersRaw().slice().sort((a, b) =>
-        scouterName(a).localeCompare(scouterName(b)) || (b.lastSeen || 0) - (a.lastSeen || 0));
-      const nameCount = {};
-      scs.forEach((s) => { const kk = Store.nameKey(s.first, s.last); nameCount[kk] = (nameCount[kk] || 0) + 1; });
-      return `<div class="card">
-        <div class="section-head">
-          <div class="row" style="gap:10px">${icon("user")}<h2 style="margin:0">Scouter accounts (${scs.length})</h2></div>
-        </div>
-        <p class="hint">Every scouter profile that shows up on the Members leaderboard. Use this to
-          delete unwanted or leftover <b>duplicate</b> accounts — removing one deletes its cloud
-          profile plus any pick list / tier list it submitted. Match &amp; pit records are kept.
-          ${Cloud.enabled() ? "" : `<br><span class="badge red dot">Cloud off</span> Deletes apply to this device only until cloud sync is on.`}</p>
-        <div class="table-wrap"><table>
-          <thead><tr><th>Name</th><th>${BB}</th><th>Matches</th><th>Pits</th><th>Last seen</th><th></th></tr></thead>
-          <tbody>${scs.map((s) => {
-            const dup = nameCount[Store.nameKey(s.first, s.last)] > 1;
-            const isMe = s.id === meId;
-            return `<tr>
-              <td><div class="row" style="gap:8px;align-items:center">${scouterAvatar(s, "sc-avatar sm")}
-                <b>${esc(scouterName(s))}</b>${isMe ? ` <span class="badge cyan">You</span>` : ""}${dup ? ` <span class="badge">dup</span>` : ""}</div></td>
-              <td class="num">${s.bb || 0}</td>
-              <td class="num">${matchCountOf(s)}</td>
-              <td class="num">${pitCountOf(s)}</td>
-              <td class="muted">${s.lastSeen ? esc(timeAgo(s.lastSeen)) : "–"}</td>
-              <td><button class="icon-btn" data-del-scouter="${esc(s.id)}" data-scouter-name="${esc(scouterName(s))}" aria-label="Remove scouter">${icon("trash")}</button></td>
-            </tr>`;
-          }).join("")}</tbody></table></div>
       </div>`;
     })();
 
@@ -6430,7 +6478,7 @@
     })();
 
     const sectionHTML = {
-      requests: requestsHTML, scouters: scoutersHTML, bagelbucks: bagelBucksHTML,
+      requests: requestsHTML, bagelbucks: bagelBucksHTML,
       matchform: matchFormHTML, pitform: pitFormHTML,
       testevent: testEventHTML, data: dataHTML, betting: `<div id="adBetting"></div>`, fantasy: `<div id="adFantasy"></div>`, prime: `<div id="adPrime"></div>`,
     };
@@ -6442,7 +6490,7 @@
         side: `<div class="ad-stats">
           <a href="#/admin/requests" class="${reqKeys.length ? "hot" : ""}"><b>${reqKeys.length}</b><span>pending</span></a>
           <a href="#/admin/requests"><b>${memKeys.length}</b><span>members</span></a>
-          <a href="#/admin/requests"><b>${pwSet == null ? "…" : pwSet}</b><span>passwords set</span></a>
+          <a href="#/admin/requests"><b>${pwSet == null ? (adminCredErr ? "?" : "…") : pwSet}</b><span>passwords set</span></a>
         </div>` })}
       <div class="subtabs" id="adminTabs">
         ${tabs.map(([kk, l, ic]) => `<a href="#/admin/${kk}" class="${active === kk ? "on" : ""}">${icon(ic)} ${esc(l)}${kk === "requests" && reqKeys.length ? ` <span class="ad-badge">${reqKeys.length}</span>` : ""}</a>`).join("")}
@@ -6557,6 +6605,25 @@
         if (Cloud.enabled()) Cloud.deleteScouter(id).then(done).catch(() => { toast("Removed locally; cloud delete failed", "err"); renderAdmin(root); });
         else done();
       });
+    });
+    const retry = $("#credRetry", root); if (retry) retry.onclick = () => { adminCredErr = false; renderAdmin(root); };
+    // eye: shown on / hidden from the member list + leaderboard (team-wide)
+    $$("[data-eye]", root).forEach((b) => b.onclick = () => {
+      const sid = b.dataset.eye, hid = Cloud.getHidden(), was = hid.includes(sid);
+      Cloud.setHidden(was ? hid.filter((x) => x !== sid) : hid.concat(sid))
+        .then(() => { toast(was ? `${b.dataset.name} is back on the member list` : `${b.dataset.name} is hidden from the member list and leaderboard`); if (root.isConnected) renderAdmin(root); })
+        .catch(() => toast("Couldn't save: check your connection", "err"));
+    });
+    // shield: give admin (are you sure → admin password) or take it away (are you sure)
+    $$("[data-admin]", root).forEach((b) => b.onclick = () => {
+      const sid = b.dataset.admin, nm = b.dataset.name, list = Cloud.getAdmins(), me = Auth.currentUser();
+      const by = me ? properName(me.first + " " + me.last) : "";
+      const save = (ids, msg) => Cloud.setAdmins(ids, by).then(() => { toast(msg); if (root.isConnected) renderAdmin(root); })
+        .catch(() => toast("Couldn't save: check your connection", "err"));
+      if (list.includes(sid)) return confirmDialog(`Take away ${nm}'s admin access? They'll need the admin PIN to open the admin panel again.`,
+        () => save(list.filter((x) => x !== sid), `${nm} is no longer an admin`));
+      confirmDialog(`Make ${nm} an admin? They'll open the admin panel with no PIN and can approve and remove members, reset passwords, edit the forms and change Bagel Bucks.`,
+        () => askAdminPin(`Enter the admin password to make ${nm} an admin.`, () => save(list.concat(sid), `${nm} is now an admin`)));
     });
     const addBtn = $("#addMemberBtn", root);
     if (addBtn) addBtn.onclick = () => {
@@ -6726,6 +6793,12 @@
       </div>
 
       <section class="card st-card" style="margin-top:16px">
+        <div class="sr-head"><h3>${icon("laptop")} Your devices</h3><button class="btn ghost sm" id="devOthers" hidden>${icon("logout")} Sign out all others</button></div>
+        <p class="hint" style="margin-top:0">Everywhere your account is signed in. Signing a device out logs it out right away.</p>
+        <div class="dev-list" id="devList"><div class="tp-loading"><span class="tp-spin"></span>Loading your devices…</div></div>
+      </section>
+
+      <section class="card st-card" style="margin-top:16px">
         <div class="sr-head"><h3>${icon("clock")} Season</h3><span class="badge yellow">Viewing ${esc(GAME.seasonLabel)}</span></div>
         <p class="hint" style="margin-top:0">Each year's scouting, pit data, forms, stats, EPA and pick lists are kept completely separate, and switching never deletes anything.
           Accounts and Bagel Bucks are shared by every year. This only changes the year on <b>this device</b>.</p>
@@ -6775,6 +6848,31 @@
       applyTheme(b.dataset.v); Store.setSettings({ theme: b.dataset.v }); refreshChrome();
     });
     $("#stLogout", root).onclick = () => confirmDialog("Log out of the scouting app?", () => Auth.logout());
+    const loadDevices = () => {
+      const el = $("#devList", root); if (!el) return;
+      if (!u || !Cloud.enabled()) { el.innerHTML = `<p class="hint">Needs the team cloud.</p>`; return; }
+      const mine = Store.getDevice().id, when = (t) => t ? new Date(t).toLocaleDateString([], { month: "short", day: "numeric" }) : "";
+      Cloud.listDevices(Store.scouterIdFor(u.first, u.last)).then((list) => {
+        if (!el.isConnected) return;
+        if (!list.some((d) => d.id === mine)) list.push({ id: mine, label: "This device", kind: "computer", lastSeen: Date.now() });
+        list.sort((p, q) => (q.id === mine) - (p.id === mine) || (q.lastSeen || 0) - (p.lastSeen || 0));
+        el.innerHTML = list.map((d) => `<div class="dev-row${d.id === mine ? " me" : ""}">
+          <span class="dev-ico">${icon(d.kind === "phone" ? "phone" : d.kind === "tablet" ? "tablet" : "laptop")}</span>
+          <span class="dev-txt"><b>${esc(d.label || "Device")}</b><span>${d.id === mine ? "Active now" : d.lastSeen ? "Last active " + esc(timeAgo(d.lastSeen)) : "Not seen yet"}${d.created ? " · signed in " + esc(when(d.created)) : ""}</span></span>
+          ${d.id === mine ? `<span class="badge cyan">This device</span>` : `<button class="btn ghost sm" data-devout="${esc(d.id)}" data-label="${esc(d.label || "this device")}">${icon("logout")} Sign out</button>`}
+        </div>`).join("");
+        const others = list.filter((d) => d.id !== mine), all = $("#devOthers", root);
+        if (all) {
+          all.hidden = others.length < 2;
+          all.onclick = () => confirmDialog(`Sign out your ${others.length} other devices? Each is logged out right away.`, () =>
+            Promise.all(others.map((d) => Cloud.removeDevice(d.id))).then(() => { toast("Signed out everywhere else"); loadDevices(); })
+              .catch(() => toast("Couldn't sign them all out: check your connection", "err")));
+        }
+        $$("[data-devout]", el).forEach((b) => b.onclick = () => confirmDialog(`Sign out ${b.dataset.label}? It's logged out right away.`, () =>
+          Cloud.removeDevice(b.dataset.devout).then(() => { toast("Device signed out"); loadDevices(); }).catch(() => toast("Couldn't sign it out: check your connection", "err"))));
+      }).catch(() => { if (el.isConnected) el.innerHTML = `<p class="hint">Couldn't load your devices (the database didn't answer).</p>`; });
+    };
+    loadDevices();
     $$("[data-season]", root).forEach((b) => b.onclick = () => {
       const y = Number(b.dataset.season);
       if (y === GAME.season) return;
@@ -6825,7 +6923,7 @@
   // (Admin → Betting), or anyone with the admin panel unlocked on this device.
   function isBetHost() {
     const m = Store.getMe(); if (!m || !m.id) return false;
-    if (adminUnlocked) return true;
+    if (isAdmin()) return true;
     const owner = ((window.CONFIG && CONFIG.owner) || "").trim().toLowerCase();
     if (owner && `${m.first || ""} ${m.last || ""}`.trim().toLowerCase() === owner) return true;
     return Cloud.getBetHosts().includes(m.id);
@@ -8001,6 +8099,21 @@
     window.addEventListener("hashchange", () => { if (!panel.hidden) close(true); });
   }
 
+  // The database refusing every read/write (e.g. its rules expired) used to look like
+  // "nothing new is showing up". Now everyone sees it right away.
+  function showDbBlocked() {
+    if ($("#dbBlocked")) return;
+    const el = document.createElement("div");
+    el.id = "dbBlocked"; el.className = "db-blocked"; el.setAttribute("role", "alert");
+    el.innerHTML = `<span class="db-blocked-ico">${icon("info")}</span>
+      <span class="db-blocked-txt"><b>The team database is refusing BagelTools</b>
+        <span>Nothing you save is reaching the team, and what you see may be out of date. ${isAdmin()
+          ? "Fix it in the Firebase console: Firestore Database → Rules. Then reload."
+          : "Tell a team lead. Your scouting stays saved on this device."}</span></span>
+      <button class="db-blocked-x" aria-label="Dismiss">${icon("x")}</button>`;
+    document.body.appendChild(el);
+    $(".db-blocked-x", el).onclick = () => el.remove();
+  }
   function startApp(loginStatus) {
     const syncNavLock = () => document.body.classList.toggle("nav-lock", app.classList.contains("nav-open"));
     $("#menuBtn").onclick = () => { app.classList.toggle("nav-open"); syncNavLock(); };
@@ -8034,6 +8147,7 @@
 
     // Cloud sync (real-time scouters, BB leaderboard, shared lists). No-op if
     // Firebase isn't configured — everything still works locally.
+    Cloud.onBlocked(showDbBlocked);
     Cloud.init();
     Auth.checkSession(); // signs this device out if the account's password was reset
     Auth.watchSession(); // …and keeps watching: a reset or removal signs every device out live
@@ -8043,7 +8157,7 @@
     // Presence ping. Every open tab reads every other tab's ping, so reads grow with
     // (people online)²: ping every 4 min, only while the tab is actually visible.
     let lastBeat = Date.now();
-    const beat = () => { if (document.hidden) return; lastBeat = Date.now(); Cloud.heartbeat(); };
+    const beat = () => { if (document.hidden) return; lastBeat = Date.now(); Cloud.heartbeat(); Auth.touchDevice(); };
     setInterval(beat, 4 * 60 * 1000);
     document.addEventListener("visibilitychange", () => { if (!document.hidden && Date.now() - lastBeat > 90 * 1000) beat(); });
     // Cloud snapshots arrive every few seconds (everyone's heartbeat), so they never

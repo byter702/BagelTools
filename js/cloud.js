@@ -58,7 +58,40 @@
   function eventKey() {
     return (window.Store && Store.getSettings && Store.getSettings().eventKey) || "";
   }
-  function log(msg, e) { try { console.warn("[Cloud] " + msg, e || ""); } catch (x) {} }
+  function log(msg, e) {
+    try { console.warn("[Cloud] " + msg, e || ""); } catch (x) {}
+    // The Firestore rules refusing us (e.g. test-mode rules that expired) means nothing
+    // reads or saves: say so loudly instead of quietly showing old cached data.
+    if (e && (e.code === "permission-denied" || /insufficient permissions/i.test(e.message || ""))) markBlocked();
+  }
+  // Approvals made on this device that never reached the server (offline, or the rules
+  // refusing writes) go up once it answers again. Only members approved after the
+  // server's last roster save, so someone removed long ago can't come back this way.
+  var healed = false;
+  function healRoster(r) {
+    if (healed || !db || !window.Store || !Store.getMembers) return;
+    healed = true;
+    var cloudM = r.members || {}, removed = r.removed || {}, since = r.updatedAt || 0;
+    if (!since) return;
+    var local = Store.getMembers(), FP = firebase.firestore.FieldPath, args = [];
+    Object.keys(local).forEach(function (k) {
+      var m = local[k] || {};
+      if (cloudM[k] || removed[k]) return;
+      if (Math.max(m.approvedAt || 0, m.lastSeen || 0, m.firstSeen || 0) <= since) return;
+      args.push(new FP("members", k), clean(m), new FP("requests", k), firebase.firestore.FieldValue.delete());
+    });
+    if (!args.length) return;
+    var ref = db.collection("config").doc("roster");
+    ref.update.apply(ref, args.concat(["updatedAt", Date.now()]))
+      .then(function () { log("re-sent " + args.length / 4 + " approval(s) that never reached the server"); })
+      .catch(function (e) { log("roster heal failed", e); });
+  }
+  var blocked = false, blockedCbs = [];
+  function markBlocked() {
+    if (blocked) return;
+    blocked = true;
+    blockedCbs.forEach(function (cb) { try { cb(); } catch (x) {} });
+  }
 
   function listen() {
     if (!db) return;
@@ -120,6 +153,7 @@
       try {
         var r = cache.config.roster;
         if (r && window.Store && Store.mergeRoster) Store.mergeRoster(r.members, r.requests, r.removed);
+        if (r && !snap.metadata.fromCache) healRoster(r);
         // Removed from the roster? Sign out on every device right away (only on what the
         // server says, never on the on-device copy, which can be out of date).
         if (r && !snap.metadata.fromCache && window.Auth && Auth.enforceRoster) setTimeout(Auth.enforceRoster, 0);
@@ -521,6 +555,61 @@
       if (!this.enabled()) return Promise.resolve([]);
       return db.collection("creds").get({ source: "server" })
         .then(function (snap) { return snap.docs.map(function (d) { return d.id; }); });
+    },
+
+    // The database refused us (permission denied): nothing is reading or saving.
+    isBlocked: function () { return blocked; },
+    onBlocked: function (cb) { if (typeof cb !== "function") return; if (blocked) cb(); else blockedCbs.push(cb); },
+
+    // Members an admin gave full admin access (config/admins). The owner always has it.
+    getAdmins: function () { var d = cache.config.admins; return (d && Array.isArray(d.ids)) ? d.ids : []; },
+    setAdmins: function (ids, byName) {
+      if (!this.enabled()) return Promise.reject(new Error("cloud off"));
+      var doc = { ids: Array.from(new Set(ids || [])), updatedAt: Date.now(), by: byName || "" };
+      cache.config.admins = doc;
+      return db.collection("config").doc("admins").set(doc);
+    },
+    // Members hidden from the member list and leaderboard (config/visibility).
+    getHidden: function () { var d = cache.config.visibility; return (d && Array.isArray(d.hidden)) ? d.hidden : []; },
+    setHidden: function (ids) {
+      if (!this.enabled()) return Promise.reject(new Error("cloud off"));
+      var doc = { hidden: Array.from(new Set(ids || [])), updatedAt: Date.now() };
+      cache.config.visibility = doc;
+      return db.collection("config").doc("visibility").set(doc);
+    },
+
+    // ---- Signed-in devices (devices/{deviceId}) ----
+    // Each browser that signs in registers itself; deleting its doc signs it out.
+    getDevice: function (id) {
+      if (!this.enabled() || !id) return Promise.reject(new Error("cloud off"));
+      return db.collection("devices").doc(id).get({ source: "server" })
+        .then(function (d) { return d.exists ? d.data() : null; });
+    },
+    setDevice: function (id, doc) {
+      if (!this.enabled() || !id) return Promise.reject(new Error("cloud off"));
+      return db.collection("devices").doc(id).set(clean(doc));
+    },
+    // update() (never set) so a device that was just signed out can't re-create itself
+    touchDevice: function (id) {
+      if (!this.enabled() || !id) return Promise.resolve();
+      return db.collection("devices").doc(id).update({ lastSeen: Date.now() }).catch(function () {});
+    },
+    removeDevice: function (id) {
+      if (!this.enabled() || !id) return Promise.reject(new Error("cloud off"));
+      return db.collection("devices").doc(id).delete();
+    },
+    listDevices: function (uid) {
+      if (!this.enabled() || !uid) return Promise.resolve([]);
+      return db.collection("devices").where("uid", "==", uid).get({ source: "server" })
+        .then(function (snap) { return snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); }); });
+    },
+    // cb(doc or null) from the server only (a cached "missing" must never sign anyone out)
+    watchDevice: function (id, cb) {
+      if (!this.enabled() || !id) return function () {};
+      return db.collection("devices").doc(id).onSnapshot(function (d) {
+        if (d.metadata.fromCache) return;
+        cb(d.exists ? d.data() : null);
+      }, function (e) { log("device watch failed", e); });
     },
 
     onFormChange: function (cb) { if (typeof cb === "function") formCbs.push(cb); },

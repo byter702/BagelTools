@@ -13,7 +13,7 @@ const Store = (() => {
   // Accounts, the roster, sessions and app-wide settings are shared by every season.
   const BASE_SEASON = 2026;
   const SEASON = (window.GAME && GAME.season) || BASE_SEASON;
-  const GLOBAL_KEYS = new Set(["settings", "session", "members", "requests", "removed", "meAccounts", "credCache", "me"]);
+  const GLOBAL_KEYS = new Set(["settings", "session", "members", "requests", "removed", "meAccounts", "credCache", "me", "device"]);
   const k = (name) => (SEASON === BASE_SEASON || GLOBAL_KEYS.has(name)) ? `${NS}.${name}` : `${NS}.y${SEASON}.${name}`;
 
   function read(name, fallback) {
@@ -327,6 +327,14 @@ const Store = (() => {
   function getSession() { return read("session", null); }        // {first,last,ts,v,cv} or null
   function setSession(user) { write("session", user); }
   function clearSession() { try { localStorage.removeItem(k("session")); } catch {} }
+  // This browser's id for the signed-in devices list: { id, reg } where reg = the
+  // session (its login time) this device last registered for.
+  function getDevice() {
+    let d = read("device", null);
+    if (!d || !d.id) { d = { id: "d" + Date.now().toString(36) + Math.random().toString(36).slice(2, 10), reg: 0 }; write("device", d); }
+    return d;
+  }
+  function setDeviceReg(ts) { write("device", Object.assign(getDevice(), { reg: ts || 0 })); }
   // Last-known password hash per account on this device, so a member who already
   // signed in here can still sign in while offline. Never holds the password itself.
   function getCachedCred(id) { return (read("credCache", {}) || {})[id] || null; }
@@ -364,7 +372,7 @@ const Store = (() => {
     const reqs = getRequests(), members = getMembers();
     const r = reqs[key];
     members[key] = { first: r ? r.first : "", last: r ? r.last : "",
-      firstSeen: r ? r.ts : Date.now(), lastSeen: Date.now() };
+      firstSeen: r ? r.ts : Date.now(), lastSeen: Date.now(), approvedAt: Date.now() };
     delete reqs[key];
     write("members", members); write("requests", reqs);
     unremove(key);
@@ -397,7 +405,7 @@ const Store = (() => {
   // Manually add an approved member (admin).
   function addMember(first, last) {
     const key = nameKey(first, last); const members = getMembers();
-    members[key] = { first: String(first).trim(), last: String(last).trim(), firstSeen: Date.now(), lastSeen: Date.now() };
+    members[key] = { first: String(first).trim(), last: String(last).trim(), firstSeen: Date.now(), lastSeen: Date.now(), approvedAt: Date.now() };
     write("members", members);
     unremove(key);
   }
@@ -505,7 +513,7 @@ const Store = (() => {
     getBBApproved, isBBApproved, approveBBEvent, setBBApprovedList,
     getMe, setMe, getMeAccounts, removeAccountById, scouterIdFor, recordMatchScouted, recordPitScouted,
     getStrategy, setStrategy,
-    getSession, setSession, clearSession, getCachedCred, cacheCred,
+    getSession, setSession, clearSession, getCachedCred, cacheCred, getDevice, setDeviceReg,
     getMembers, getRequests, getRemoved, recordLogin, approveMember, denyRequest, removeMember, addMember, nameKey, mergeRoster,
     getPitSchema, setPitSchema, clearPitSchema,
     getMatchSchema, setMatchSchema, clearMatchSchema,

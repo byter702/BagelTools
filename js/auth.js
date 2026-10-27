@@ -99,7 +99,12 @@ const Auth = (() => {
   }
   async function waitRoster() { if (cloudOn()) await Cloud.whenConfig(5000); }
 
-  function logout() { Store.clearSession(); location.reload(); }
+  // Logging out also takes this device off the account's device list (waits a moment at most).
+  function logout() {
+    const done = () => { Store.clearSession(); location.reload(); };
+    if (!cloudOn() || !Cloud.removeDevice) return done();
+    Promise.race([Cloud.removeDevice(Store.getDevice().id).catch(() => {}), new Promise((r) => setTimeout(r, 1500))]).then(done);
+  }
 
   // Signed out on this device, with a note for the login screen, then a fresh page.
   const REMOVED_MSG = "An admin removed you from the team roster. Ask a team lead if that's a mistake.";
@@ -129,6 +134,49 @@ const Auth = (() => {
       const cur = currentUser(); if (!cur) return;
       if (!c || (cur.cv && c.updatedAt !== cur.cv)) kick(isAccepted(cur.first, cur.last) ? "Your password was reset. Log in again." : REMOVED_MSG);
     });
+    trackDevice();
+  }
+
+  /* ---- Signed-in devices (Settings → Your devices) ---------------------------
+     Every browser that signs in has a devices/{id} doc. Signing a device out from
+     another one deletes that doc; the device sees it disappear and logs out. */
+  const SIGNED_OUT_MSG = "You were signed out from another device.";
+  function deviceInfo() {
+    const ua = navigator.userAgent || "";
+    const os = /iPhone/.test(ua) ? "iPhone" : (/iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)) ? "iPad"
+      : /Android/.test(ua) ? (/Mobile/.test(ua) ? "Android phone" : "Android tablet") : /CrOS/.test(ua) ? "Chromebook"
+      : /Windows/.test(ua) ? "Windows PC" : /Macintosh/.test(ua) ? "Mac" : /Linux/.test(ua) ? "Linux PC" : "Device";
+    const br = /Edg\//.test(ua) ? "Edge" : /SamsungBrowser/.test(ua) ? "Samsung Internet" : /OPR\//.test(ua) ? "Opera"
+      : /Firefox|FxiOS/.test(ua) ? "Firefox" : /Chrome|CriOS/.test(ua) ? "Chrome" : /Safari/.test(ua) ? "Safari" : "Browser";
+    return { label: os + " · " + br, kind: /iPhone|phone/.test(os) ? "phone" : /iPad|tablet/.test(os) ? "tablet" : "computer" };
+  }
+  let deviceWatching = false, lastTouch = 0;
+  async function trackDevice() {
+    const s = currentUser(); if (!s || !cloudOn() || !Cloud.getDevice) return;
+    const dev = Store.getDevice(), uid = Store.scouterIdFor(s.first, s.last);
+    let doc;
+    try { doc = await Cloud.getDevice(dev.id); } catch (e) { return; } // offline: next time
+    if (!currentUser()) return;
+    if (doc && doc.uid === uid && dev.reg === s.ts) { lastTouch = Date.now(); Cloud.touchDevice(dev.id); }
+    else if (!doc && dev.reg === s.ts) return kick(SIGNED_OUT_MSG); // signed out elsewhere while this one was closed
+    else {
+      const info = deviceInfo(), now = Date.now();
+      try { await Cloud.setDevice(dev.id, { uid, name: s.first + " " + s.last, label: info.label, kind: info.kind, created: now, lastSeen: now, session: s.ts }); }
+      catch (e) { return; }
+      Store.setDeviceReg(s.ts); lastTouch = now;
+    }
+    if (deviceWatching) return;
+    deviceWatching = true;
+    Cloud.watchDevice(dev.id, (d) => {
+      const cur = currentUser();
+      if (cur && !d && Store.getDevice().reg === cur.ts) kick(SIGNED_OUT_MSG);
+    });
+  }
+  // "Last active" on the device list: refreshed at most every 30 minutes.
+  function touchDevice() {
+    if (!currentUser() || !cloudOn() || !Cloud.touchDevice || Date.now() - lastTouch < 30 * 60 * 1000) return;
+    if (Store.getDevice().reg !== currentUser().ts) return;
+    lastTouch = Date.now(); Cloud.touchDevice(Store.getDevice().id);
   }
 
   /* ---- Screen --------------------------------------------------------------- */
@@ -505,6 +553,6 @@ const Auth = (() => {
     }, 600);
   }
 
-  return { currentUser, isLoggedIn, logout, showLogin, checkSession, enforceRoster, watchSession, properName };
+  return { currentUser, isLoggedIn, logout, showLogin, checkSession, enforceRoster, watchSession, touchDevice, properName };
 })();
 window.Auth = Auth;

@@ -4238,3 +4238,66 @@ button.pb-row:hover { background: color-mix(in srgb, var(--ally) 12%, var(--surf
   .pb-m.next, .pb-trophy, .pb-live, .pb-st i { animation: none; }
   .pb-pw-bar i, .pb-meter i, .pb-nbar i, .pb-al, .pb-ch, .pb-canvas.intro .pb-m, .pb-hero { animation: none; }
 }
+
+/* ==== v122: admins, member visibility, devices, slim scouting banner, database warning ==== */
+/* Match Scouting: the "now scouting" banner shrinks to a slim bar */
+.ms-min { flex: none; display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; cursor: pointer; color: inherit;
+  border: 1px solid color-mix(in srgb, currentColor 30%, transparent); background: color-mix(in srgb, currentColor 10%, transparent); transition: background .15s ease, transform .1s ease; }
+.ms-min:hover { background: color-mix(in srgb, currentColor 20%, transparent); }
+.ms-min:active { transform: scale(.92); }
+.ms-min .ico { width: 18px; height: 18px; transform: rotate(180deg); transition: transform .3s cubic-bezier(.2,.9,.25,1.2); }
+.ms-banner .thero-id + .ms-min { margin-left: auto; }
+.ms-qtag { display: none; }
+.ms-banner.min { padding: 8px 10px 8px 22px; gap: 10px; }
+.ms-banner.min .ms-band { width: 7px; }
+.ms-banner.min .thero-av { width: 34px; height: 34px; border-radius: 10px; border-width: 2px; }
+.ms-banner.min .thero-id { flex-direction: row; align-items: baseline; gap: 8px; flex: 1; min-width: 0; }
+.ms-banner.min .ms-eyebrow { display: none; }
+.ms-banner.min .ms-qtag { display: inline; font-family: var(--font-display); font-weight: 800; font-size: .72rem; letter-spacing: .06em; opacity: .8; }
+.ms-banner.min .thero-num { font-size: 1.2rem; }
+.ms-banner.min .thero-name { font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ms-banner.min .ms-ally-pill { margin-left: 0; padding: 5px 10px; font-size: .6rem; }
+.ms-banner.min .ms-desel { min-height: 32px; }
+.ms-banner.min .ms-min { width: 32px; height: 32px; }
+.ms-banner.min .ms-min .ico { transform: none; }
+@media (max-width: 560px) {
+  .ms-banner.min .ms-ally-pill { display: none; }
+  .ms-banner.min .thero-name { font-size: .8rem; }
+}
+
+/* Admin → Members */
+.ad-members td { vertical-align: middle; }
+.ad-members tr.ad-hid td { opacity: .55; }
+.ad-members tr.ad-hid td:nth-last-child(2) { opacity: 1; }
+.ad-eye.off { color: var(--text-mut); border-style: dashed; }
+.ad-shield { color: var(--text-mut); }
+.ad-shield.on { color: var(--on-primary); background: var(--primary); border-color: transparent; }
+.ad-shield.owner { color: var(--on-secondary); background: var(--secondary); cursor: default; }
+.ad-legend { margin: 10px 2px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.ad-legend .ico { width: 15px; height: 15px; }
+.ad-warn { display: flex; align-items: center; gap: 10px; padding: 10px 12px; margin-bottom: 12px; border-radius: 10px;
+  color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent); }
+.ad-warn .ico { width: 18px; height: 18px; flex: none; }
+.ad-warn span { flex: 1; font-size: .88rem; }
+
+/* Settings → Your devices */
+.dev-list { display: flex; flex-direction: column; gap: 8px; }
+.dev-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--border); }
+.dev-row.me { border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); }
+.dev-ico { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 11px; background: var(--surface-2); color: var(--primary); }
+.dev-ico .ico { width: 22px; height: 22px; }
+.dev-txt { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.dev-txt b { font-size: .95rem; }
+.dev-txt span { font-size: .8rem; color: var(--text-mut); }
+.dev-row .btn { flex: none; }
+
+/* the database refusing us: a red bar everyone sees */
+.db-blocked { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); z-index: 400; width: min(720px, calc(100vw - 24px));
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; border-radius: 14px; color: #fff; background: #c2413b;
+  box-shadow: 0 18px 40px -16px rgba(0,0,0,.6); animation: dsIn .3s ease both; }
+.db-blocked-ico .ico { width: 22px; height: 22px; }
+.db-blocked-txt { display: flex; flex-direction: column; gap: 3px; flex: 1; }
+.db-blocked-txt b { font-family: var(--font-display); font-size: .92rem; letter-spacing: .02em; }
+.db-blocked-txt span { font-size: .86rem; opacity: .95; }
+.db-blocked-x { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; border: 0; cursor: pointer; color: #fff; background: rgba(255,255,255,.18); }
+.db-blocked-x .ico { width: 16px; height: 16px; }
