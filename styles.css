@@ -4586,3 +4586,4 @@ button.pb-row:hover { background: color-mix(in srgb, var(--ally) 12%, var(--surf
 .as-trk { display: inline-flex; align-items: center; gap: 4px; margin-top: 3px; font-style: normal; font-size: .72rem; font-weight: 700; color: var(--success); }
 .as-trk.low { color: var(--warning); }
 .as-trk .ico { width: 12px; height: 12px; }
+.as-lost.check { --c: var(--primary); }

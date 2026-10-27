@@ -258,10 +258,11 @@ const AutoScoutUI = (() => {
       t0: null, roi: { x: 0, y: 0.09, w: 1, h: 0.91 }, hubs: { red: null, blue: null }, corners: null,
       robots: [...teamsOf(m, "red").map((t, i) => ({ team: t, alliance: "red", slot: i })), ...teamsOf(m, "blue").map((t, i) => ({ team: t, alliance: "blue", slot: i }))]
         .map((r) => ({ ...r, box: null, color: SLOT[r.alliance][r.slot] })),
-      tool: "start", pick: null, speed: 1, ask: ls.get("ask", true), asked: {}, lostPrompt: null,
+      tool: "start", pick: null, speed: 1, ask: ls.get("ask", true), asked: {}, lostPrompt: null, check: false, lastPhase: null,
       engine: null, running: false, paused: false, proc: null, lastImg: null, t: 0, rate: [], startWall: 0, lastPanel: 0,
       destroyed: false, raf: 0,
     };
+    if (window.__SANDBOX) window.__asSt = st; // testing only: the read-only sandbox can inspect a session
     const END = cfg.periods[cfg.periods.length - 1].end;
     const official = cfg.official(m);
     const played = m.alliances && m.alliances.red.score >= 0 && official.red && official.blue;
@@ -335,7 +336,8 @@ const AutoScoutUI = (() => {
       if (st.destroyed) return;
       st.yt = new YT.Player($("#asYt", src), {
         videoId: v.id, host: "https://www.youtube-nocookie.com",
-        playerVars: { rel: 0, modestbranding: 1, playsinline: 1, iv_load_policy: 3, start: v.start || 0, origin: location.origin },
+        // no YouTube control bar: it would sit on top of the frame Auto Scout reads (our own buttons seek)
+        playerVars: { rel: 0, controls: 0, disablekb: 1, modestbranding: 1, playsinline: 1, iv_load_policy: 3, fs: 0, start: v.start || 0, origin: location.origin },
         events: { onReady: () => { st.ytReady = true; if (st.step === "video") drawSide(); }, onStateChange: () => { anchorYt(); } },
       });
       drawSide();
@@ -368,8 +370,18 @@ const AutoScoutUI = (() => {
     function play() { if (st.kind === "file") st.fileVid && st.fileVid.play().catch(() => {}); else if (st.yt) st.yt.playVideo(); }
     function pause() { if (st.kind === "file") st.fileVid && st.fileVid.pause(); else if (st.yt) st.yt.pauseVideo(); }
     function isPlaying() { return st.kind === "file" ? !!(st.fileVid && !st.fileVid.paused) : ytPlaying(); }
+    // some files (screen recordings, fragmented MP4s) can't seek: setting the time would
+    // jump to the start, so they just keep playing from where they are
+    function canSeek(t) {
+      if (st.kind !== "file") return true;
+      const r = st.fileVid && st.fileVid.seekable;
+      if (!r || !r.length) return false;
+      for (let k = 0; k < r.length; k++) if (t >= r.start(k) && t <= r.end(k)) return true;
+      return false;
+    }
     function seek(t) {
       t = Math.max(0, t);
+      if (!canSeek(t)) return;
       if (st.kind === "file") { if (st.fileVid) st.fileVid.currentTime = t; }
       else if (st.yt) { st.yt.seekTo(t, true); st.ytAnchor = { raw: t, at: performance.now() }; }
     }
@@ -386,7 +398,7 @@ const AutoScoutUI = (() => {
       try { if ("RestrictionTarget" in window && track.restrictTo) { await track.restrictTo(await RestrictionTarget.fromElement(src)); mode = "element"; } } catch (e) { mode = null; }
       if (!mode) try { if ("CropTarget" in window && track.cropTo) { await track.cropTo(await CropTarget.fromElement(src)); mode = "crop"; } } catch (e) { mode = null; }
       if (!mode) { stream.getTracks().forEach((t) => t.stop()); throw new Error("Pick “This tab” when Chrome asks, so Auto Scout can read the video on this page."); }
-      const cap = st.cap = { stream, track, mode, latest: null, waiters: [], onFrame: null };
+      const cap = st.cap = { stream, track, mode, last: null, lastAt: 0, waiters: [], onFrame: null };
       track.addEventListener("ended", () => { if (st.cap === cap) { st.cap = null; if (st.running) pauseRun("The video connection was stopped."); drawSide(); } });
       const reader = new MediaStreamTrackProcessor({ track }).readable.getReader();
       cap.reader = reader;
@@ -398,6 +410,14 @@ const AutoScoutUI = (() => {
           try {
             if (cap.onFrame) cap.onFrame(fr);
             if (cap.waiters.length) { const w = cap.waiters.splice(0); w.forEach((fn) => fn(fr)); }
+            // a paused video may stop sending frames: keep the latest one (Region Capture
+            // only while our overlay is clear, so it never holds our own drawing)
+            const now = performance.now();
+            if (now - cap.lastAt > 250 && !(cap.mode === "crop" && st.step === "tag" && st.tool !== "start")) {
+              const c = cap.last || document.createElement("canvas");
+              if (c.width !== fr.displayWidth || c.height !== fr.displayHeight) { c.width = fr.displayWidth; c.height = fr.displayHeight; }
+              c.getContext("2d").drawImage(fr, 0, 0); cap.last = c; cap.lastAt = now;
+            }
           } finally { fr.close(); }
         }
       })();
@@ -423,7 +443,16 @@ const AutoScoutUI = (() => {
           res(c);
         };
         st.cap.waiters.push(take);
-        setTimeout(() => { if (n < frameCount) { if (hide) ovl.style.visibility = ""; res(null); } }, 4000);
+        // nothing new coming (a paused video often sends no frames): use the latest one
+        setTimeout(() => {
+          if (n >= frameCount || !st.cap) return;
+          n = frameCount; st.cap.waiters = st.cap.waiters.filter((w) => w !== take);
+          if (hide) ovl.style.visibility = "";
+          const l = st.cap.last;
+          if (!l) return res(null);
+          const c = document.createElement("canvas"); c.width = l.width; c.height = l.height; c.getContext("2d").drawImage(l, 0, 0);
+          res(c);
+        }, 900);
       });
     }
     function fileFrame() {
@@ -488,9 +517,11 @@ const AutoScoutUI = (() => {
     // pointer interaction on the stage while tagging (or fixing a robot while paused)
     let drag = null;
     const HANDLE = 12;
+    // pointer → stage px (the on-screen box can be scaled by a page transition)
+    const stagePt = (e) => { const r = ovl.getBoundingClientRect(); return [(e.clientX - r.left) * stage.clientWidth / (r.width || 1), (e.clientY - r.top) * stage.clientHeight / (r.height || 1)]; };
     ovl.addEventListener("pointerdown", (e) => {
       if (!(st.step === "tag" || (st.step === "track" && st.paused))) return;
-      const rect = ovl.getBoundingClientRect(), sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+      const [sx, sy] = stagePt(e);
       const [nx, ny] = toNorm(sx, sy);
       const near = (ax, ay) => { const [px, py] = toScreen(ax, ay); return Math.hypot(px - sx, py - sy) < HANDLE + 4; };
       if (st.step === "track") { // fixing a robot mid-match
@@ -526,7 +557,7 @@ const AutoScoutUI = (() => {
       if (drag) { ovl.setPointerCapture(e.pointerId); e.preventDefault(); }
     });
     ovl.addEventListener("pointermove", (e) => {
-      const rect = ovl.getBoundingClientRect(), sx = e.clientX - rect.left, sy = e.clientY - rect.top;
+      const [sx, sy] = stagePt(e);
       if (!drag) {
         if (st.step === "tag" || (st.step === "track" && st.paused)) ovl.style.cursor = st.pick != null ? "crosshair" : "default";
         return;
@@ -712,7 +743,7 @@ const AutoScoutUI = (() => {
             </section>`).join("")}</div>
           <div class="as-go">
             <div class="seg as-speed">${(st.kind === "file" ? [1, 2, 3] : [1, 1.5, 2]).map((s) => `<button data-speed="${s}" class="${st.speed === s ? "on" : ""}">${s}×</button>`).join("")}</div>
-            <label class="as-ask"><input type="checkbox" id="asAsk"${st.ask ? " checked" : ""} /><span>Pause and ask me when it loses a robot <small>Most accurate: you tap the robot and it carries on</small></span></label>
+            <label class="as-ask"><input type="checkbox" id="asAsk"${st.ask ? " checked" : ""} /><span>Pause and ask me when it loses a robot <small>Plus a quick check at each period change. Most accurate: a tap fixes a box and it carries on</small></span></label>
             <button class="btn primary" id="asStart"${rd.start && rd.hubs && rd.robots ? "" : " disabled"}>${icon("scan")} Start Auto Scout</button>
             <span class="muted as-eta-pre">${icon("clock")} About ${mmss(END / st.speed + 4)} to watch${st.speed > 1 ? "" : " · 1× is the most accurate"}</span>
           </div></div>`;
@@ -776,13 +807,16 @@ const AutoScoutUI = (() => {
         robots: st.robots.map((r) => ({ team: r.team, alliance: r.alliance, box: boxNToP(p, roi, r.box) })),
       });
       st.step = "track"; st.running = true; st.paused = false; st.pick = null; st.t = 0; st.rate = []; st.view = null; st.lastFrame = null; st.lastProcT = null; st.skip = 0;
+      st.lastPhase = null; st.check = false; st.lostPrompt = null; st.asked = {}; st.lastProcWall = performance.now() + 3000;
       drawSide(); redraw();
       // back to the start of auto (if it moved since it was tagged), then go
       setRate(st.speed);
       if (Math.abs(videoTime() - st.t0) > 0.05) { seek(st.t0); await new Promise((r) => setTimeout(r, 600)); }
       if (!st.running) return;
-      // the first frame the engine sees is the tag still itself (exactly where the robots were tagged)
-      st.engine.step(procOf(st.still, roi).img.data, 0);
+      // A file's first frame is the tag still itself (exactly where the robots were tagged).
+      // YouTube starts from the first live frame instead: a paused player can draw its own
+      // overlays on the still.
+      if (st.kind === "file") st.engine.step(procOf(st.still, roi).img.data, 0);
       st.startWall = performance.now();
       play();
       if (st.kind === "file") fileLoop(); else st.cap.onFrame = onCapFrame;
@@ -794,7 +828,13 @@ const AutoScoutUI = (() => {
       st.engine.step(img.data, t);
       st.t = t; st.view = st.engine.view(t);
       const now = performance.now();
+      st.lastProcWall = now;
       if (st.ask && !st.view.off) {
+        // a quick look at every period change: same-alliance robots can swap boxes
+        // without either one looking lost, and this keeps a swap to one period at most
+        const ph = phaseAt(t).id;
+        if (st.lastPhase && ph !== st.lastPhase) { st.lastPhase = ph; st.check = true; st.pick = null; pauseRun(); return; }
+        st.lastPhase = ph;
         const i = st.view.robots.findIndex((r, k) => r.lostFor > 45 && now - (st.asked[k] || 0) > 12000);
         if (i >= 0) { st.asked[i] = now; st.lostPrompt = i; st.pick = i; pauseRun(); return; }
       }
@@ -807,7 +847,7 @@ const AutoScoutUI = (() => {
       if (st.skip > 0) { st.skip--; return; } // frames that may still show our paused-state drawing
       const t = videoTime() - st.t0;
       if (t >= END) return finishRun();
-      if (t < 0.02) return;
+      if (t < (st.engine.frames ? 0.02 : -0.2)) return;
       if (st.lastProcT != null && t - st.lastProcT < 1 / 34) return;
       st.lastProcT = t;
       // keep the latest frame for fixing robots while paused
@@ -854,13 +894,18 @@ const AutoScoutUI = (() => {
         try { await connectCapture(); } catch (e) { if (e && e.name !== "NotAllowedError") H.toast(e.message || String(e), "err"); return; }
         st.cap.onFrame = onCapFrame;
       }
-      st.paused = false; st.pick = null; st.lostPrompt = null; st.lastProcT = st.t; st.skip = st.cap && st.cap.mode === "crop" ? 4 : 0;
+      st.paused = false; st.pick = null; st.lostPrompt = null; st.check = false; st.lastProcT = st.t; st.lastProcWall = performance.now() + 1500; st.skip = st.cap && st.cap.mode === "crop" ? 4 : 0;
       if (Math.abs(videoTime() - (st.t0 + st.t)) > 0.25) seek(st.t0 + st.t); // back to where reading stopped
       play(); drawSide(); redraw();
     }
     // a video file only gets read while the tab is showing: pause instead of skipping ahead
     const onVis = () => { if (document.hidden && st.running && !st.paused && st.kind === "file") pauseRun("Paused while the tab was in the background"); };
     document.addEventListener("visibilitychange", onVis);
+    // the same if frames stop arriving while the video plays on (a minimized window)
+    const watchdog = setInterval(() => {
+      if (!st.running || st.paused || !isPlaying() || !st.lastProcWall) return;
+      if (performance.now() - st.lastProcWall > (st.kind === "file" ? 1500 : 4000)) pauseRun("Paused: Auto Scout can only read the video while this tab is on screen");
+    }, 700);
     function fixRobot(i, nx, ny) {
       const img = st.lastFrame || st.still; if (!img) return;
       const p = procOf(st.kind === "file" ? (fileFrame() || img) : img, st.roi);
@@ -918,13 +963,16 @@ const AutoScoutUI = (() => {
             ${st.robots.map((r, i) => r.alliance !== al ? "" : `<div class="as-rrow${st.pick === i ? " on" : ""}" data-fix="${i}" style="--c:${r.color}"><i></i><b>${esc(r.team)}</b><span class="as-rbar"><s id="asBar${i}"></s></span><em id="asShots${i}">0</em></div>`).join("")}
           </div>`).join("")}
           <div class="as-field"><canvas id="asMap" width="320" height="156"></canvas><span class="as-field-k"><i></i> in view <i class="est"></i> estimated</span></div>
-          ${st.paused && st.lostPrompt != null ? `<div class="as-lost" style="--c:${st.robots[st.lostPrompt].color}"><b>${icon("target")} Where's ${esc(st.robots[st.lostPrompt].team)}?</b>
+          ${st.paused && st.check && st.lostPrompt == null ? `<div class="as-lost check"><b>${icon("eye")} ${esc(phaseAt(st.t).label)}: quick check</b>
+              <span>Is every box on the right robot? ${st.pick != null ? `Now tap where <b>${esc(st.robots[st.pick].team)}</b> is.` : "If one's wrong, pick its team above, then tap the robot."}</span>
+              <button class="btn primary sm" id="asAllGood">${icon("check")} All good, keep going</button></div>`
+          : st.paused && st.lostPrompt != null ? `<div class="as-lost" style="--c:${st.robots[st.lostPrompt].color}"><b>${icon("target")} Where's ${esc(st.robots[st.lostPrompt].team)}?</b>
               <span>Auto Scout lost it. Tap it on the video and it keeps going.</span>
               <button class="btn ghost sm" id="asHidden">${icon("eye-off")} It's hidden, keep going</button></div>`
           : st.paused ? `<p class="hint as-fixhint">${icon("target")} ${st.pick != null ? `Now tap where <b>${esc(st.robots[st.pick].team)}</b> really is on the video.` : "A box on the wrong robot? Pick that team above, then tap the robot on the video."}</p>`
             : `<p class="hint as-fixhint">${icon("info")} Keep this tab open while it watches. Dashed box = lost robot: pause and tap it back.</p>`}
           <div class="btn-row as-live-ctl">
-            ${st.paused ? `<button class="btn primary sm" id="asResume">${icon("play")} Resume</button>` : `<button class="btn ghost sm" id="asPause">${icon("target")} Pause / fix a robot</button>`}
+            ${st.paused ? (st.check || st.lostPrompt != null ? "" : `<button class="btn primary sm" id="asResume">${icon("play")} Resume</button>`) : `<button class="btn ghost sm" id="asPause">${icon("target")} Pause / fix a robot</button>`}
             <button class="btn ghost sm" id="asStop">${icon("x")} Stop</button>
           </div>
           ${crop ? `<div class="as-vision-wrap"><canvas id="asVision"></canvas><span>What Auto Scout sees</span></div>` : ""}
@@ -932,6 +980,7 @@ const AutoScoutUI = (() => {
       under.innerHTML = `<div class="as-timeline">${cfg.periods.map((p, i) => { const s = i ? cfg.periods[i - 1].end : 0; return `<div class="as-tl-seg" style="flex:${p.end - s}"><span>${esc(p.short)}</span></div>`; }).join("")}<i class="as-tl-head" id="asHead"></i></div>`;
       const ps = $("#asPause", side); if (ps) ps.onclick = () => pauseRun();
       const rs = $("#asResume", side); if (rs) rs.onclick = resumeRun;
+      const ag = $("#asAllGood", side); if (ag) ag.onclick = () => { st.check = false; resumeRun(); };
       const hd = $("#asHidden", side); if (hd) hd.onclick = () => { if (st.lostPrompt != null) st.asked[st.lostPrompt] = performance.now() + 8000; st.lostPrompt = null; resumeRun(); };
       $("#asStop", side).onclick = () => H.confirmDialog("Stop Auto Scout? This match's tracking so far is thrown away.", () => { st.running = false; pause(); if (st.cap) st.cap.onFrame = null; st.step = "tag"; drawSide(); redraw(); });
       $$("[data-fix]", side).forEach((b) => b.onclick = () => { if (!st.paused) pauseRun(); st.pick = Number(b.dataset.fix); drawSide(); redraw(); });
@@ -1053,7 +1102,7 @@ const AutoScoutUI = (() => {
       destroy() {
         st.destroyed = true; st.running = false;
         clearInterval(clockTimer); cancelAnimationFrame(st.raf); ro.disconnect();
-        document.removeEventListener("visibilitychange", onVis);
+        document.removeEventListener("visibilitychange", onVis); clearInterval(watchdog);
         if (st.fileVid && st.vfc) try { st.fileVid.cancelVideoFrameCallback(st.vfc); } catch (e) {}
         clearSource();
       },

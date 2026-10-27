@@ -123,7 +123,7 @@ const AutoScout = (() => {
   }
   function boxFromBumper(b, W, H) {
     const bw = b.x1 - b.x0 + 1, pad = Math.max(2, bw * 0.08);
-    const w = bw + pad * 2, h = Math.max(w * 0.8, (b.y1 - b.y0 + 1) * 2.6);
+    const w = bw + pad * 2, h = Math.min(w * 1.1, Math.max(w * 0.8, (b.y1 - b.y0 + 1) * 2.6));
     const x = Math.max(0, b.x0 - pad), bottom = Math.min(H - 1, b.y1 + pad);
     return { x, y: Math.max(0, bottom - h), w: Math.min(w, W - x), h: Math.min(h, bottom) };
   }
@@ -158,7 +158,37 @@ const AutoScout = (() => {
     const W = cfg.width, H = cfg.height, N = W * H, u = W / 640;
     const isPiece = PIECES[cfg.piece] || PIECES.yellow;
     const cls = new Uint8Array(N), mov = new Uint8Array(N), fresh = new Uint8Array(N);
-    const prev1 = new Uint8Array(N), prev2 = new Uint8Array(N);
+    const prev1 = new Uint8Array(N), prev2 = new Uint8Array(N), still = new Uint8Array(N); // still: frames in a row piece-colored
+    // The field's own red and blue (ramps, walls, hub sides): red/blue pixels in the first
+    // frame outside every tagged robot. Not bumpers, so they never count as one.
+    const fieldCol = new Uint8Array(N), colRun = new Uint16Array(N), inBox = new Uint8Array(N);
+    // Field color hidden in the first frame (someone standing in front of a ramp) is
+    // learned later: red/blue that stays put for 3 s outside every robot box is field.
+    function learnFieldColors(boxes) {
+      inBox.fill(0);
+      boxes.forEach((b) => {
+        const x0 = Math.max(0, Math.floor(b.x - b.w * 0.15)), x1 = Math.min(W - 1, Math.ceil(b.x + b.w * 1.15));
+        const y0 = Math.max(0, Math.floor(b.y - b.h * 0.15)), y1 = Math.min(H - 1, Math.ceil(b.y + b.h * 1.2));
+        for (let y = y0; y <= y1; y++) inBox.fill(1, y * W + x0, y * W + x1 + 1);
+      });
+      const need = 30; // calls (every 3rd frame): about 3 s
+      for (let i = 0; i < N; i++) {
+        if (cls[i] & 6) { if (colRun[i] < 65535) colRun[i]++; if (colRun[i] >= need && !inBox[i] && !fieldCol[i]) fieldCol[i] = 1; }
+        else colRun[i] = 0;
+      }
+    }
+    function markFieldColors() {
+      const bx = cfg.robots.map((r) => r.box);
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        if (!(cls[i] & 6)) continue;
+        if (bx.some((b) => x > b.x - b.w * 0.15 && x < b.x + b.w * 1.15 && y > b.y - b.h * 0.15 && y < b.y + b.h * 1.2)) continue;
+        fieldCol[i] = 1;
+      }
+      // a little margin, so the edge of a ramp doesn't flicker in and out
+      for (let y = 1; y < H - 1; y++) for (let x = 1; x < W - 1; x++) { const i = y * W + x; if (fieldCol[i] === 1) { if (!fieldCol[i - 1]) fieldCol[i - 1] = 2; if (!fieldCol[i + 1]) fieldCol[i + 1] = 2; if (!fieldCol[i - W]) fieldCol[i - W] = 2; if (!fieldCol[i + W]) fieldCol[i + W] = 2; } }
+    }
+    const near1 = new Uint8Array(N), rowTmp = new Uint8Array(N); // near1: piece-colored within a few px a frame ago
     const stack = new Int32Array(N);
     const thumbNow = new Float32Array(32 * 18), thumbRef = new Float32Array(32 * 18);
     let warm = 0, frames = 0, skipped = 0, lastT = null, haveRef = false, offField = false, px = null;
@@ -188,7 +218,7 @@ const AutoScout = (() => {
       return {
         i, team: String(r.team), alliance: r.alliance,
         cx: b.x + b.w / 2, cy, vx: 0, vy: 0, k: b.w / sizeAt(cy), aspect: b.h / b.w,
-        tpl: new Float32Array(TS), cost: 18, lost: 0, weak: 0, bumper: 0, bOff: [0, 0.04], sure: 0, seen: 0,
+        tpl: new Float32Array(TS), cost: 18, matches: 0, lost: 0, weak: 0, bumper: 0, bOff: [0, 0.04], sure: 0, seen: 0,
         launched: 0, byPeriod: {}, series: [], heat: new Float32Array(72), makes: 0, misses: 0, passes: 0, traced: 0,
         path: [], // where it was on the field: [t, X, Y, estimated?]
       };
@@ -241,7 +271,7 @@ const AutoScout = (() => {
         for (let i = 0; i < 12; i++) {
           const x = Math.round(cx - w / 2 + (i + 0.5) * w / 12);
           if (x < 0 || x >= W) continue;
-          tot++; if (cls[y * W + x] & bit) hit++;
+          tot++; const k = y * W + x; if ((cls[k] & bit) && !fieldCol[k]) hit++;
         }
       }
       return tot ? hit / tot : 0;
@@ -287,7 +317,7 @@ const AutoScout = (() => {
           const row = y * W;
           let last = -99;
           for (let x = 0; x < W; x++) {
-            const on = cls[row + x] & bit;
+            const on = (cls[row + x] & bit) && !fieldCol[row + x];
             mov[row + x] = on ? 1 : 0;
             if (on) { if (x - last > 1 && x - last <= 4 * u) for (let k = last + 1; k < x; k++) mov[row + k] = 1; last = x; }
           }
@@ -331,9 +361,12 @@ const AutoScout = (() => {
         pairs.forEach(([, ri, di, cx, cy, look, w, h]) => {
           if (usedR.has(ri) || usedD.has(di)) return;
           const r = robots[ri];
-          if (look > Math.max(r.cost * 2.2, r.cost + 26)) return; // a bumper, but it doesn't look like this robot
+          // a bumper that doesn't look like this robot is someone else's... unless this robot
+          // is lost: then its old look is stale, and the nearest free bumper of its color wins
+          const lostLong = r.lost > 15 || r.weak > 15;
+          if (look > (lostLong ? 75 : Math.min(Math.max(r.cost * 2.2, r.cost + 26), 64))) return;
           usedR.add(ri); usedD.add(di);
-          res[ri] = { x: cx, y: cy, c: look, w, h, bumper: true };
+          res[ri] = { x: cx, y: cy, c: look, w, h, bumper: true, reseed: lostLong };
         });
       });
       // 2. no bumper (hidden, turned, blurred): search by look around where it should be
@@ -349,13 +382,16 @@ const AutoScout = (() => {
       }
       robots.forEach((r, i) => {
         const m = res[i];
-        if (m && (m.bumper || m.c < Math.max(r.cost * 1.6, r.cost + 12))) {
+        r.lastC = m ? +m.c.toFixed(1) : null; r.lastB = !!(m && m.bumper);
+        if (m && (m.bumper || m.c < Math.min(r.cost * 1.8 + 12, 58))) {
           const nvx = (m.x - r.cx) / dt, nvy = (m.y - r.cy) / dt;
-          r.vx = r.vx * 0.55 + nvx * 0.45; r.vy = r.vy * 0.55 + nvy * 0.45;
+          if (m.reseed) { r.vx = 0; r.vy = 0; } else { r.vx = r.vx * 0.55 + nvx * 0.45; r.vy = r.vy * 0.55 + nvy * 0.45; }
           r.cx = m.x; r.cy = m.y; r.lost = 0;
-          r.cost = r.cost * 0.94 + m.c * 0.06;
+          // the first few matches set what "normal" frame-to-frame change looks like for this robot
+          r.cost = r.matches++ < 5 ? Math.max(r.cost * 0.5 + m.c * 0.5, 8) : r.cost * 0.92 + Math.min(m.c, r.cost * 2) * 0.08;
           sampleInto(tmp, r.cx, r.cy, m.w, m.h);
-          for (let k = 0; k < TS; k++) r.tpl[k] += (tmp[k] - r.tpl[k]) * 0.06;
+          const a = m.reseed ? 1 : 0.08;
+          for (let k = 0; k < TS; k++) r.tpl[k] += (tmp[k] - r.tpl[k]) * a;
         } else {
           r.lost++;
           r.cx += r.vx * dt; r.cy += r.vy * dt; r.vx *= 0.8; r.vy *= 0.8;
@@ -386,23 +422,88 @@ const AutoScout = (() => {
       if (sizes.length >= 8) pieceArea = sizes[Math.floor(sizes.length * 0.45)];
     }
 
+    // last frame's piece pixels, grown by rad px (a separable box dilation)
+    function dilatePrev(rad) {
+      for (let y = 0; y < H; y++) {
+        const row = y * W; let run = -1e9;
+        for (let x = 0; x < W; x++) { if (prev1[row + x]) run = x; rowTmp[row + x] = x - run <= rad ? 1 : 0; }
+        run = 1e9;
+        for (let x = W - 1; x >= 0; x--) { if (prev1[row + x]) run = x; if (run - x <= rad) rowTmp[row + x] = 1; }
+      }
+      for (let x = 0; x < W; x++) {
+        let run = -1e9;
+        for (let y = 0; y < H; y++) { const i = y * W + x; if (rowTmp[i]) run = y; near1[i] = y - run <= rad ? 1 : 0; }
+        run = 1e9;
+        for (let y = H - 1; y >= 0; y--) { const i = y * W + x; if (rowTmp[i]) run = y; if (run - y <= rad) near1[i] = 1; }
+      }
+    }
     // --- 1. launch flow: what leaves each robot, frame by frame ---
+    // Pieces in the band above a robot that moved farther than their own size since the
+    // last frame (no piece pixel within a few px of them a frame ago) are in the air: a
+    // pile a robot is pushing, or a piece rolling, only creeps a few px per frame. How
+    // much of that is up there, over how long a piece takes to rise through the band,
+    // is how many pieces it's launching.
+    const STILL = 8;
+    let BAND_UP = 0.45, BAND_X = 0.05, BIG = 0, SHOW = false, RAD = 0, FAST = false, CARRY = true;
+    const shown = []; // with SHOW: the pixels each robot was credited for in the last frame
+    // Every piece-colored blob this frame, with each pixel's blob id in lab[] (so the
+    // flow can skip pixels of big blobs: a volunteer's yellow shirt isn't fuel).
+    const lab = new Int32Array(N);
+    let comps = [];
+    function labelPieces() {
+      comps = []; lab.fill(0);
+      for (let s0 = 0; s0 < N; s0++) {
+        if (!(cls[s0] & 1) || lab[s0]) continue;
+        const id = comps.length + 1;
+        let sp = 0, n = 0, nn = 0, sx = 0, sy = 0, x0 = W, x1 = 0, y0 = H, y1 = 0;
+        stack[sp++] = s0; lab[s0] = id;
+        while (sp) {
+          const i = stack[--sp], x = i % W, y = (i - x) / W;
+          n++; sx += x; sy += y; if (fresh[i]) nn++;
+          if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+          for (let dy = -1; dy <= 1; dy++) {
+            const yy = y + dy; if (yy < 0 || yy >= H) continue;
+            for (let dx = -1; dx <= 1; dx++) {
+              const xx = x + dx; if (xx < 0 || xx >= W) continue;
+              const j = yy * W + xx;
+              if ((cls[j] & 1) && !lab[j]) { lab[j] = id; if (sp < stack.length) stack[sp++] = j; }
+            }
+          }
+        }
+        comps.push({ x: sx / n, y: sy / n, n, nn, x0, x1, y0, y1 });
+      }
+    }
     function launchFlow(t, dt, boxes) {
-      const pd = Math.max(2, 2 * Math.sqrt(pieceArea / Math.PI)); // a piece's diameter (px)
       robots.forEach((r, ri) => {
         r.seen++; if (!unsure(r)) r.sure++;
         if (unsure(r)) return; // a box that isn't on its robot right now gets no credit
         const b = boxes[ri];
-        const x0 = Math.max(0, Math.floor(b.x - 0.15 * b.w)), x1 = Math.min(W - 1, Math.ceil(b.x + 1.15 * b.w));
-        const y0 = Math.max(0, Math.floor(b.y - 1.0 * b.h)), y1 = Math.min(H - 1, Math.floor(b.y + 0.08 * b.h));
+        // a short band right on top of the robot: its own launches all pass through it,
+        // other robots' arcs are usually higher up by the time they cross it
+        const x0 = Math.max(0, Math.floor(b.x - BAND_X * b.w)), x1 = Math.min(W - 1, Math.ceil(b.x + (1 + BAND_X) * b.w));
+        const y0 = Math.max(0, Math.floor(b.y - BAND_UP * b.h)), y1 = Math.min(H - 1, Math.floor(b.y + 0.08 * b.h));
         if (y1 <= y0 || x1 <= x0) return;
         const reach = Math.max(4, Math.round(b.h * 0.3));
+        const scale = b.w / refW, pa = pieceArea * scale * scale, big = BIG * pa;
+        // a driving robot shoves pieces along at its own speed: skip what's just where
+        // the robot's motion would have carried last frame's pieces
+        const mdx = Math.round(r.vx * dt), mdy = Math.round(r.vy * dt), carry = CARRY && Math.hypot(mdx, mdy) >= 1.5;
         let s = 0;
+        if (SHOW) shown[ri] = [];
         for (let y = y0; y <= y1; y++) {
           const row = y * W;
           for (let x = x0; x <= x1; x++) {
             const i = row + x;
-            if (!fresh[i]) continue;
+            if (!(cls[i] & 1) || (FAST ? near1[i] : still[i] >= STILL) || (big && comps[lab[i] - 1].n > big)) continue;
+            if (carry) {
+              const qx = x - mdx, qy = y - mdy;
+              let moved = false;
+              for (let ky = -1; ky <= 1 && !moved; ky++) for (let kx = -1; kx <= 1; kx++) {
+                const yy = qy + ky, xx = qx + kx;
+                if (yy >= 0 && yy < H && xx >= 0 && xx < W && prev1[yy * W + xx]) { moved = true; break; }
+              }
+              if (moved) continue;
+            }
             let other = false;
             for (let k = 0; k < boxes.length; k++) {
               if (k === ri) continue;
@@ -416,13 +517,13 @@ const AutoScout = (() => {
               if (y + d < H && prev1[i + d * W]) up = 1;
               if (y - d >= 0 && prev1[i - d * W]) dn = 1;
             }
-            s += up ? (dn ? 0.6 : 1) : dn ? 0 : 0.25;
+            const wgt = up ? (dn ? 0.8 : 1) : dn ? 0 : 0.4;
+            s += wgt; if (SHOW && wgt) shown[ri].push(i);
           }
         }
         if (!s) return;
         // pixels → pieces: a rising piece shows up once per frame it spends in the band
-        const scale = b.w / refW, pa = pieceArea * scale * scale, pdi = pd * scale;
-        const perFrame = Math.max(pdi, rise * b.h * dt);
+        const perFrame = Math.max(0.5, rise * b.h * dt); // how far a piece rises per frame (px)
         // no robot launches more than ~25 pieces a second: anything above is noise
         const pieces = Math.min(25 * dt, s / (pa * Math.max(1, (y1 - y0 + 1) / perFrame)));
         if (pieces < 0.05) return;
@@ -503,9 +604,7 @@ const AutoScout = (() => {
     }
     function tracePieces(t, boxes) {
       // a flying piece is a blob that's mostly new (it moved farther than its own size)
-      for (let i = 0; i < N; i++) mov[i] = cls[i] & 1;
-      const found = blobs(mov, W, H, stack, minA, maxA, fresh)
-        .filter((b) => b.nn >= b.n * 0.55 && !robotCoreHit(b.x, b.y, boxes));
+      const found = comps.filter((b) => b.n >= minA && b.n <= maxA && b.nn >= b.n * 0.55 && !robotCoreHit(b.x, b.y, boxes));
       if (found.length > 260) { tracks = []; return; }
       const used = new Uint8Array(found.length), pairs = [];
       tracks.forEach((tr, ti) => {
@@ -551,7 +650,7 @@ const AutoScout = (() => {
       if (!haveRef) { thumbRef.set(thumbNow); haveRef = true; }
       // a replay, a close-up or an ad: wait for the field camera to come back
       if (sceneDiff(thumbNow, thumbRef) > (offField ? 26 : 34)) {
-        offField = true; skipped++; warm = 0; tracks = []; lastT = t;
+        offField = true; skipped++; warm = 0; tracks = []; lastT = t; still.fill(0);
         return { off: true };
       }
       if (offField) { offField = false; robots.forEach((r) => { r.lost = Math.max(r.lost, 16); }); }
@@ -559,16 +658,19 @@ const AutoScout = (() => {
       const dt = lastT == null ? 1 / 30 : Math.max(1 / 90, Math.min(1, t - lastT));
       lastT = t;
       classify(px, N, cls, isPiece);
-      if (frames === 1) { robots.forEach(seedTemplate); const d = detectBumpers(); robots.forEach((r) => bumperOffset(r, d)); measurePiece(); }
+      if (frames === 1) { markFieldColors(); robots.forEach(seedTemplate); const d = detectBumpers(); robots.forEach((r) => bumperOffset(r, d)); measurePiece(); }
       else updateRobots(dt);
       // fresh = piece-colored now but in neither of the last two frames
       for (let i = 0; i < N; i++) fresh[i] = (cls[i] & 1) && !prev1[i] && !prev2[i] ? 1 : 0;
       if (warm >= 3) {
         const boxes = robots.map((r) => boxOf(r));
-        launchFlow(t, dt, boxes);
+        labelPieces();
+        if (frames % 3 === 0) learnFieldColors(boxes);
+        // the flow needs STILL frames of history to tell resting pieces from moving ones
+        if (warm > STILL) { if (FAST) dilatePrev(RAD || Math.max(1, Math.round(0.3 * Math.sqrt(pieceArea / Math.PI) * 2))); launchFlow(t, dt, boxes); }
         tracePieces(t, boxes);
       }
-      for (let i = 0; i < N; i++) { prev2[i] = prev1[i]; prev1[i] = cls[i] & 1; }
+      for (let i = 0; i < N; i++) { const f = cls[i] & 1; prev2[i] = prev1[i]; prev1[i] = f; still[i] = f ? Math.min(255, still[i] + 1) : 0; }
       warm++;
       if (frames % 6 === 0) robots.forEach((r) => { const [X, Y] = fieldPos(r); r.path.push([Math.round(t * 10) / 10, +X.toFixed(3), +Y.toFixed(3), unsure(r) ? 1 : 0]); });
       return { off: false };
@@ -671,7 +773,10 @@ const AutoScout = (() => {
       return { robots: out, frames, skipped, flights: flights.length };
     }
 
-    return { step, view, tally, finish, relocate, periodAt, get frames() { return frames; }, get skipped() { return skipped; } };
+    // for tuning: what each robot's tracker is thinking
+    const debug = () => robots.map((r) => ({ team: r.team, cost: +r.cost.toFixed(1), lastC: r.lastC, bumperHit: r.lastB, bumper: +r.bumper.toFixed(2), lost: r.lost, weak: r.weak }));
+    const tune = (o) => { if (o.bandUp) BAND_UP = o.bandUp; if (o.bandX != null) BAND_X = o.bandX; if (o.big != null) BIG = o.big; if (o.show != null) SHOW = o.show; if (o.rad != null) RAD = o.rad; if (o.fast != null) FAST = o.fast; if (o.carry != null) CARRY = o.carry; };
+    return { step, view, tally, finish, relocate, periodAt, debug, tune, shown: () => shown, get frames() { return frames; }, get skipped() { return skipped; } };
   }
 
   return { create, findRobots, snapBox, homography, applyH, PIECES };
