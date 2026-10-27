@@ -263,29 +263,26 @@
         .catch(function (e) { log("setBBValue failed", e); });
     },
 
-    // Admin: multiply every scouter's Bagel Bucks (e.g. ×4). One transaction per
-    // account so a bet or a scouting reward landing at the same moment isn't lost.
+    // Admin: give every member the same Bagel Bucks at once. An increment, so a bet or
+    // a scouting reward landing at the same moment isn't lost. Logged in config/bbBoosts.
     getBBBoosts: function () { var d = cache.config.bbBoosts; return (d && Array.isArray(d.log)) ? d.log : []; },
-    multiplyAllBB: async function (factor) {
+    giveAllBB: async function (amount, ids) {
       if (!this.enabled()) throw new Error("cloud off");
-      factor = Number(factor);
-      if (!(factor > 1 && factor <= 10)) throw new Error("multiplier must be between 1 and 10");
+      amount = Math.floor(Number(amount));
+      if (!(amount > 0 && amount <= 100000)) throw new Error("pick an amount between 1 and 100,000");
+      ids = Array.from(new Set((ids || []).filter(Boolean)));
+      if (!ids.length) throw new Error("nobody on the roster");
       var m = me(), by = m ? ((m.first || "") + " " + (m.last || "")).trim() : "";
-      var boostOne = function (ref) {
-        return db.runTransaction(function (tx) {
-          return tx.get(ref).then(function (s) {
-            var bb = (s.exists && s.data().bb) || 0;
-            if (!(bb > 0)) return false;
-            tx.update(ref, { bb: Math.round(bb * factor) });
-            return true;
-          });
+      for (var i = 0; i < ids.length; i += 400) { // a batch holds at most 500 writes
+        var batch = db.batch();
+        ids.slice(i, i + 400).forEach(function (id) {
+          batch.set(db.collection("scouters").doc(id), { id: id, bb: firebase.firestore.FieldValue.increment(amount) }, { merge: true });
         });
-      };
-      var snap = await db.collection("scouters").get(), n = 0;
-      for (var i = 0; i < snap.docs.length; i++) { if (await boostOne(snap.docs[i].ref)) n++; }
+        await batch.commit();
+      }
       await db.collection("config").doc("bbBoosts").set({
-        log: firebase.firestore.FieldValue.arrayUnion({ factor: factor, at: Date.now(), by: by, byId: m ? m.id : "", n: n }) }, { merge: true });
-      return n;
+        log: firebase.firestore.FieldValue.arrayUnion({ amount: amount, at: Date.now(), by: by, byId: m ? m.id : "", n: ids.length }) }, { merge: true });
+      return ids.length;
     },
 
     // Lightweight presence ping.

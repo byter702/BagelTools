@@ -6332,14 +6332,14 @@
           : `<p class="hint">Pick an event first (the event button in the top bar), then approve it here.</p>`}
       </div>
       ${(() => {
-        const last = Cloud.getBBBoosts().slice(-1)[0];
+        const last = Cloud.getBBBoosts().slice(-1)[0], n = Object.keys(Store.getMembers()).length;
         return `<div class="card bb-boost" style="margin-top:16px">
-        <div class="row" style="gap:10px;margin-bottom:6px">${icon("zap")}<h3 style="margin:0">Multiply everyone's BB</h3></div>
-        <p class="hint">Multiplies every scouter's Bagel Bucks at once. ×4 turns 120 BB into 480. Each tap runs once, one account at a time.</p>
-        ${last ? `<p class="hint">Last time: <b>×${esc(String(last.factor))}</b> by ${esc(last.by || "an admin")} · ${esc(new Date(last.at).toLocaleString())} (${last.n || 0} accounts)</p>` : ""}
+        <div class="row" style="gap:10px;margin-bottom:6px">${icon("coins")}<h3 style="margin:0">Give everyone BB</h3></div>
+        <p class="hint">Adds the same Bagel Bucks to all ${n} members on the roster at once.</p>
+        ${last ? `<p class="hint">Last time: <b>${last.amount ? "+" + Number(last.amount).toLocaleString() + " BB" : "×" + esc(String(last.factor))}</b> by ${esc(last.by || "an admin")} · ${esc(new Date(last.at).toLocaleString())} (${last.n || 0} accounts)</p>` : ""}
         <div class="row" style="gap:10px;align-items:center;flex-wrap:wrap">
-          <label class="bb-x">× <input type="number" id="bbBoostX" value="4" min="1.5" max="10" step="0.5" style="width:74px" aria-label="Multiplier" /></label>
-          <button class="btn primary sm" id="bbBoostBtn"${Cloud.enabled() ? "" : " disabled"}>${icon("zap")} Multiply everyone's BB</button>
+          <label class="bb-x">+ <input type="number" id="bbGiveAmt" value="50" min="1" max="100000" step="1" style="width:96px" aria-label="Bagel Bucks for everyone" /> BB</label>
+          <button class="btn primary sm" id="bbGiveBtn"${Cloud.enabled() && n ? "" : " disabled"}>${icon("coins")} Give everyone BB</button>
         </div></div>`;
       })()}
       <div class="card" style="margin-top:16px">
@@ -6558,18 +6558,18 @@
       toast(on ? "BB earning approved for this event (team-wide)" : "BB earning turned off");
       renderAdmin(root);
     };
-    const boostBtn = $("#bbBoostBtn", root);
-    if (boostBtn) boostBtn.onclick = () => {
-      const x = Number($("#bbBoostX", root).value);
-      if (!(x > 1 && x <= 10)) return toast("Pick a multiplier between 1 and 10", "err");
-      const rich = allScouters().filter((sc) => (sc.bb || 0) > 0).sort((a, b) => (b.bb || 0) - (a.bb || 0));
-      const ex = rich.slice(0, 2).map((sc) => `${scouterName(sc)} ${sc.bb} → ${Math.round(sc.bb * x)}`).join(", ");
+    const giveBtn = $("#bbGiveBtn", root);
+    if (giveBtn) giveBtn.onclick = () => {
+      const amt = Math.floor(Number($("#bbGiveAmt", root).value));
+      if (!(amt > 0 && amt <= 100000)) return toast("Pick an amount between 1 and 100,000", "err");
+      // every member on the roster, by their account id
+      const ids = Object.values(Store.getMembers()).map((m) => Store.scouterIdFor(m.first, m.last));
       const last = Cloud.getBBBoosts().slice(-1)[0];
-      const again = last && Date.now() - last.at < 3 * 864e5 ? ` Heads up: ${last.by || "an admin"} already multiplied by ×${last.factor} ${timeAgo(last.at)}.` : "";
-      confirmDialog(`Multiply all ${rich.length} balances by ×${x}? (${ex}${rich.length > 2 ? ", …" : ""})${again}`, async () => {
-        boostBtn.disabled = true; boostBtn.textContent = "Multiplying…";
-        try { const n = await Cloud.multiplyAllBB(x); toast(`Done: ${n} balances ×${x}`); }
-        catch (e) { toast("Couldn't multiply: " + (e.message || e), "err"); }
+      const again = last && Date.now() - last.at < 864e5 ? ` Heads up: ${last.by || "an admin"} already gave everyone ${last.amount ? last.amount + " BB" : "a boost"} ${timeAgo(last.at)}.` : "";
+      confirmDialog(`Give ${amt.toLocaleString()} BB to all ${ids.length} members?${again}`, async () => {
+        giveBtn.disabled = true; giveBtn.textContent = "Giving…";
+        try { const n = await Cloud.giveAllBB(amt, ids); toast(`Done: +${amt.toLocaleString()} BB to ${n} members`); }
+        catch (e) { toast("Couldn't give BB: " + (e.message || e), "err"); }
         if (root.isConnected) renderAdmin(root);
       });
     };
