@@ -746,7 +746,7 @@
         ["members", "Members", "teams", "Leaderboard and roster"]] },
     { id: "scouting", name: "Scouting", icon: "binoculars", accent: "#5bbde2", blurb: "Scout every match and pit, then build the pick list",
       pages: [["match", "Match Scouting", "binoculars", "Scout a robot in a match"], ["pit", "Pit Scouting", "robot", "Robot specs and photos"],
-        ["autoscout", "Auto Scout", "scan", "Let the match video scout"],
+        ["autoscout", "Auto Scout", "scan", "Let the match video scout", { ownerOnly: true }],
         ["data", "Data", "database", "Search, rankings, spreadsheet"], ["picklist", "Pick List", "picklist", "Alliances, Mashup, Bracket"]] },
     { id: "statistics", name: "Statistics", icon: "chart", accent: "#4ade80", blurb: "Teams, events and matchups by the numbers",
       pages: [["bagelstats", "Teams", "podium", "EPA leaderboards"], ["compare", "Compare", "compare", "Head to head + charts"],
@@ -762,6 +762,8 @@
   ];
   const ROUTE_APP = { team: "statistics" };
   APPS.forEach((a) => a.pages.forEach((p) => { ROUTE_APP[p[0]] = a.id; }));
+  // pages flagged ownerOnly (Auto Scout, while it's in beta) only show for the owner account
+  const visiblePages = (a) => a.pages.filter((p) => !(p[4] && p[4].ownerOnly) || isOwnerUser());
   const appFor = (route) => APPS.find((a) => a.id === ROUTE_APP[route]) || APPS[0];
   const reduceMotion = () => window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -789,7 +791,7 @@
       nav.dataset.app = appDef.id;
       head.innerHTML = `<span class="ah-ico">${icon(appDef.icon)}</span><div><span class="ah-eye">BagelTools app</span><b>${esc(appDef.name)}</b></div>`;
       head.classList.remove("ah-in"); void head.offsetWidth; head.classList.add("ah-in");
-      nav.innerHTML = `<span class="nv-glow" aria-hidden="true"></span>` + appDef.pages.map(([r, label, ic, blurb], i) =>
+      nav.innerHTML = `<span class="nv-glow" aria-hidden="true"></span>` + visiblePages(appDef).map(([r, label, ic, blurb], i) =>
         `<a class="nv" data-route="${r}" href="#/${r}" style="--i:${i}"><span class="nv-ico">${icon(ic)}</span>
           <span class="nv-txt"><b>${esc(label)}</b><small>${esc(blurb)}</small></span></a>`).join("");
       nav.classList.remove("nv-in"); void nav.offsetWidth; nav.classList.add("nv-in");
@@ -821,7 +823,7 @@
         <span class="ht-mark" aria-hidden="true">${icon(a.icon)}</span>
         <span class="ht-ico">${icon(a.icon)}</span>
         <span class="ht-txt"><b>${esc(a.name)}</b><span>${esc(a.blurb)}</span></span>
-        <span class="ht-pages">${a.pages.map((p) => `<span>${icon(p[2])}${esc(pageLabel(p[0], p[1]))}</span>`).join("")}</span>
+        <span class="ht-pages">${visiblePages(a).map((p) => `<span>${icon(p[2])}${esc(pageLabel(p[0], p[1]))}</span>`).join("")}</span>
         <span class="ht-go">${icon("arrow-right")}</span>
       </a>`;
     };
@@ -900,7 +902,8 @@
     events: { title: "Events", render: renderEventsSearchPage },
     match: { title: "Match Scouting", render: renderMatch },
     pit: { title: "Pit Scouting", render: renderPit },
-    autoscout: { title: "Auto Scout", render: (root) => (window.AutoScoutUI ? AutoScoutUI.page(root) : (root.innerHTML = `<div class="card">${emptyState("scan", "Auto Scout didn't load", "Reload the page to try again.")}</div>`)) },
+    autoscout: { title: "Auto Scout", render: (root) => (!isOwnerUser() ? location.replace("#/match") // owner only for now
+      : window.AutoScoutUI ? AutoScoutUI.page(root) : (root.innerHTML = `<div class="card">${emptyState("scan", "Auto Scout didn't load", "Reload the page to try again.")}</div>`)) },
     bagelstats: { title: "Teams", render: renderBagelStats },
     compare: { title: "Compare", render: renderCompare },
     matchup: { title: "Matchup", render: renderMatchup },
