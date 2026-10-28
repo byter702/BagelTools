@@ -361,11 +361,27 @@ const Parts = (() => {
 
   /* ---- Part changes ------------------------------------------------------------ */
   const partOr = (s, key) => { const r = s.parts[key]; need(r, "Unknown part. Refresh the page."); return r; };
-  const setStage = (key, stage) => mutate((s) => {
-    const r = partOr(s, key), st = stagesFor(effectiveType(r, s), s);
-    r.stage = Math.max(0, Math.min(parseInt(stage, 10) || 0, Math.max(st.length - 1, 0)));
-    r.stageBy = me().id || ""; r.stageAt = Date.now(); return r.stage;
-  });
+  const BB_PER_PART = 50;   // Bagel Bucks paid to a part's assignee(s) when it's finished
+  const setStage = async (key, stage) => {
+    const res = await mutate((s) => {
+      const r = partOr(s, key), st = stagesFor(effectiveType(r, s), s);
+      r.stage = Math.max(0, Math.min(parseInt(stage, 10) || 0, Math.max(st.length - 1, 0)));
+      r.stageBy = me().id || ""; r.stageAt = Date.now();
+      // First time a part reaches its final stage, pay its assignee(s). bbPaid lives
+      // in the (shared) board doc and is set inside the transaction, so a part pays
+      // out exactly once no matter how many devices see it finish (or if it's reopened).
+      let award = [];
+      if (st.length && r.stage === st.length - 1 && !r.bbPaid) {
+        award = s.people.filter((p) => p.uid && (p.parts || []).includes(key)).map((p) => p.uid);
+        if (award.length) r.bbPaid = true;   // lock payout only once someone's actually paid
+      }
+      return { stage: r.stage, award };
+    });
+    if (res.award && res.award.length && window.Cloud && Cloud.addBB) {
+      res.award.forEach((uid) => Cloud.addBB(BB_PER_PART, uid));
+    }
+    return res.stage;
+  };
   const setResolved = (key, v) => mutate((s) => { partOr(s, key).resolved = !!v; });
   const setArchived = (key, v) => mutate((s) => { partOr(s, key).archived = !!v; });
   const removePart = (key) => mutate((s) => { partOr(s, key); delete s.parts[key]; });
@@ -405,12 +421,6 @@ const Parts = (() => {
     const keep = fileIds(after);
     fileIds(before).forEach((id) => { if (!keep.has(id)) deleteFile(id); });
   }
-  const readB64 = (file) => new Promise((res, rej) => {
-    const r = new FileReader();
-    r.onerror = () => rej(new Error("Couldn't read that file."));
-    r.onload = () => res(String(r.result).split(",")[1] || "");
-    r.readAsDataURL(file);
-  });
   // kind: "drawing" (PDF, in-house parts → "Drawing made") or "dxf" (laser cut → "DXF Uploaded").
   async function uploadFile(kind, key, file) {
     const d = db(); if (!d) throw new Error("Uploading needs the cloud connection.");
@@ -419,15 +429,20 @@ const Parts = (() => {
     if (isPdf && !/\.pdf$/i.test(name)) name += ".pdf";
     if (!isPdf && !/\.dxf$/i.test(name)) throw new Error("Please choose a DXF file.");
     if (file.size > MAX_FILE_BYTES) throw new Error(`That file is too large (max ${MAX_FILE_BYTES / 1048576} MB).`);
-    const b64 = await readB64(file);
-    if (!b64) throw new Error("That file is empty.");
-    if (isPdf && atob(b64.slice(0, 8)).slice(0, 5) !== "%PDF-") throw new Error("Only PDF drawings are supported.");
+    let bytes = new Uint8Array(await file.arrayBuffer());
+    if (!bytes.length) throw new Error("That file is empty.");
+    if (isPdf && String.fromCharCode(bytes[0], bytes[1], bytes[2], bytes[3], bytes[4]) !== "%PDF-") throw new Error("Only PDF drawings are supported.");
     const s0 = state(), rec0 = s0.parts[key];
     need(rec0, "Unknown part. Refresh the page.");
     need(effectiveType(rec0, s0) === (isPdf ? "inhouse" : "lasercut"), isPdf ? "Drawings can only go on in-house parts." : "DXF files can only go on laser-cut parts.");
+    // PDFs are stored deflate-compressed (lossless) to use less space; DXFs are stored
+    // byte-for-byte so the laser cutter keeps full precision.
+    let comp = null;
+    if (isPdf) { bytes = await zlib(bytes, false); comp = "deflate"; }
+    const b64 = toB64(bytes);
     const id = rid("f_"), col = d.collection("bpfiles"), n = Math.ceil(b64.length / CHUNK);
     for (let i = 0; i < n; i++) await col.doc(`${id}_${i}`).set({ of: id, i, d: b64.slice(i * CHUNK, (i + 1) * CHUNK) });
-    await col.doc(id).set({ kind, key, name, size: file.size, n, ts: Date.now(), by: me().id || "" });
+    await col.doc(id).set({ kind, key, name, size: file.size, n, comp, ts: Date.now(), by: me().id || "" });
     try {
       await mutate((s) => {
         const r = partOr(s, key);
@@ -446,12 +461,13 @@ const Parts = (() => {
     need(f && f.id, "That file isn't there anymore.");
     const col = d.collection("bpfiles"), meta = await col.doc(f.id).get();
     need(meta.exists, "That file isn't there anymore.");
-    const n = meta.data().n || 0;
+    const n = meta.data().n || 0, comp = meta.data().comp;
     const chunks = await Promise.all(Array.from({ length: n }, (_, i) => col.doc(`${f.id}_${i}`).get()));
     need(chunks.every((c) => c.exists), "Part of that file is missing. Upload it again.");
     const b64 = chunks.map((c) => c.data().d).join("");
-    const bin = atob(b64), bytes = new Uint8Array(bin.length);
+    const bin = atob(b64); let bytes = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    if (comp === "deflate") bytes = await zlib(bytes, true);   // older files have no comp → used as-is
     return { name: f.name, blob: new Blob([bytes], { type: kind === "drawing" ? "application/pdf" : "application/dxf" }) };
   }
 

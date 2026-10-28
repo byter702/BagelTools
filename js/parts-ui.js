@@ -686,35 +686,12 @@ const PartsUI = (() => {
       <p class="hint">In Onshape, open this mechanism's <b>assembly</b> → <b>BOM</b> → <b>⋯ → Export → CSV</b>, then drop the file here. Pasting part names (one per line) or a copied BOM table works too. Parts you already track keep their progress.</p>
       <label class="bp-drop big" id="bpCsvDrop">${icon("upload")}<span>Drop the BOM <b>CSV</b> here or <u>browse</u></span><input type="file" hidden accept=".csv,.tsv,.txt" id="bpCsv" /></label>
       <textarea id="bpImportText" rows="7" placeholder="inhouse-Drive Rail Tube 2x1&#10;3dp-Gearbox Spacer&#10;lasercut-Belly Pan&#10;115T 5M 15mm Wide Belt&#10;composite-Drive Module"></textarea>
-      <details class="bp-comps"><summary>${icon("dashboard")} Composite parts <span class="hint">(${(V.composites || []).length} defined)</span></summary>
-        <p class="hint">A composite is one line in the assembly BOM that's really several parts. Define it once (paste the parts from its own Part Studio) and every import expands it, multiplying quantities.</p>
-        <div id="bpCompList"></div>
-        <input type="text" id="bpCompName" autocomplete="off" placeholder="Composite name, exactly as it reads in the BOM" />
-        <textarea id="bpCompText" rows="3" placeholder="Its parts, one per line (quantity in the last column)"></textarea>
-        <div class="btn-row"><button class="btn ghost sm" type="button" id="bpCompSave">${icon("check")} Save composite</button></div>
-      </details>
       <div class="btn-row"><button class="btn ghost" type="button" id="bpPreview">${icon("search")} Preview</button>
         <button class="btn primary" type="button" id="bpApply" hidden>${icon("upload")} Import</button></div>
       <div id="bpSummary" class="bp-summary" hidden></div>
       <div id="bpUndef"></div></div>`, (body, close) => {
       body.closest(".modal").classList.add("bp-wide");
       const text = body.querySelector("#bpImportText"), summary = body.querySelector("#bpSummary"), apply = body.querySelector("#bpApply");
-      const compList = () => {
-        const comps = Parts.view().composites;
-        body.querySelector("#bpCompList").innerHTML = comps.length ? comps.map((c) => `<div class="bp-arow"><span><b>${esc(c.name)}</b> <span class="hint">→ ${plural(c.parts.length, "part type")}, ${c.parts.reduce((s, p) => s + (p[1] || 1), 0)} total</span></span>
-          <span class="bp-rowbtns"><button class="btn ghost sm" type="button" data-cedit="${esc(c.id)}">Edit</button><button class="btn ghost sm bp-danger" type="button" data-cdel="${esc(c.id)}">Delete</button></span></div>`).join("") : `<p class="hint">No composites yet.</p>`;
-      };
-      compList();
-      body.querySelector("#bpCompList").onclick = (e) => {
-        const b = e.target.closest("[data-cedit], [data-cdel]"); if (!b) return;
-        const c = Parts.view().composites.find((x) => x.id === (b.dataset.cedit || b.dataset.cdel)); if (!c) return;
-        if (b.dataset.cdel) return run(Parts.removeComposite(c.id).then(compList), "Composite deleted");
-        body.querySelector("#bpCompName").value = c.name; body.querySelector("#bpCompText").value = c.parts.map((p) => `${p[0]}\t${p[1]}`).join("\n");
-      };
-      body.querySelector("#bpCompSave").onclick = () => {
-        const n = body.querySelector("#bpCompName").value.trim();
-        run(Parts.addComposite(n, body.querySelector("#bpCompText").value).then(() => { body.querySelector("#bpCompName").value = ""; body.querySelector("#bpCompText").value = ""; compList(); }), `Saved ${n}`);
-      };
       const loadFile = (f) => { if (!f) return; const r = new FileReader(); r.onload = () => { text.value = r.result; H.toast(`Loaded ${f.name}`); preview(); }; r.onerror = () => H.toast("Couldn't read that file", "err"); r.readAsText(f); };
       const drop = body.querySelector("#bpCsvDrop");
       body.querySelector("#bpCsv").onchange = (e) => loadFile(e.target.files[0]);
@@ -755,7 +732,7 @@ const PartsUI = (() => {
           dz.addEventListener("paste", (e) => add([...e.clipboardData.items].filter((x) => x.type.startsWith("image/")).map((x) => x.getAsFile()).filter(Boolean)));
           card.querySelector("button").onclick = () => {
             if (!ta.value.trim()) return H.toast("Add the composite's parts first", "err");
-            run(Parts.addComposite(n, ta.value).then(() => { compList(); preview(); }), `Saved ${n}`);
+            run(Parts.addComposite(n, ta.value).then(() => preview()), `Saved ${n}`);
           };
         });
       }
