@@ -839,6 +839,7 @@ const AutoScoutUI = (() => {
         robots: st.robots.map((r) => ({ team: r.team, alliance: r.alliance, box: boxNToP(p, roi, r.box), off: !!r.off })),
       });
       st.wide = false;
+      st.useDet = window.AutoScoutDetect ? await AutoScoutDetect.load() : false;
       st.step = "track"; st.running = true; st.paused = false; st.pick = null; st.t = 0; st.rate = []; st.view = null; st.lastFrame = null; st.lastProcT = null; st.skip = 0;
       st.lastPhase = null; st.check = false; st.lostPrompt = null; st.asked = {}; st.lastProcWall = performance.now() + 3000;
       drawSide(); redraw();
@@ -854,11 +855,22 @@ const AutoScoutUI = (() => {
       play();
       if (st.kind === "file") fileLoop(); else st.cap.onFrame = onCapFrame;
     }
-    function processFrame(drawable, fw, fh, t) {
+    async function processFrame(drawable, fw, fh, t) {
+      if (st.busy) return; // still on the last frame: skip this one
+      st.busy = true;
+      try { await readFrame(drawable, fw, fh, t); } finally { st.busy = false; }
+    }
+    async function readFrame(drawable, fw, fh, t) {
       const r = st.roi, g = st.proc, P = st.procGeo;
       g.drawImage(drawable, r.x * fw, r.y * fh, r.w * fw, r.h * fh, 0, 0, P.W, P.H);
       const img = g.getImageData(0, 0, P.W, P.H);
-      st.engine.step(img.data, t);
+      let boxes = null;
+      if (st.useDet) {
+        try { boxes = await AutoScoutDetect.detect(g.canvas, P.W, P.H); }
+        catch (e) { st.useDet = false; H.toast("The robot detector stopped; using bumpers only", "err"); }
+        if (!st.running) return;
+      }
+      st.engine.step(img.data, t, boxes);
       st.t = t; st.view = st.engine.view(t);
       const now = performance.now();
       st.lastProcWall = now;
@@ -992,6 +1004,7 @@ const AutoScoutUI = (() => {
         <div class="as-panel as-live">
           <div class="as-phase"><span class="as-live-dot${st.paused ? " paused" : ""}"></span><b id="asPhase">${esc(phaseAt(st.t).short)}</b><span class="as-mclock" id="asMClock">${mmss(st.t)}</span></div>
           <div class="as-eta"><b id="asEta">Starting…</b><span id="asEtaSub" class="muted"></span></div>
+          <span class="as-det${st.useDet ? " on" : ""}">${icon(st.useDet ? "zap" : "target")} ${st.useDet ? `Robot detector on (${esc(AutoScoutDetect.backend() === "webgpu" ? "graphics card" : "processor")})` : "Finding robots by their bumpers"}</span>
           ${["red", "blue"].map((al) => `<div class="as-ally ${al}"><div class="as-ally-h"><b>${al === "red" ? "RED" : "BLUE"}</b><span>${official[al] ? `<em>${official[al].total}</em> ${esc(cfg.pieceNamePlural.toLowerCase())} scored` : ""}</span></div>
             ${st.robots.map((r, i) => r.alliance !== al ? "" : `<div class="as-rrow${st.pick === i ? " on" : ""}" data-fix="${i}" style="--c:${r.color}"><i></i><b>${esc(r.team)}</b><span class="as-rbar"><s id="asBar${i}"></s></span><em id="asShots${i}">0</em></div>`).join("")}
           </div>`).join("")}

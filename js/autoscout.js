@@ -387,6 +387,29 @@ const AutoScout = (() => {
       });
       return out;
     }
+    // The detector's robot boxes as candidates. Which alliance: the red vs blue along the
+    // bottom of the box (its bumper); a box with neither clearly is offered to both.
+    function detsFromModel(boxes) {
+      const out = { red: [], blue: [] };
+      boxes.forEach((b) => {
+        const cx = b.x + b.w / 2, yb = b.y + b.h, ew = sizeAt(yb);
+        if (!onField(cx, yb) || b.w < 0.35 * ew || b.w > 2.6 * ew) return;
+        let red = 0, blue = 0;
+        for (let j = 0; j < 5; j++) {
+          const y = Math.round(yb - b.h * 0.4 + (j + 0.5) * b.h * 0.4 / 5); if (y < 0 || y >= H) continue;
+          for (let i = 0; i < 14; i++) {
+            const x = Math.round(b.x + (i + 0.5) * b.w / 14); if (x < 0 || x >= W) continue;
+            const k = y * W + x; if (fieldCol[k]) continue;
+            if (cls[k] & 2) red++; else if (cls[k] & 4) blue++;
+          }
+        }
+        const d = { x: cx, yb, w: b.w, det: b };
+        if (red >= 4 && red > blue * 1.5) out.red.push(d);
+        else if (blue >= 4 && blue > red * 1.5) out.blue.push(d);
+        else { out.red.push(d); out.blue.push(d); }
+      });
+      return out;
+    }
     // A robot's colors as a 64-bin histogram (4 levels per channel) over its box, fuel
     // left out. It stays the same when the robot turns, unlike its look.
     const floorBin = new Uint8Array(64);
@@ -430,8 +453,8 @@ const AutoScout = (() => {
       r.bOff = inBox ? [(r.cx - inBox.x) / b.w, (b.y + b.h - inBox.yb) / b.h] : [0, 0.04];
     }
     let W_DIST = 12, W_LOOK = 0.5, W_COL = 60, W_NONE = 22;
-    function updateRobots(dt) {
-      const dets = detectBumpers();
+    function updateRobots(dt, model) {
+      const dets = model ? detsFromModel(model) : detectBumpers();
       // 1. Bumpers. Every pairing of a robot with a bumper gets a cost (how far from where
       //    the robot should be, how much the box there has its colors and its look, how big
       //    the bumper is); the cheapest way to pair up the whole alliance wins, so two
@@ -446,12 +469,14 @@ const AutoScout = (() => {
           const ex = px0 - r.bOff[0] * w, eyb = py0 + h / 2 - r.bOff[1] * h; // predicted bumper spot
           setOffsets(w, h);
           return cand.map((d) => {
-            const dist = Math.hypot(d.x - ex, (d.yb - eyb) * 1.3);
+            // a detector box is the whole robot; a bumper strip sits at the bottom of it
+            const dist = d.det ? Math.hypot(d.x - px0, (d.yb - (py0 + h / 2)) * 1.3) : Math.hypot(d.x - ex, (d.yb - eyb) * 1.3);
             if (dist > gate) return null;
-            const cx = d.x + r.bOff[0] * w, cy = d.yb + r.bOff[1] * h - h / 2;
+            const cx = d.det ? d.x : d.x + r.bOff[0] * w, cy = d.det ? d.yb - h / 2 : d.yb + r.bOff[1] * h - h / 2;
             const look = lookAt(r, cx, cy), col = colorMatch(r, cx, cy, w, h);
-            const cost = (dist / gate) ** 2 * (lostFor > 30 ? W_DIST / 3 : W_DIST) + Math.max(0, look - r.cost) * W_LOOK + Math.max(0, 0.85 - col) * W_COL + Math.abs(d.w / (0.85 * w) - 1) * 5;
-            return { cost, cx, cy, look, col, w, h };
+            const size = d.det ? Math.abs(d.w / w - 1) * 6 : Math.abs(d.w / (0.85 * w) - 1) * 5;
+            const cost = (dist / gate) ** 2 * (lostFor > 30 ? W_DIST / 3 : W_DIST) + Math.max(0, look - r.cost) * W_LOOK + Math.max(0, 0.85 - col) * W_COL + size;
+            return { cost, cx, cy, look, col, w, h, det: d.det };
           });
         });
         const none = team.map((r) => (Math.max(r.lost, r.weak) > 8 ? W_NONE + 10 : W_NONE)); // cost of "no bumper for this robot"
@@ -466,7 +491,7 @@ const AutoScout = (() => {
         (pick || []).forEach((di, k) => {
           if (di < 0) return;
           const c = C[k][di], r = team[k];
-          res[r.i] = { x: c.cx, y: c.cy, c: c.look, col: c.col, w: c.w, h: c.h, bumper: true, reseed: Math.max(r.lost, r.weak) > 30 && c.col > 0.55 };
+          res[r.i] = { x: c.cx, y: c.cy, c: c.look, col: c.col, w: c.w, h: c.h, bumper: true, det: c.det, reseed: Math.max(r.lost, r.weak) > 30 && c.col > 0.55 };
         });
         // A robot that's off screen comes back as a bumper of its color that nobody else
         // owns and that stays put for a quarter second (nearest to where it was last).
@@ -518,6 +543,7 @@ const AutoScout = (() => {
           r.cost = r.matches++ < 5 ? Math.max(r.cost * 0.5 + m.c * 0.5, 8) : r.cost * 0.92 + Math.min(m.c, r.cost * 2) * 0.08;
           // Only a bumper-confirmed match teaches the tracker how the robot looks (a look-only
           // match could be the floor it just left, and learning that is how boxes get stuck).
+          if (m.det) { r.k += (m.det.w / sizeAt(r.cy) - r.k) * 0.1; r.aspect += (m.det.h / m.det.w - r.aspect) * 0.1; }
           if (m.bumper) {
             if (B_EMA) r.bumper = r.bumper * 0.9 + Math.min(0.5, bumperAt(r, r.cx, r.cy, m.w, m.h)) * 0.1;
             sampleInto(tmp, r.cx, r.cy, m.w, m.h);
@@ -804,7 +830,7 @@ const AutoScout = (() => {
     }
     const sceneDiff = (a, b) => { let s = 0; for (let k = 0; k < a.length; k++) s += Math.abs(a[k] - b[k]); return s / a.length; };
 
-    function step(rgba, t) {
+    function step(rgba, t, model) {
       px = rgba; frames++;
       thumb(thumbNow);
       if (!haveRef) { thumbRef.set(thumbNow); haveRef = true; }
@@ -819,7 +845,7 @@ const AutoScout = (() => {
       lastT = t;
       classify(px, N, cls, isPiece);
       if (frames === 1) { markFieldColors(); learnFloor(); robots.forEach(seedTemplate); const d = detectBumpers(); robots.forEach((r) => bumperOffset(r, d)); measurePiece(); }
-      else { updateRobots(dt); motionCheck(); }
+      else { updateRobots(dt, model); motionCheck(); }
       // fresh = piece-colored now but in neither of the last two frames
       for (let i = 0; i < N; i++) fresh[i] = (cls[i] & 1) && !prev1[i] && !prev2[i] ? 1 : 0;
       if (warm >= 3) {

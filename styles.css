@@ -4587,3 +4587,6 @@ button.pb-row:hover { background: color-mix(in srgb, var(--ally) 12%, var(--surf
 .as-trk.low { color: var(--warning); }
 .as-trk .ico { width: 12px; height: 12px; }
 .as-lost.check { --c: var(--primary); }
+.as-det { display: inline-flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--text-mut); }
+.as-det .ico { width: 14px; height: 14px; }
+.as-det.on { color: var(--success); }
