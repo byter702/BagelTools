@@ -418,6 +418,15 @@
         .catch(function (e) { log("clearTestEvent failed", e); });
     },
     getTestEvent: function () { return cache.config[cfgId("testEvent")] || null; },
+    // ---- Scouting schedule: who signed up + their station assignments, per event ----
+    // Stored as a config doc keyed by eventKey (which already carries the year).
+    getSchedule: function (eventKey) { return eventKey ? (cache.config["sched_" + eventKey] || null) : null; },
+    setSchedule: function (eventKey, doc) {
+      if (!this.enabled() || !eventKey) return Promise.resolve();
+      var full = clean(Object.assign({ updatedAt: Date.now() }, doc || {}));
+      cache.config["sched_" + eventKey] = full;   // optimistic so the page updates instantly
+      return db.collection("config").doc("sched_" + eventKey).set(full).catch(function (e) { log("setSchedule failed", e); });
+    },
     pushRoster: function () {
       if (!this.enabled() || !window.Store) return;
       var members = (Store.getMembers && Store.getMembers()) || {};

@@ -780,6 +780,9 @@ tr.focus-row { background: color-mix(in srgb, var(--secondary) 18%, transparent)
   background: color-mix(in srgb, var(--success) 10%, var(--surface-2)); }
 .ep-row.pinned .ep-item { border-color: color-mix(in srgb, var(--secondary) 55%, transparent);
   background: color-mix(in srgb, var(--secondary) 10%, var(--surface-2)); }
+.ep-row.home .ep-item { border-color: var(--secondary); border-width: 2px;
+  background: color-mix(in srgb, var(--secondary) 18%, var(--surface-2)); box-shadow: 0 6px 18px -10px var(--secondary); }
+.ep-row.home .ep-name { font-weight: 800; }
 .ep-pinmark .ico { width: 13px; height: 13px; color: var(--secondary); fill: var(--secondary); vertical-align: -1px; margin-right: 3px; }
 .ep-pin { flex: none; width: 44px; border-radius: var(--radius-sm); border: 1.5px solid var(--border-strong);
   background: var(--surface-2); color: var(--text-mut); cursor: pointer; display: flex; align-items: center; justify-content: center;
@@ -1369,6 +1372,18 @@ table.lb th.sortable:hover { color: var(--primary); }
 /* ---- Scouting report ---- */
 .sr { display: flex; flex-direction: column; gap: 16px; }
 .sr-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+/* team report "Match trends" chart */
+.sr-graph { margin-top: 12px; }
+.sr-graph .bs-region select { min-width: 150px; }
+.trg { width: 100%; height: auto; display: block; margin-top: 6px; overflow: visible; }
+.trg-grid { stroke: color-mix(in srgb, var(--text) 10%, transparent); stroke-width: 1; }
+.trg-ylab { fill: var(--text-mut); font-size: 11px; text-anchor: end; }
+.trg-xlab { fill: var(--text-mut); font-size: 11px; text-anchor: middle; }
+.trg-line { fill: none; stroke: var(--app); stroke-width: 2.5; stroke-linejoin: round; stroke-linecap: round; }
+.trg-area { fill: color-mix(in srgb, var(--app) 13%, transparent); }
+.trg-dot { fill: var(--app); stroke: var(--surface); stroke-width: 1.5; }
+.trg-mean { stroke: var(--text-mut); stroke-width: 1.5; stroke-dasharray: 4 4; opacity: .65; }
+.trg-meanlab { fill: var(--text-mut); font-size: 10px; font-weight: 800; text-anchor: end; }
 .sr-tile { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: var(--radius); background: var(--surface);
   border: 1.5px solid var(--border-strong); animation: dsIn .4s cubic-bezier(.2,.8,.2,1) both; }
 .sr-tile span { font-size: .7rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--text-mut); }
@@ -1791,6 +1806,22 @@ table.lb th.sortable:hover { color: var(--primary); }
 /* ---- Match scouting ---- */
 .ms-pre { margin-bottom: 16px; }
 .ms-pre-fields { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border-strong); }
+/* scouting schedule (2027) */
+.sch-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.sch-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 999px; font-weight: 700; font-size: .86rem;
+  background: color-mix(in srgb, var(--app) 14%, var(--surface-2)); border: 1px solid color-mix(in srgb, var(--app) 40%, transparent); }
+.sch-chip b { font-family: var(--font-display); color: var(--app); }
+.sch-chip.un { background: var(--surface-2); border-color: var(--border); color: var(--text-mut); }
+.sch-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; margin-top: 4px; }
+.sch-station { display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1.5px solid var(--border);
+  box-shadow: inset 4px 0 0 var(--ally); }
+.sch-station.red { --ally: #f2555a; }
+.sch-station.blue { --ally: #4d8bf0; }
+.sch-st-id { font-family: var(--font-display); font-weight: 800; font-size: .82rem; }
+.sch-st-who { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sch-teams { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 8px; }
+.sch-team { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 6px; border-radius: var(--radius-sm); background: var(--surface-2); border: 1px solid var(--border); font-size: .78rem; color: var(--text-mut); }
+.sch-team b { font-family: var(--font-display); font-size: 1.05rem; color: var(--text); }
 .robot-group.red .rg-label { color: #ff8a8a; } .robot-group.blue .rg-label { color: #7fb4ff; }
 .robot-pick { --ally: var(--primary); position: relative; overflow: hidden; border-width: 2px; padding-bottom: 14px; }
 .robot-pick.red { --ally: #e0564f; } .robot-pick.blue { --ally: #3f7fe0; }
@@ -2145,6 +2176,10 @@ a.tp-tile { text-decoration: none; color: var(--text); transition: transform .15
   background: color-mix(in srgb, currentColor 14%, transparent); color: inherit; }
 .mu-slot-x:hover { background: var(--danger); color: #fff; }
 .mu-slot-x .ico { width: 14px; height: 14px; }
+.mu-slot-move { width: 28px; height: 28px; flex: none; border-radius: 8px; border: 0; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, currentColor 14%, transparent); color: inherit; }
+.mu-slot-move:hover { background: var(--app); color: #fff; }
+.mu-slot-move .ico { width: 15px; height: 15px; }
 .mu-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 16px 12px; text-align: center;
   border-radius: var(--radius); background: var(--surface); border: 1.5px solid var(--border-strong); }
 .mu-vs { font-family: var(--font-display); font-weight: 900; font-size: .8rem; letter-spacing: .3em; color: var(--text-mut); }
