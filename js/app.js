@@ -1609,10 +1609,22 @@
         <div class="card"><div class="sr-head"><h3>${icon("binoculars")} Last teams scouted</h3><span class="hint">${lastM.length ? "newest first" : ""}</span></div>${tiles(lastM, "No matches scouted yet")}</div>
         <div class="card"><div class="sr-head"><h3>${icon("robot")} Last teams pit scouted</h3><span class="hint">${lastP.length ? "newest first" : ""}</span></div>${tiles(lastP, "No pits scouted yet")}</div>
       </div>
+      ${isMe ? `<section class="card mb-discord">
+        <div class="sr-head"><h3>${icon("bell")} Discord</h3><span class="hint">so the Parts bot can @ you when a part's ready</span></div>
+        <label class="field"><span>Your Discord username</span>
+          <div class="btn-row" style="gap:8px">
+            <input type="text" id="discInput" placeholder="e.g. suhaan or suhaan#1234" autocomplete="off" value="${esc(sc.discord || "")}" style="flex:1" />
+            <button class="btn primary sm" id="discSave">${icon("check")} Save</button>
+          </div></label>
+      </section>` : (sc.discord ? `<div class="btn-row" style="margin-top:4px"><span class="badge dot" style="--c:#5865F2">${icon("bell")} Discord: ${esc(sc.discord)}</span></div>` : "")}
       <div class="btn-row" style="margin-top:14px"><a class="btn ghost sm" href="#/members/roster/${encodeURIComponent(sc.id)}">${icon("list")} Everything ${isMe ? "you" : esc(sc.first || "they")} scouted</a></div>`;
     wireTeamTiles(body);
     countUp(body);
     if (isMe) {
+      const disc = $("#discInput", body), discBtn = $("#discSave", body);
+      const saveDisc = () => { const v = disc.value.trim(); Store.setMe({ discord: v }); Cloud.syncMe(); toast(v ? "Discord username saved" : "Discord username cleared"); };
+      if (discBtn) discBtn.onclick = saveDisc;
+      if (disc) disc.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); saveDisc(); } };
       const pic = $("#picInput", body), btn = $("#editPic", body);
       if (btn) btn.onclick = () => pic.click();
       if (pic) pic.onchange = (e) => {
@@ -6649,7 +6661,14 @@
     // ---- Section: Data / danger zone ----
     const dataHTML = (() => {
       const cloudOn = Cloud.enabled();
-      return `<div class="card" style="border-color:rgba(255,90,90,.4)">
+      return `<div class="card" style="margin-bottom:18px">
+        <div class="row" style="gap:10px;margin-bottom:6px">${icon("bell")}<h2 style="margin:0">Parts Discord bot</h2></div>
+        <p class="hint">Posts one message per teammate listing every part of theirs that's <b>ready to make</b> (grouped as <code>@person, your ready parts are:</code>) to the bot's Discord channel. People are matched by the Discord username they set on their profile.</p>
+        ${cloudOn
+          ? `<button class="btn primary" id="pingReadyBtn">${icon("bell")} Ping everyone their ready parts</button>`
+          : `<p class="hint"><span class="badge red dot">Cloud off</span> The Parts bot needs cloud sync.</p>`}
+      </div>
+      <div class="card" style="border-color:rgba(255,90,90,.4)">
         <div class="row" style="gap:10px;margin-bottom:6px">${icon("trash")}<h2 style="margin:0">Danger zone</h2></div>
         <p class="hint">Permanently deletes <b>all shared scouting data</b> from the cloud — every match record, pit record, submitted pick list and tier list, across every device. The roster and form questions are kept. This can't be undone.</p>
         ${cloudOn
@@ -6720,6 +6739,14 @@
     });
 
     // ---- Danger zone handler ----
+    const pingReadyBtn = $("#pingReadyBtn", root);
+    if (pingReadyBtn) pingReadyBtn.onclick = () => {
+      pingReadyBtn.disabled = true;
+      Promise.resolve(Cloud.requestPartsDigest())
+        .then(() => toast("Asked the bot to ping everyone their ready parts"))
+        .catch(() => toast("Couldn't reach the bot", "err"))
+        .finally(() => { setTimeout(() => { if (pingReadyBtn.isConnected) pingReadyBtn.disabled = false; }, 4000); });
+    };
     const clearCloudBtn = $("#clearCloudBtn", root);
     if (clearCloudBtn) clearCloudBtn.onclick = () => confirmDialog(
       "Delete ALL shared scouting data from the cloud (matches, pits, pick lists, tier lists) for every device? This can't be undone.",

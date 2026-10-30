@@ -254,7 +254,7 @@ const Store = (() => {
     let me = accounts[key];
     let dirty = migrated;
     if (!me || typeof me !== "object") { me = {}; dirty = true; }
-    const defaults = { bb: 0, matchCount: 0, pitCount: 0, profilePic: "",
+    const defaults = { bb: 0, matchCount: 0, pitCount: 0, profilePic: "", discord: "",
       lastMatchTeams: [], lastPitTeams: [], pitScoutedTeams: [] };
     me = { ...defaults, ...me };
     const sess = getSession();

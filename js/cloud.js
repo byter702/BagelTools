@@ -237,7 +237,7 @@
       var doc = clean({
         id: m.id, first: m.first || "", last: m.last || "",
         matchCount: m.matchCount || 0, pitCount: m.pitCount || 0,
-        profilePic: m.profilePic || "",
+        profilePic: m.profilePic || "", discord: m.discord || "",
         lastMatchTeams: m.lastMatchTeams || [], lastPitTeams: m.lastPitTeams || [],
         lastSeen: Date.now(), updatedAt: Date.now(),
       });
@@ -418,6 +418,15 @@
         .catch(function (e) { log("clearTestEvent failed", e); });
     },
     getTestEvent: function () { return cache.config[cfgId("testEvent")] || null; },
+    // ---- Discord Parts bot: the app drops a command the bot watches for ----
+    // Bumping `ts` tells the bot to post the "ready parts" digest to its channel.
+    requestPartsDigest: function () {
+      if (!this.enabled()) return Promise.resolve();
+      var m = me();
+      var doc = clean({ type: "digest", ts: Date.now(), byId: m ? m.id : "", byName: m ? ((m.first || "") + " " + (m.last || "")).trim() : "" });
+      cache.config["bot_command"] = doc;
+      return db.collection("config").doc("bot_command").set(doc).catch(function (e) { log("requestPartsDigest failed", e); });
+    },
     // ---- Scouting schedule: who signed up + their station assignments, per event ----
     // Stored as a config doc keyed by eventKey (which already carries the year).
     getSchedule: function (eventKey) { return eventKey ? (cache.config["sched_" + eventKey] || null) : null; },

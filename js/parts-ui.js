@@ -16,8 +16,15 @@ const PartsUI = (() => {
   };
   let activeProject = ls.get("project", null), activeMech = "__all__", activePerson = null, activeAlert = null, expandedKey = null;
   const collapsed = new Set(ls.get("collapsed", []));
+  const secShut = new Set(ls.get("secShut", []));   // collapsed Manufactured / Resolved sections
   let catOrder = ls.get("catOrder", null), catColors = ls.get("catColors", {});
   let V = null, mounted = null, isDragging = false, pending = false;
+  // Render scope controls the pop-in animation: "full" = header + lists animate
+  // (project switch / first open), "mech" = only the lists animate (mechanism switch),
+  // "data" = nothing animates (a part's status changed, or live data arrived).
+  let lastHeadSig = null, pendingScope = null;
+  const SCOPE_RANK = { data: 1, mech: 2, full: 3 };
+  const strongerScope = (a, b) => (SCOPE_RANK[a] || 0) >= (SCOPE_RANK[b] || 0) ? (a || "data") : b;
   let prevKeys = null, prevMine = null;
   const undoStack = [];
   const SWATCHES = ["#7c5cff", "#5b7cff", "#2f80ed", "#58c4dd", "#2fd0a2", "#27ae60", "#b7f36b", "#ffd75e", "#f2a33c", "#ff8c42",
@@ -112,15 +119,18 @@ const PartsUI = (() => {
       });
     }
     prevKeys = keys; prevMine = mine;
-    redraw();
+    redraw("data");   // live data / status changes update silently — no pop-in
   }
-  function redraw() {
+  function redraw(scope) {
     if (!mounted || !mounted.root.isConnected) { mounted = null; return; }
     const a = document.activeElement;
-    if (isDragging || (a && mounted.root.contains(a) && a.matches("input:not([type=file]), textarea") && a.value)) { pending = true; return; }
+    if (isDragging || (a && mounted.root.contains(a) && a.matches("input:not([type=file]), textarea") && a.value)) {
+      pending = true; pendingScope = strongerScope(pendingScope, scope); return;
+    }
     pending = false;
+    const sc = strongerScope(pendingScope, scope); pendingScope = null;
     const y = window.scrollY;
-    mounted.draw(mounted.root);
+    mounted.draw(mounted.root, sc);
     window.scrollTo(0, y);
   }
 
@@ -150,15 +160,37 @@ const PartsUI = (() => {
     return true;
   }
 
-  function board(root) {
+  function board(root, scope) {
     if (!gate(root, board, "Parts")) return;
-    const proj = V.projects.find((p) => p.id === activeProject) || null;
-    const archived = V.projects.filter((p) => p.archived);
+    renderScoped(root, scope || "full");
+  }
+  function headerHTML(proj) {
     const size = Parts.sizeOf();
-    root.innerHTML = `
-      ${projectHeader(proj)}
-      ${size > Parts.SIZE_WARN ? `<div class="card bp-warn">${icon("info")}<span>The parts board is ${Math.round(size / Parts.SIZE_MAX * 100)}% full. Delete projects you don't need anymore to keep room.</span></div>` : ""}
-      ${proj ? projectBody(proj) : startHere()}`;
+    return projectHeader(proj)
+      + (size > Parts.SIZE_WARN ? `<div class="card bp-warn">${icon("info")}<span>The parts board is ${Math.round(size / Parts.SIZE_MAX * 100)}% full. Delete projects you don't need anymore to keep room.</span></div>` : "");
+  }
+  // Signature of everything the header shows, so it only re-renders when it actually changes.
+  function headSig(proj) {
+    return JSON.stringify([proj && proj.id, proj && proj.name, proj && proj.icon,
+      liveProjects().map((p) => [p.id, p.name, !!p.icon]), V.projects.filter((p) => p.archived).map((p) => [p.id, p.name])]);
+  }
+  // Render the board into a persistent #bpHead / #bpBody shell. The header is only
+  // rebuilt (and only animated) on a full/project render; the body rebuilds every time
+  // but only plays the pop-in when the scope is "full" or "mech".
+  function renderScoped(root, scope) {
+    const proj = V.projects.find((p) => p.id === activeProject) || null;
+    if (!root.querySelector("#bpBody")) { root.innerHTML = `<div id="bpHead"></div><div id="bpBody"></div>`; lastHeadSig = null; }
+    const head = root.querySelector("#bpHead"), body = root.querySelector("#bpBody");
+    const sig = headSig(proj);
+    if (scope === "full" || sig !== lastHeadSig) {
+      head.innerHTML = headerHTML(proj);
+      lastHeadSig = sig;
+      const hero = head.querySelector(".bp-hero");
+      if (hero && scope === "full") { hero.classList.remove("bp-animate-head"); void hero.offsetWidth; hero.classList.add("bp-animate-head"); }
+    }
+    body.classList.remove("bp-animate");
+    if (scope === "full" || scope === "mech") { void body.offsetWidth; body.classList.add("bp-animate"); }
+    body.innerHTML = proj ? projectBody(proj) : startHere();
     wireBoard(root);
   }
 
@@ -191,7 +223,7 @@ const PartsUI = (() => {
   function switchProject(id) {
     activeProject = id; ls.set("project", id);
     activeMech = "__all__"; activePerson = activeAlert = expandedKey = null;
-    redraw();
+    redraw("full");   // new project → header + lists both animate
   }
   function newProject() {
     return askText("New project", "Project name (one per robot or season)", "", (name) =>
@@ -335,7 +367,7 @@ const PartsUI = (() => {
       ${full.length ? "" : `<div class="card bp-noparts">${H.emptyState("upload", activePerson || activeAlert ? "Nothing here" : "No parts in progress",
         activePerson || activeAlert ? "No parts match this filter." : "Open a mechanism tab and import its parts from Onshape.")}</div>`}</div>
       <div class="bp-empties"><span class="pg-eyebrow">Empty lists</span>${empty.map((t) => { const info = typeInfo(t);
-        return `<span class="bp-elist" data-type="${esc(t)}" style="--cat:${esc(info.color)}">
+        return `<span class="bp-elist" draggable="true" data-type="${esc(t)}" data-colhead="${esc(t)}" title="Drag to reorder" style="--cat:${esc(info.color)}">
           <button type="button" class="bp-col-ic" data-color="${esc(t)}" aria-label="Pick ${esc(info.label)} color"><span class="bp-dot"></span></button>${esc(info.label)}
           ${info.custom ? `<button type="button" class="bp-col-ic" data-dellist="${esc(t)}" aria-label="Delete ${esc(info.label)}">${icon("x")}</button>` : ""}</span>`; }).join("")}
         <button type="button" class="bp-elist add" data-act="add-list">${icon("plus")} New list</button></div>`;
@@ -404,15 +436,20 @@ const PartsUI = (() => {
       <span class="bp-rowbtns">${btns}</span></li>`;
     const b = (attr, key, label) => `<button type="button" class="btn ghost sm" ${attr}="${esc(key)}">${label}</button>`;
     const sec = (cls, title, sub, items) => items ? `<section class="card bp-list ${cls}"><div class="sr-head"><h3>${title}</h3></div>${sub ? `<p class="hint">${sub}</p>` : ""}<ul>${items}</ul></section>` : "";
+    // collapsible variant (Manufactured, Resolved): a chevron toggles the list open/shut
+    const secC = (cls, key, title, sub, items) => { if (!items) return ""; const shut = secShut.has(key);
+      return `<section class="card bp-list ${cls}${shut ? " shut" : ""}"><div class="sr-head">
+        <button type="button" class="bp-sec-tog" data-sectog="${key}" aria-label="${shut ? "Expand" : "Collapse"}">${icon(shut ? "chevron-right" : "chevron-down")}</button><h3>${title}</h3></div>
+        ${shut ? "" : `${sub ? `<p class="hint">${sub}</p>` : ""}<ul>${items}</ul>`}</section>`; };
     const unsorted = vis.filter((p) => !p.type && !p.resolved && !p.archived);
     const resolved = vis.filter((p) => !p.type && p.resolved && !p.archived);
     const made = vis.filter((p) => p.type && p.done && !p.archived).sort((a, c) => (order.indexOf(a.type) - order.indexOf(c.type)) || a.name.localeCompare(c.name));
     const arch = vis.filter((p) => p.archived);
     return sec("unsorted", `${icon("info")} Unsorted <span class="hint">${unsorted.length}</span>`, `These names don't follow the <code>type-name</code> convention (3dp, fabworks, lasercut, inhouse). Rename them in CAD and re-import, drag one onto a list (or open the list picker), or mark it handled.`,
         unsorted.map((p) => row(p, `<select data-movetype="${esc(p.key)}" aria-label="Put ${esc(p.rawName)} on a list"><option value="">Put on a list…</option>${orderedTypes().map((t) => `<option value="${esc(t)}">${esc(typeInfo(t).label)}</option>`).join("")}</select>${b("data-resolve", p.key, "Resolve")}${b("data-archive", p.key, "Archive")}`, "drag")).join("")) +
-      sec("resolved", `${icon("check")} Resolved <span class="hint">${resolved.length}</span>`, "",
+      secC("resolved", "resolved", `${icon("check")} Resolved <span class="hint">${resolved.length}</span>`, "",
         resolved.map((p) => row(p, b("data-unresolve", p.key, "Send back"), "drag")).join("")) +
-      sec("made", `Manufactured <span class="hint">${made.length}</span>`, "",
+      secC("made", "made", `Manufactured <span class="hint">${made.length}</span>`, "",
         made.map((p) => row(p, `${b("data-reopen", p.key, "Reopen")}${b("data-archive", p.key, "Archive")}`, true)).join("")) +
       sec("arch", `${icon("lock")} Archived <span class="hint">${arch.length}</span>`, "Set aside: they don't count toward any list or the progress bar.",
         arch.map((p) => row(p, `${b("data-unarchive-part", p.key, "Bring back")}${b("data-remove", p.key, "Delete")}`, p.type ? true : null)).join(""));
@@ -449,8 +486,8 @@ const PartsUI = (() => {
       if (d.proj) return switchProject(d.proj);
       if (d.projEdit) return renameProject(d.projEdit);
       if (d.projDel) return deleteProject(d.projDel);
-      if (d.unarchive) return run(Parts.setProjectArchived(d.unarchive, false).then(() => { activeProject = d.unarchive; ls.set("project", activeProject); redraw(); }), "Project is back");
-      if (d.mech) { activeMech = d.mech; activePerson = activeAlert = expandedKey = null; return redraw(); }
+      if (d.unarchive) return run(Parts.setProjectArchived(d.unarchive, false).then(() => { activeProject = d.unarchive; ls.set("project", activeProject); redraw("full"); }), "Project is back");
+      if (d.mech) { activeMech = d.mech; activePerson = activeAlert = expandedKey = null; return redraw("mech"); }   // switch mechanism → only the lists animate
       if (d.open) { expandedKey = expandedKey === d.open ? null : d.open; return redraw(); }
       if (d.stage != null && d.key) { const p = partByKey(d.key); return run(Parts.setStage(d.key, Number(d.stage)).then((st) => { if (p && st === p.stages.length - 1) { expandedKey = null; H.toast(`${p.name} is manufactured`); } })); }
       if (d.unassign) { const pid = d.unassign, key = d.key; return run(Parts.assign(pid, [key], false).then(() => pushUndo("unassign", () => Parts.assign(pid, [key], true)))); }
@@ -462,6 +499,7 @@ const PartsUI = (() => {
       if (d.unresolve) return run(Parts.setResolved(d.unresolve, false));
       if (d.reopen) { const p = partByKey(d.reopen); return run(Parts.setStage(d.reopen, Math.max(0, (p ? p.stages.length : 2) - 2)), "Reopened"); }
       if (d.collapse) { collapsed.has(d.collapse) ? collapsed.delete(d.collapse) : collapsed.add(d.collapse); ls.set("collapsed", [...collapsed]); return redraw(); }
+      if (d.sectog) { secShut.has(d.sectog) ? secShut.delete(d.sectog) : secShut.add(d.sectog); ls.set("secShut", [...secShut]); return redraw(); }
       if (d.color) return colorMenu(d.color, t);
       if (d.dellist) { const c = customTypes().find((x) => x.id === d.dellist); return H.confirmDialog(`Delete the "${c ? c.name : ""}" list?`, () => run(Parts.removeCustomType(d.dellist), "List deleted")); }
       if (d.pick) { activePerson = activePerson === d.pick ? null : d.pick; activeAlert = null; activeMech = "__all__"; expandedKey = null; return redraw(); }

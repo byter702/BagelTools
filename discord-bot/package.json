@@ -1,0 +1,18 @@
+{
+  "name": "bagelparts-discord-bot",
+  "version": "1.0.0",
+  "description": "Pings FRC 702 teammates on Discord when a Bagel Parts part they're assigned to is ready to make.",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "firebase": "^10.14.1"
+  }
+}
