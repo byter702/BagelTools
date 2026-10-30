@@ -150,8 +150,10 @@ function mentionFor(uid) {
 }
 
 async function post(text) {
-  if (!channel) return;
-  for (const chunk of splitMessage(text)) { try { await channel.send(chunk); } catch (e) { console.warn("send failed", e.message); } }
+  if (!channel) return false;
+  let ok = true;
+  for (const chunk of splitMessage(text)) { try { await channel.send(chunk); } catch (e) { ok = false; console.warn("send failed", e.message); } }
+  return ok;
 }
 function splitMessage(text) {   // Discord caps a message at 2000 chars
   const lines = text.split("\n"), out = []; let cur = "";
@@ -170,9 +172,10 @@ async function handleState(s) {
     for (const uid of part.uids) {
       const pair = `${part.key}${SEP}${uid}`;   // SEP is a control char that can't occur in a key or uid
       if (pinged.has(pair)) continue;
-      pinged.add(pair); changed = true;
       const who = mentionFor(uid);
-      if (who) await post(`${who}, you are ready to make ${part.label}.`);
+      if (!who) continue;                            // not linked to a Discord username yet — try again later
+      const ok = await post(`${who}, you are ready to make ${part.label}.`);
+      if (ok) { pinged.add(pair); changed = true; }  // only remember it once it actually sent
     }
   }
   // Prune pairs whose part no longer exists so the doc stays small.
