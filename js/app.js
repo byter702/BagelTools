@@ -734,8 +734,13 @@
   // 702 bagel icon shown for any account without a custom photo — the default
   // profile picture for new accounts and everyone who hasn't uploaded their own.
   const DEFAULT_PFP = "media/702def.png";
-  // The Shop (and the bagel avatars it sells) is owner-only while it's in beta.
-  const shopOn = () => isOwnerUser() && !!window.Avatars;
+  // The Shop (and the bagel avatars it sells) is for the owner + CONFIG.shopBeta while it's in beta.
+  function shopOn() {
+    if (!window.Avatars) return false;
+    if (isOwnerUser()) return true;
+    const u = Auth.currentUser(), me = u ? `${u.first || ""} ${u.last || ""}`.trim().toLowerCase() : "";
+    return !!me && ((window.CONFIG && CONFIG.shopBeta) || []).some((n) => String(n).trim().toLowerCase() === me);
+  }
   // The bagel someone has equipped from the Shop ("" = none), from their cloud doc.
   function bagelOf(sc) {
     if (!sc || !shopOn()) return "";
@@ -935,7 +940,7 @@
     matchup: { title: "Matchup", render: renderMatchup },
     picklist: { title: "Pick List", render: renderPicklist },
     fantasy: { title: "Fantasy", render: renderFantasyPage },
-    shop: { title: "Shop", render: (root) => (!shopOn() ? location.replace("#/home") // owner only for now
+    shop: { title: "Shop", render: (root) => (!shopOn() ? location.replace("#/home") // beta testers only for now
       : window.ShopUI ? ShopUI.page(root) : (root.innerHTML = `<div class="card">${emptyState("shop", "The Shop didn't load", "Reload the page to try again.")}</div>`)) },
     parts: { title: "Parts", render: (root) => PartsUI.board(root) },
     myparts: { title: "My Parts", render: (root) => PartsUI.mine(root) },

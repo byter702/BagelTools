@@ -60,6 +60,8 @@ window.CONFIG = {
   */
   owner: "Samuel Wright",
   approvedMembers: ["Samuel Wright"],
+  // Who sees the Bagel Shop (and bagel avatars) while it's in beta, besides the owner.
+  shopBeta: ["Byter Tester"],
 
   /* --- Season ----------------------------------------------------------------
      The season every device opens on. Anyone can switch years for themselves in
