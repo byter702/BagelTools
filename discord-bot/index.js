@@ -135,10 +135,13 @@ async function refreshMembers() {
     const members = await guild.members.fetch();
     memberByName.clear();
     members.forEach((m) => {
-      memberByName.set(m.user.username.toLowerCase(), m.id);
-      if (m.user.discriminator && m.user.discriminator !== "0") memberByName.set(`${m.user.username}#${m.user.discriminator}`.toLowerCase(), m.id);
+      const add = (v) => { if (v) memberByName.set(String(v).toLowerCase(), m.id); };
+      add(m.user.username);                 // the real @username
+      add(m.user.globalName);               // the account's display name
+      add(m.nickname);                      // their nickname in this server
+      if (m.user.discriminator && m.user.discriminator !== "0") add(`${m.user.username}#${m.user.discriminator}`);
     });
-    console.log(`Resolved ${memberByName.size} member handles.`);
+    console.log(`Resolved ${memberByName.size} member handles across ${members.size} members.`);
   } catch (e) { console.warn("member fetch failed (enable the Server Members Intent?):", e.message); }
 }
 // Turn the username a teammate saved into a real @mention when we can; else plain text.
@@ -146,6 +149,7 @@ function mentionFor(uid) {
   const handle = (scouterDiscord[uid] || "").trim().replace(/^@/, "");
   if (!handle) return null;
   const id = memberByName.get(handle.toLowerCase());
+  if (!id) console.warn(`No Discord member matched "${handle}" — check that profile's username against their real Discord @username.`);
   return id ? `<@${id}>` : `@${handle}`;
 }
 
