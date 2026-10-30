@@ -96,7 +96,8 @@
     const bb = a.bb ? `<span class="sp-bb">+${a.bb} ${BB}</span>` : "";
     const el = document.createElement("div");
     el.className = "scout-pop";
-    el.innerHTML = `<span class="sp-ico">${icon(a.type === "pit" ? "robot" : "binoculars")}</span>
+    const bagel = bagelOf({ id: a.scouterId });
+    el.innerHTML = `${bagel ? Avatars.img(bagel, "sp-av") : `<span class="sp-ico">${icon(a.type === "pit" ? "robot" : "binoculars")}</span>`}
       <span class="sp-text"><b>${esc(name)}</b> ${kind} <b>Team ${esc(a.team || "?")}</b>${where}</span>${bb}`;
     wrap.appendChild(el);
     requestAnimationFrame(() => el.classList.add("in"));
@@ -636,6 +637,9 @@
   // Playoff matches ("SF3", "F1"…) pay double; qualification matches are plain numbers.
   const isPlayoffMatch = (id) => /^(EF|QF|SF|F)\d/i.test(String(id || "").trim());
   const matchBB = (id) => (isPlayoffMatch(id) ? BB_MATCH * 2 : BB_MATCH);
+  // a Shop boost (1.5×, 2×, 3×) multiplies scouting Bagel Bucks while it runs
+  const bbBoost = () => (window.ShopUI && ShopUI.bbMult ? ShopUI.bbMult() : 1);
+  const boostNote = (m) => (m > 1 ? ` (${m}× boost)` : "");
 
   // Cloud module is optional; fall back to safe no-ops if cloud.js is absent.
   const Cloud = window.Cloud || {
@@ -704,6 +708,7 @@
       cur.matchCount = Math.max(cur.matchCount || 0, s.matchCount || 0);
       cur.pitCount = Math.max(cur.pitCount || 0, s.pitCount || 0);
       if (!cur.profilePic && s.profilePic) cur.profilePic = s.profilePic;
+      if (!cur.avatar && s.avatar) cur.avatar = s.avatar;
       if (!(cur.lastMatchTeams || []).length) cur.lastMatchTeams = s.lastMatchTeams || [];
       if (!(cur.lastPitTeams || []).length) cur.lastPitTeams = s.lastPitTeams || [];
       const teams = new Set([...(cur.pitScoutedTeams || []), ...(s.pitScoutedTeams || [])]);
@@ -729,7 +734,18 @@
   // 702 bagel icon shown for any account without a custom photo — the default
   // profile picture for new accounts and everyone who hasn't uploaded their own.
   const DEFAULT_PFP = "media/702def.png";
+  // The Shop (and the bagel avatars it sells) is owner-only while it's in beta.
+  const shopOn = () => isOwnerUser() && !!window.Avatars;
+  // The bagel someone has equipped from the Shop ("" = none), from their cloud doc.
+  function bagelOf(sc) {
+    if (!sc || !shopOn()) return "";
+    const doc = sc.id && (Cloud.getScouters() || []).find((x) => x.id === sc.id);
+    const id = (doc && doc.avatar) || sc.avatar || "";
+    return id && Avatars.has(id) ? id : "";
+  }
   function scouterAvatar(sc, cls = "sc-avatar") {
+    const bagel = bagelOf(sc);
+    if (bagel) return Avatars.img(bagel, cls);
     return `<img class="${cls}" src="${(sc && sc.profilePic) || DEFAULT_PFP}" alt="" />`;
   }
 
@@ -756,6 +772,8 @@
     { id: "parts", name: "Parts", icon: "wrench", accent: "#fb923c", blurb: "Every robot part from Onshape to done, and who's building it",
       pages: [["parts", "Board", "wrench", "Projects, mechanisms, team"], ["myparts", "My Parts", "user", "What you're building"],
         ["partsguide", "Guide", "info", "How Parts works"]] },
+    { id: "shop", name: "Shop", icon: "shop", accent: "#c084fc", hidden: true, blurb: "Bagel avatars and boosts",
+      pages: [["shop", "Shop", "shop", "Packs, bagels and boosts", { ownerOnly: true }]] },
     { id: "fantasy", name: "Fantasy", icon: "crown", accent: "#fb7185", hidden: true, blurb: "Draft robots, win Bagel Bucks",
       pages: [["fantasy", "Fantasy Alliance", "crown", "Your league and draft"]] },
     { id: "system", name: "BagelTools", icon: "settings", accent: "#9fb2c0", hidden: true, blurb: "Settings and admin",
@@ -775,10 +793,11 @@
 
   // ---- sidebar: main links (Home, Profile, Members, Fantasy) on every page,
   // then the open app's own pages below them ----
-  const MAIN_APPS = new Set(["dashboard", "fantasy"]); // their pages ARE the main links
+  const MAIN_APPS = new Set(["dashboard", "fantasy", "shop"]); // their pages ARE the main links
   function renderSidebar(appDef, active) {
     const g = appDef ? active : "home";
     $$("#gnav .gn").forEach((a) => { const on = a.dataset.g === g; a.classList.toggle("on", on); a.setAttribute("aria-current", on ? "page" : "false"); });
+    const shopLink = $('#gnav [data-g="shop"]'); if (shopLink) shopLink.hidden = !shopOn();
     const showApp = !!appDef && !MAIN_APPS.has(appDef.id);
     $("#sbApp").hidden = !showApp;
     if (appDef) document.documentElement.style.setProperty("--app", appDef.accent);
@@ -916,6 +935,8 @@
     matchup: { title: "Matchup", render: renderMatchup },
     picklist: { title: "Pick List", render: renderPicklist },
     fantasy: { title: "Fantasy", render: renderFantasyPage },
+    shop: { title: "Shop", render: (root) => (!shopOn() ? location.replace("#/home") // owner only for now
+      : window.ShopUI ? ShopUI.page(root) : (root.innerHTML = `<div class="card">${emptyState("shop", "The Shop didn't load", "Reload the page to try again.")}</div>`)) },
     parts: { title: "Parts", render: (root) => PartsUI.board(root) },
     myparts: { title: "My Parts", render: (root) => PartsUI.mine(root) },
     partsguide: { title: "Parts Guide", render: (root) => PartsUI.guide(root) },
@@ -3372,7 +3393,9 @@
       let tag = btn.querySelector(".rp-claim");
       if (takenByOther) {
         if (!tag) { tag = document.createElement("span"); tag.className = "rp-claim"; btn.appendChild(tag); }
-        tag.textContent = savedTeams.has(team) ? "✓ scouted" : ("🔒 " + ((claim && claim.scouterName) || "taken"));
+        const cb = !savedTeams.has(team) && claim ? bagelOf({ id: claim.scouterId }) : "";
+        if (cb) tag.innerHTML = Avatars.img(cb, "rp-av") + esc((claim && claim.scouterName) || "taken");
+        else tag.textContent = savedTeams.has(team) ? "✓ scouted" : ("🔒 " + ((claim && claim.scouterName) || "taken"));
       } else if (tag) { tag.remove(); }
     });
   }
@@ -3455,6 +3478,11 @@
     };
   }
 
+  // "Scouting as" with your bagel, while you have one equipped
+  function myBagelChip() {
+    const me = Store.getMe(), b = bagelOf(me);
+    return b ? `<span class="ms-me">${Avatars.img(b, "")}<span>Scouting as <b>${esc(scouterName(me))}</b></span></span>` : "";
+  }
   function renderMatch(root) {
     const s = Store.getSettings();
     // 2027: match scouting is locked until you've signed up on the Schedule page.
@@ -3493,7 +3521,7 @@
     const fmtTime = (unix) => unix ? " · " + new Date(unix * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : "";
     const topCard = liveMode ? `
       <section class="card ms-pre">
-        <div class="sr-head"><h3>${icon("flag")} Pre-Match</h3><span class="badge green dot">Live · ${upcomingQuals.length} ${upcomingQuals.some((m) => m.comp_level !== "qm") ? "matches" : "quals"} left</span></div>
+        <div class="sr-head"><h3>${icon("flag")} Pre-Match</h3>${myBagelChip()}<span class="badge green dot">Live · ${upcomingQuals.length} ${upcomingQuals.some((m) => m.comp_level !== "qm") ? "matches" : "quals"} left</span></div>
         <div class="form-grid">
           <div class="field"><label>Match</label>
             <select id="mMatchSel"><option value="">Select match…</option>${upcomingQuals.map((m) =>
@@ -3504,7 +3532,7 @@
         <input type="hidden" id="mNum" /><input type="hidden" id="mTeam" />
       </section>` : `
       <section class="card ms-pre">
-        <div class="sr-head"><h3>${icon("flag")} Pre-Match</h3>${matchEditId ? `<span class="badge yellow">Editing a record</span>` : ""}</div>
+        <div class="sr-head"><h3>${icon("flag")} Pre-Match</h3>${myBagelChip()}${matchEditId ? `<span class="badge yellow">Editing a record</span>` : ""}</div>
         <div class="form-grid">
           <div class="field"><label>Match #</label><input type="text" id="mNum" placeholder="e.g. 14" inputmode="numeric" autocomplete="off" /></div>
           <div class="field"><label>Team scouted</label>${teamControl}</div>
@@ -3672,14 +3700,14 @@
       const ok = Store.saveMatch(entry);
       if (!ok) { toast("Couldn't save — device storage is full. Export & clear old data (Data tab).", "err"); return; }
       if (isNew) {
-        const earn = canEarnBB(), pay = matchBB(entry.matchNumber);
+        const earn = canEarnBB(), boost = bbBoost(), pay = Math.round(matchBB(entry.matchNumber) * boost);
         Store.recordMatchScouted(team, earn);
         if (earn) Cloud.addBB(pay); // account-based BB, atomic on the cloud
         Cloud.syncMe();
         Cloud.pushMatches();
         Cloud.pushActivity({ type: "match", team, bb: earn ? pay : 0, matchNumber: entry.matchNumber });
         // keep the claim so the robot stays locked for others until the record syncs
-        toast(earn ? `Saved · Team ${team} · +${pay} BB${pay > BB_MATCH ? " (playoffs pay double)" : ""}` : `Saved · Team ${team}`);
+        toast(earn ? `Saved · Team ${team} · +${pay} BB${isPlayoffMatch(entry.matchNumber) ? " (playoffs pay double)" : ""}${boostNote(boost)}` : `Saved · Team ${team}`);
       } else {
         Cloud.pushMatches();
         toast("Match updated");
@@ -3843,13 +3871,13 @@
       const ok = Store.savePit(team, data);
       if (!ok) { toast("Couldn't save — storage full. Remove the photo or export & clear old data (Data tab).", "err"); return; }
       if (isNewPit) {
-        const earn = canEarnBB();
+        const earn = canEarnBB(), boost = bbBoost(), pay = Math.round(BB_PIT * boost);
         Store.recordPitScouted(team, earn);
-        if (earn) Cloud.addBB(BB_PIT); // account-based BB, atomic on the cloud
+        if (earn) Cloud.addBB(pay); // account-based BB, atomic on the cloud
         Cloud.syncMe();
         Cloud.pushPits();
-        Cloud.pushActivity({ type: "pit", team, bb: earn ? BB_PIT : 0 });
-        toast(earn ? `Pit data saved · Team ${team} · +${BB_PIT} BB` : `Pit data saved · Team ${team}`);
+        Cloud.pushActivity({ type: "pit", team, bb: earn ? pay : 0 });
+        toast(earn ? `Pit data saved · Team ${team} · +${pay} BB${boostNote(boost)}` : `Pit data saved · Team ${team}`);
       } else {
         Cloud.pushPits();
         toast(`Pit data saved · Team ${team}`);
@@ -8361,6 +8389,8 @@
     initGlobalSearch();
     // BagelParts (the Parts app) draws with the same helpers as every other page
     PartsUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, notifyBanner, pageHero, emptyState, scouterAvatar, allScouters, scouterName });
+    if (window.ShopUI) ShopUI.init({ $, $$, esc, icon, toast, modal, pageHero, emptyState, reduceMotion,
+      myPhoto: () => Store.getMe().profilePic || DEFAULT_PFP, onAvatarChange: () => refreshChrome() });
     if (window.AutoScoutUI) AutoScoutUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, pageHero, emptyState, nameFor, shortEventName, paintTeamFills, scoutDisplayName });
     const userName = $("#userChipName");
     if (userName) { userName.title = "View your profile"; userName.onclick = () => { location.hash = "#/profile"; }; }
@@ -8411,6 +8441,7 @@
       if (Store.getSettings().eventKey === TEST_EVENT_KEY) settleBetsNow(); // test qual moved: pay out now
       const formNow = (id, fields) => { const f = $("#" + id); return f && !f.dataset.dirty && f.dataset.sig !== formSig(fields); };
       if (current() === "schedule") { router(); return; }   // live sign-ups / station assignments
+      if (current() === "shop" && window.ShopUI) { ShopUI.refresh(); return; }   // balance, packs, boosts
       if (current() === "match") { if (formNow("matchForm", matchFields())) router(); else refreshRobotClaims(); return; }
       if (current() === "pit") {
         if (formNow("pitForm", pitFields())) { router(); return; }

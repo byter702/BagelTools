@@ -41,7 +41,7 @@ shows just that app's pages. Everything shares one account, the member roster, a
 - **Earn** BB by scouting — **+25 BB** per match record and **+15 BB** per newly pit-scouted team —
   but only while an event is live **and** an admin has switched earning on (Admin panel). BB is tied to
   your **account** and shared across all your devices.
-- **Spend** BB on **Bagel Bets** and the **Fantasy Alliance** (below).
+- **Spend** BB on **Bagel Bets**, the **Fantasy Alliance** and the **Bagel Shop** (below).
 - The **Members → Leaderboard** ranks everyone by BB.
 
 Because there's no server, all money moves inside **Firestore transactions**: a bet, refund or payout
@@ -57,6 +57,19 @@ Wager BB on the event as it happens:
 A season-long fantasy league (by grade: Freshman / Sophomore & Junior / Senior). Draft a roster of robots
 with a fantasy budget, earn weekly prizes and chase a grand prize, all paid in BB. Stalled draft turns
 auto-pick after a few minutes so a league never stalls.
+
+### Bagel Shop (beta, owner only)
+A sidebar page (**Shop**) where BB buys collectible **bagel avatars** and **boosts**. While it's in beta only
+the owner account (`CONFIG.owner`) sees the page and the bagel avatars.
+- **Packs** (50 BB): Elemental, Legends and Enchanted. Each rolls a rarity first, then any bagel of that
+  rarity in the pack: Common 50%, Uncommon 25%, Rare 15%, Epic 7%, Legendary 2.5%, Mythic 0.4%, Secret 0.1%.
+  Every rarity has its own opening show, and they get bigger the rarer the pull.
+- **108 bagels**, each an animated SVG (`js/avatars*.js`), drawn from the reference sheets in
+  `media/avatar ref/`. An equipped bagel replaces your profile picture everywhere: the leaderboard, Profile,
+  the scout pop-ups and robot locks on Match Scouting.
+- **Duplicates** sell back for BB. **Boosts** (1.5×, 2× or 3× for an hour) multiply the BB you earn for new
+  match and pit records.
+- Everything is stored on your `scouters/{id}` doc (`avatars`, `avatar`, `boost`) and changed in transactions.
 
 ---
 
@@ -144,7 +157,7 @@ World/State numbers come from Statbotics (needs internet; everything else keeps 
 | Data | Where it lives |
 |------|----------------|
 | Your scouting (match/pit) records | Your browser (localStorage), **offline-first**; mirrored to Firestore when cloud sync is on |
-| Accounts, Bagel Bucks, presence, leaderboard | **Firestore** (`scouters/…`) — account-based, shared across devices |
+| Accounts, Bagel Bucks, presence, leaderboard, Shop bagels + boosts | **Firestore** (`scouters/…`) — account-based, shared across devices |
 | Bets, alliance predictions, brackets, Fantasy | **Firestore** (transactions) — `betlines`, `bets`, `apreds`, `brackets`, `fantasy` |
 | Parts board + files | **Firestore** — `bparts/state` (one transactional doc) + `bpfiles/` (chunked PDFs/DXFs) |
 | Auto Scout results | This browser, plus **Firestore** `autoscout/{matchKey}` (per season) when the rules allow it |
@@ -207,6 +220,9 @@ js/cloud.js           Firebase Firestore sync + presence (no-op when unconfigure
 js/bets.js            Bagel Bets + Fantasy Alliance (match pools, predictions, brackets, draft)
 js/parts.js           Parts data model on Firestore (ported from bagel-parts/server.py)
 js/parts-ui.js        Parts board / My Parts / Guide UI
+js/avatars.js         Bagel avatars: catalog, rarities, packs, the SVG drawing kit
+js/avatars-art-*.js   The 108 bagel drawings (bakery = common/uncommon/rare, then epic, legendary, mythic + secret)
+js/shop.js            The Bagel Shop page, its transactions and the pack-opening shows
 js/app.js             The hub, router and all the views
 assets/, media/       Logos and images
 ```
