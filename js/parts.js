@@ -131,6 +131,9 @@ const Parts = (() => {
     s.projects.forEach((p) => { p.archived = !!p.archived; });
     const valid = new Set(Object.keys(s.parts));
     s.people.forEach((p) => { delete p.mechs; p.parts = (p.parts || []).filter((k) => valid.has(k)); });
+    // Discord ready-pings already sent, keyed part -> { uid: ts }; drop any whose part is gone.
+    s.pinged = (s.pinged && typeof s.pinged === "object") ? s.pinged : {};
+    Object.keys(s.pinged).forEach((k) => { if (!valid.has(k)) delete s.pinged[k]; });
     const orphans = s.mechanisms.filter((m) => !m.project);
     if (orphans.length) {
       let proj = s.projects[0];
@@ -186,6 +189,32 @@ const Parts = (() => {
     return out;
   }
   const sizeOf = () => JSON.stringify(state()).length;
+
+  // Discord ready-pings: record (part, person) pairs so only ONE open tab posts
+  // each one. Returns the pairs THIS call newly claimed (to post). With seed=true
+  // it just adopts the current board as the baseline (marks them, posts nothing)
+  // so turning the feature on doesn't ping every already-ready part at once.
+  // Writes the board only when something actually changed, to spare write quota.
+  async function claimReadyPings(pairs, seed) {
+    const d = db(); if (!d) return [];
+    let claimed = [];
+    await d.runTransaction(async (tx) => {
+      claimed = [];
+      const snap = await tx.get(stateRef(d));
+      const s = normalize(snap.exists ? snap.data() : {});
+      const wasSeeded = !!s.pingSeeded;
+      (pairs || []).forEach(([key, uid]) => {
+        if (!s.parts[key]) return;
+        const m = s.pinged[key] = s.pinged[key] || {};
+        if (!m[uid]) { m[uid] = Date.now(); claimed.push([key, uid]); }
+      });
+      if (seed) s.pingSeeded = true;
+      if (!claimed.length && !(seed && !wasSeeded)) return;   // nothing changed → don't write
+      s.rev = (Number(s.rev) || 0) + 1; s.updatedAt = Date.now(); s.by = me().id || ""; s.byName = myName();
+      tx.set(stateRef(d), s);
+    });
+    return seed ? [] : claimed;
+  }
 
   /* ---- What the pages draw ---------------------------------------------------- */
   function view() {
@@ -556,7 +585,7 @@ const Parts = (() => {
   return {
     STAGES, TYPE_ORDER, TYPE_INFO, SIZE_WARN, SIZE_MAX, MAX_FILE_BYTES,
     watch, isReady: () => ready, onChange: (cb) => { cbs.push(cb); return () => { cbs = cbs.filter((x) => x !== cb); }; },
-    listenError: () => listenErr, view, state, sizeOf, typeInfo, classify, parseLines, readyToMake,
+    listenError: () => listenErr, view, state, sizeOf, typeInfo, classify, parseLines, readyToMake, claimReadyPings,
     addProject, removeProject, renameProject, setProjectArchived, setProjectIcon,
     addMechanism, removeMechanism, updateMechanism,
     addPerson, removePerson, updatePerson, assign,

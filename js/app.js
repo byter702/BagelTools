@@ -1610,19 +1610,24 @@
         <div class="card"><div class="sr-head"><h3>${icon("robot")} Last teams pit scouted</h3><span class="hint">${lastP.length ? "newest first" : ""}</span></div>${tiles(lastP, "No pits scouted yet")}</div>
       </div>
       ${isMe ? `<section class="card mb-discord">
-        <div class="sr-head"><h3>${icon("bell")} Discord</h3><span class="hint">so the Parts bot can @ you when a part's ready</span></div>
-        <label class="field"><span>Your Discord username</span>
+        <div class="sr-head"><h3>${icon("bell")} Discord</h3><span class="hint">get @‑pinged when a part's ready to make</span></div>
+        <label class="field"><span>Your Discord user ID</span>
           <div class="btn-row" style="gap:8px">
-            <input type="text" id="discInput" placeholder="e.g. suhaan or suhaan#1234" autocomplete="off" value="${esc(sc.discord || "")}" style="flex:1" />
+            <input type="text" id="discInput" inputmode="numeric" placeholder="e.g. 348291043827113984" autocomplete="off" value="${esc(sc.discord || "")}" style="flex:1" />
             <button class="btn primary sm" id="discSave">${icon("check")} Save</button>
           </div></label>
-      </section>` : (sc.discord ? `<div class="btn-row" style="margin-top:4px"><span class="badge dot" style="--c:#5865F2">${icon("bell")} Discord: ${esc(sc.discord)}</span></div>` : "")}
+        <p class="hint" style="margin:6px 0 0">In Discord: <b>Settings → Advanced → Developer Mode</b> on, then right‑click your name → <b>Copy User ID</b> (a long number, not your username).</p>
+      </section>` : (sc.discord ? `<div class="btn-row" style="margin-top:4px"><span class="badge dot" style="--c:#5865F2">${icon("bell")} Discord linked</span></div>` : "")}
       <div class="btn-row" style="margin-top:14px"><a class="btn ghost sm" href="#/members/roster/${encodeURIComponent(sc.id)}">${icon("list")} Everything ${isMe ? "you" : esc(sc.first || "they")} scouted</a></div>`;
     wireTeamTiles(body);
     countUp(body);
     if (isMe) {
       const disc = $("#discInput", body), discBtn = $("#discSave", body);
-      const saveDisc = () => { const v = disc.value.trim(); Store.setMe({ discord: v }); Cloud.syncMe(); toast(v ? "Discord username saved" : "Discord username cleared"); };
+      const saveDisc = () => {
+        const v = disc.value.trim();
+        if (v && !/^\d{15,25}$/.test(v)) { toast("That should be your numeric Discord user ID (a long number), not your username", "err"); return; }
+        Store.setMe({ discord: v }); Cloud.syncMe(); toast(v ? "Discord ID saved — you'll get pinged when a part's ready" : "Discord ID cleared");
+      };
       if (discBtn) discBtn.onclick = saveDisc;
       if (disc) disc.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); saveDisc(); } };
       const pic = $("#picInput", body), btn = $("#editPic", body);
@@ -6662,11 +6667,18 @@
     const dataHTML = (() => {
       const cloudOn = Cloud.enabled();
       return `<div class="card" style="margin-bottom:18px">
-        <div class="row" style="gap:10px;margin-bottom:6px">${icon("bell")}<h2 style="margin:0">Parts Discord bot</h2></div>
-        <p class="hint">Posts one message per teammate listing every part of theirs that's <b>ready to make</b> (grouped as <code>@person, your ready parts are:</code>) to the bot's Discord channel. People are matched by the Discord username they set on their profile.</p>
-        ${cloudOn
-          ? `<button class="btn primary" id="pingReadyBtn">${icon("bell")} Ping everyone their ready parts</button>`
-          : `<p class="hint"><span class="badge red dot">Cloud off</span> The Parts bot needs cloud sync.</p>`}
+        <div class="row" style="gap:10px;margin-bottom:6px">${icon("bell")}<h2 style="margin:0">Parts Discord pings</h2></div>
+        <p class="hint">Teammates get @‑pinged in your Discord channel the moment a part they're assigned to is <b>ready to make</b> — no bot or server to run. People are matched by the Discord <b>user ID</b> on their profile. Paste the channel's <b>webhook URL</b> below (Discord: channel → Edit Channel → Integrations → Webhooks → New Webhook → Copy URL).</p>
+        ${cloudOn ? `
+        <label class="field"><span>Discord webhook URL</span>
+          <div class="btn-row" style="gap:8px">
+            <input type="password" id="whInput" placeholder="https://discord.com/api/webhooks/…" autocomplete="off" value="${esc(Cloud.getPartsWebhook() || "")}" style="flex:1" />
+            <button class="btn primary sm" id="whSave">${icon("check")} Save</button>
+          </div></label>
+        <div class="btn-row" style="margin-top:10px">
+          <button class="btn secondary" id="pingReadyBtn">${icon("bell")} Ping everyone their ready parts now</button>
+        </div>`
+          : `<p class="hint"><span class="badge red dot">Cloud off</span> Discord pings need cloud sync.</p>`}
       </div>
       <div class="card" style="border-color:rgba(255,90,90,.4)">
         <div class="row" style="gap:10px;margin-bottom:6px">${icon("trash")}<h2 style="margin:0">Danger zone</h2></div>
@@ -6739,12 +6751,19 @@
     });
 
     // ---- Danger zone handler ----
+    const whInput = $("#whInput", root), whSave = $("#whSave", root);
+    if (whSave) whSave.onclick = () => {
+      const v = (whInput.value || "").trim();
+      if (v && !/^https:\/\/(canary\.|ptb\.)?discord(app)?\.com\/api\/webhooks\//i.test(v)) { toast("That doesn't look like a Discord webhook URL", "err"); return; }
+      Promise.resolve(Cloud.setPartsWebhook(v)).then(() => toast(v ? "Webhook saved" : "Webhook cleared"));
+    };
     const pingReadyBtn = $("#pingReadyBtn", root);
     if (pingReadyBtn) pingReadyBtn.onclick = () => {
+      if (!window.PartsBot || !PartsBot.hasWebhook()) { toast("Save the webhook URL first", "err"); return; }
       pingReadyBtn.disabled = true;
-      Promise.resolve(Cloud.requestPartsDigest())
-        .then(() => toast("Asked the bot to ping everyone their ready parts"))
-        .catch(() => toast("Couldn't reach the bot", "err"))
+      PartsBot.sendDigest()
+        .then((r) => toast(r.people ? `Pinged ${r.people} ${r.people === 1 ? "person" : "people"} (${r.parts} parts)` : "Nobody has a ready part right now"))
+        .catch(() => toast("Couldn't post to the webhook — check the URL", "err"))
         .finally(() => { setTimeout(() => { if (pingReadyBtn.isConnected) pingReadyBtn.disabled = false; }, 4000); });
     };
     const clearCloudBtn = $("#clearCloudBtn", root);
@@ -8362,6 +8381,7 @@
     // Firebase isn't configured — everything still works locally.
     Cloud.onBlocked(showDbBlocked);
     Cloud.init();
+    if (window.PartsBot) PartsBot.init();   // watch the parts board for ready-to-make Discord pings
     Auth.checkSession(); // signs this device out if the account's password was reset
     Auth.watchSession(); // …and keeps watching: a reset or removal signs every device out live
     Cloud.syncMe();

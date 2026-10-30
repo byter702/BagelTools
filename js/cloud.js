@@ -418,14 +418,14 @@
         .catch(function (e) { log("clearTestEvent failed", e); });
     },
     getTestEvent: function () { return cache.config[cfgId("testEvent")] || null; },
-    // ---- Discord Parts bot: the app drops a command the bot watches for ----
-    // Bumping `ts` tells the bot to post the "ready parts" digest to its channel.
-    requestPartsDigest: function () {
+    // ---- Discord Parts pings: the channel webhook the site posts to directly ----
+    // Stored in config (not in the public code) and pasted in by an admin.
+    getPartsWebhook: function () { var d = cache.config["parts_webhook"]; return (d && d.url) || ""; },
+    setPartsWebhook: function (url) {
       if (!this.enabled()) return Promise.resolve();
-      var m = me();
-      var doc = clean({ type: "digest", ts: Date.now(), byId: m ? m.id : "", byName: m ? ((m.first || "") + " " + (m.last || "")).trim() : "" });
-      cache.config["bot_command"] = doc;
-      return db.collection("config").doc("bot_command").set(doc).catch(function (e) { log("requestPartsDigest failed", e); });
+      var doc = clean({ url: (url || "").trim(), updatedAt: Date.now() });
+      cache.config["parts_webhook"] = doc;   // optimistic so the field sticks instantly
+      return db.collection("config").doc("parts_webhook").set(doc).catch(function (e) { log("setPartsWebhook failed", e); });
     },
     // ---- Scouting schedule: who signed up + their station assignments, per event ----
     // Stored as a config doc keyed by eventKey (which already carries the year).
