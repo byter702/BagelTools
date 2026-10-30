@@ -4752,6 +4752,13 @@ button.sh-item:hover { transform: translateY(-3px) scale(1.04); box-shadow: 0 10
 .sh-mult { font: 900 1.8rem var(--font-display); color: var(--secondary); line-height: 1; }
 .sh-note { margin-top: 14px; }
 
+/* Admin → Shop */
+.sa-people { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 420px; overflow-y: auto; }
+.sa-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); }
+.sa-name { flex: 1; min-width: 0; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sa-count { font: 800 .85rem var(--font-display); color: var(--text-dim); }
+.sa-count.full { color: var(--success); }
+
 /* detail + odds dialogs */
 .sh-detail { display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
 .sh-detail-av { width: min(220px, 60vw); aspect-ratio: 1; display: grid; place-items: center; border-radius: 50%;

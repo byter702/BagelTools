@@ -6463,6 +6463,7 @@
       ["fantasy", "Fantasy", "star"],
       ["prime", "Prime 702", "zap"],
       ["data", "Data", "database"],
+      ...(shopOn() ? [["shop", "Shop", "shop"]] : []),   // Shop beta: preview the pack shows, give bagels
     ];
     const sub = adminSub();
     const active = tabs.some((t) => t[0] === sub) ? sub : "requests";
@@ -6725,7 +6726,7 @@
     const sectionHTML = {
       requests: requestsHTML, bagelbucks: bagelBucksHTML,
       matchform: matchFormHTML, pitform: pitFormHTML,
-      testevent: testEventHTML, data: dataHTML, betting: `<div id="adBetting"></div>`, fantasy: `<div id="adFantasy"></div>`, prime: `<div id="adPrime"></div>`,
+      testevent: testEventHTML, data: dataHTML, betting: `<div id="adBetting"></div>`, fantasy: `<div id="adFantasy"></div>`, prime: `<div id="adPrime"></div>`, shop: `<div id="adShop"></div>`,
     };
 
     const pwSet = adminCredIds ? memKeys.filter((kk) => adminCredIds.has(Store.scouterIdFor(members[kk].first, members[kk].last))).length : null;
@@ -6745,6 +6746,7 @@
     const adBet = $("#adBetting", root); if (adBet) renderAdminBetting(adBet);
     const adFx = $("#adFantasy", root); if (adFx) renderAdminFantasy(adFx);
     const adPrime = $("#adPrime", root); if (adPrime) renderAdminPrime(adPrime, root);
+    const adShop = $("#adShop", root); if (adShop && window.ShopUI) ShopUI.admin(adShop);
     // ---- Test event handlers ----
     const doBuildTestEvent = async () => {
       toast("Building test event…");
@@ -8394,7 +8396,7 @@
     initGlobalSearch();
     // BagelParts (the Parts app) draws with the same helpers as every other page
     PartsUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, notifyBanner, pageHero, emptyState, scouterAvatar, allScouters, scouterName });
-    if (window.ShopUI) ShopUI.init({ $, $$, esc, icon, toast, modal, pageHero, emptyState, reduceMotion,
+    if (window.ShopUI) ShopUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, pageHero, emptyState, reduceMotion, scouterAvatar,
       myPhoto: () => Store.getMe().profilePic || DEFAULT_PFP, onAvatarChange: () => refreshChrome() });
     if (window.AutoScoutUI) AutoScoutUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, pageHero, emptyState, nameFor, shortEventName, paintTeamFills, scoutDisplayName });
     const userName = $("#userChipName");

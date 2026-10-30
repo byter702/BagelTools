@@ -35,9 +35,10 @@ const ShopUI = (() => {
   // the multiplier on Bagel Bucks earned from scouting right now (app.js asks)
   const bbMult = () => { const b = activeBoost(); return b ? Number(b.mult) || 1 : 1; };
 
-  async function tx(work) {
+  // one transaction on a scouter doc (mine unless `uid` is given)
+  async function tx(work, uid) {
     const d = db(); if (!d) throw new Error("OFFLINE");
-    const id = meId(); if (!id) throw new Error("NO_USER");
+    const id = uid || meId(); if (!id) throw new Error("NO_USER");
     const ref = d.collection("scouters").doc(id);
     const out = await d.runTransaction(async (t) => {
       const s = await t.get(ref), cur = s.exists ? s.data() : {};
@@ -46,7 +47,7 @@ const ShopUI = (() => {
       t.set(ref, patch, { merge: true });
       return { ...res, patch };
     });
-    shadow = { ...(shadow && shadow.id === id ? shadow : {}), ...out.patch };
+    if (id === meId()) shadow = { ...(shadow && shadow.id === id ? shadow : {}), ...out.patch };
     return out;
   }
   const openPackTx = (pack) => tx((cur) => {
@@ -70,6 +71,12 @@ const ShopUI = (() => {
     if (act && act.id !== b.id) throw new Error("BOOSTING");
     return { patch: { bb: bal - b.price, boost: { id: b.id, mult: b.mult, until: (act ? act.until : now) + b.mins * 60000 } } };
   });
+  // admin: one of every bagel for a member (counts they already have are kept)
+  const grantAllTx = (uid) => tx((cur) => {
+    const avatars = { ...(cur.avatars || {}) };
+    Avatars.LIST.forEach((a) => { avatars[a.id] = Math.max(1, avatars[a.id] || 0); });
+    return { patch: { avatars } };
+  }, uid);
   const errMsg = (e) => ({
     FUNDS: "Not enough Bagel Bucks", OFFLINE: "The shop needs the cloud connection", NO_USER: "Sign in first",
     LAST: "Keep at least one of each bagel", NOT_OWNED: "You don't own that bagel yet", BOOSTING: "Another boost is still running",
@@ -221,6 +228,66 @@ const ShopUI = (() => {
       price: p.price,
     });
   }
+  // Play a pack-opening show without spending or giving anything (Admin → Shop).
+  // `pick` is a rarity key (any bagel of it) or a bagel id.
+  function preview(pick) {
+    if (opening) return;
+    const pool = Avatars.RAR[pick] ? Avatars.LIST.filter((a) => a.rarity === pick) : [Avatars.get(pick)].filter(Boolean);
+    if (!pool.length) return;
+    const a = pool[Math.floor(Math.random() * pool.length)];
+    opening = true;
+    const show = Reveal.start(Avatars.pack(a.pack), H.reduceMotion());
+    show.reveal({ id: a.id, isNew: true, count: 1 }, {
+      preview: true,
+      again: () => { opening = false; preview(pick); },
+      done: () => { opening = false; },
+      canAgain: () => true,
+    });
+  }
+
+  /* ---- Admin → Shop: preview the shows, give members bagels ---------------- */
+  function admin(el) {
+    let q = "";
+    const given = new Set(); // shown as complete before the live roster catches up
+    const draw = () => {
+      if (!el.isConnected) return;
+      const docs = new Map(((window.Cloud && Cloud.getScouters()) || []).map((s) => [s.id, s]));
+      const people = Object.values(Store.getMembers()).map((m) => ({ id: Store.scouterIdFor(m.first, m.last), name: `${m.first || ""} ${m.last || ""}`.trim() }))
+        .filter((p) => p.name).sort((x, y) => x.name.localeCompare(y.name));
+      const total = Avatars.LIST.length;
+      const got = (id) => { if (given.has(id)) return total; const av = (docs.get(id) || {}).avatars || {}; return Avatars.LIST.filter((a) => av[a.id] > 0).length; };
+      el.innerHTML = `
+        <div class="card"><div class="sr-head"><h3>${icon("play")} Preview pack openings</h3><span class="hint">nothing is spent or given</span></div>
+          <p class="hint" style="margin-top:0">Plays the opening show for a rarity (a random bagel of it), or for one bagel.</p>
+          <div class="sh-chips">${Avatars.RARITIES.map((r) => `<button class="sh-chip on" style="--rc:${r.color}" data-prev="${r.key}">${icon("play")} ${esc(r.label)}</button>`).join("")}</div>
+          <div class="btn-row" style="gap:8px;margin-top:10px;flex-wrap:wrap">
+            <select id="saPick" style="flex:1;min-width:200px">${Avatars.RARITIES.map((r) => `<optgroup label="${esc(r.label)}">${Avatars.LIST.filter((a) => a.rarity === r.key).map((a) => `<option value="${a.id}">${esc(a.name)}</option>`).join("")}</optgroup>`).join("")}</select>
+            <button class="btn primary sm" id="saPlay">${icon("play")} Play this bagel</button>
+          </div></div>
+        <div class="card"><div class="sr-head"><h3>${icon("bagel")} Give bagels</h3><span class="hint">writes to their account</span></div>
+          <p class="hint" style="margin-top:0">Gives a member one of every bagel. Bagels they already have keep their counts.</p>
+          ${db() ? `<label class="ds-search ab-hostq">${icon("search")}<input type="search" id="saQ" placeholder="Find a member…" value="${esc(q)}" autocomplete="off" /></label>
+          <div class="sa-people">${people.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase())).map((p) => {
+            const n = got(p.id);
+            return `<div class="sa-row">${H.scouterAvatar({ id: p.id, ...(docs.get(p.id) || {}) }, "sc-avatar sm")}<span class="sa-name">${esc(p.name)}</span>
+              <span class="sa-count${n >= total ? " full" : ""}">${n}/${total}</span>
+              <button class="btn ${n >= total ? "ghost" : "primary"} sm" data-giveall="${esc(p.id)}" data-name="${esc(p.name)}"${n >= total ? " disabled" : ""}>${n >= total ? "Has them all" : `Give all ${total}`}</button></div>`;
+          }).join("") || `<p class="hint">No members match.</p>`}</div>`
+          : `<p class="hint"><span class="badge red dot">Cloud off</span> Giving bagels needs cloud sync.</p>`}
+        </div>`;
+      el.querySelectorAll("[data-prev]").forEach((b) => { b.onclick = () => preview(b.dataset.prev); });
+      el.querySelector("#saPlay").onclick = () => preview(el.querySelector("#saPick").value);
+      const qi = el.querySelector("#saQ");
+      if (qi) qi.oninput = () => { q = qi.value; draw(); const again = el.querySelector("#saQ"); again.focus(); again.setSelectionRange(q.length, q.length); };
+      el.querySelectorAll("[data-giveall]").forEach((b) => { b.onclick = () => H.confirmDialog(`Give ${b.dataset.name} one of every bagel (${total})?`, async () => {
+        b.disabled = true; b.textContent = "Giving…";
+        try { await grantAllTx(b.dataset.giveall); given.add(b.dataset.giveall); H.toast(`${b.dataset.name} now has all ${total} bagels`); }
+        catch (e) { H.toast(errMsg(e), "err"); }
+        draw();
+      }); });
+    };
+    draw();
+  }
 
   /* ---- the reveal: one show per rarity, cooler the rarer -------------------
      Every pack drops in and shakes while the roll comes back, then bursts. What
@@ -350,11 +417,16 @@ const ShopUI = (() => {
           el.style.setProperty("--rc", r.color);
           el.querySelector(".po-bagel").innerHTML = Avatars.img(res.id, "po-av");
           el.querySelector(".po-title").innerHTML = `<span data-text="${esc(r.label)}">${esc(r.label)}</span>`;
-          el.querySelector(".po-card").innerHTML = `<b class="po-name">${esc(a.name)}</b>
-            <span class="po-meta">${res.isNew ? `<span class="po-new">New!</span>` : `<span class="po-dup">You have ${res.count}</span>`}<span class="po-rar">${esc(r.label)} · ${r.odds}%</span></span>
-            <div class="po-btns"><button class="btn primary" data-act="equip">${icon("check")} Equip</button>
-              <button class="btn ghost" data-act="again"${act.canAgain() ? "" : " disabled"}>${icon("shop")} Open another · ${act.price} BB</button>
-              <button class="btn ghost" data-act="done">Done</button></div>`;
+          el.querySelector(".po-card").innerHTML = act.preview
+            ? `<b class="po-name">${esc(a.name)}</b>
+              <span class="po-meta"><span class="po-dup">Preview · nothing spent or given</span><span class="po-rar">${esc(r.label)} · ${r.odds}%</span></span>
+              <div class="po-btns"><button class="btn primary" data-act="again">${icon("play")} Replay</button>
+                <button class="btn ghost" data-act="done">Done</button></div>`
+            : `<b class="po-name">${esc(a.name)}</b>
+              <span class="po-meta">${res.isNew ? `<span class="po-new">New!</span>` : `<span class="po-dup">You have ${res.count}</span>`}<span class="po-rar">${esc(r.label)} · ${r.odds}%</span></span>
+              <div class="po-btns"><button class="btn primary" data-act="equip">${icon("check")} Equip</button>
+                <button class="btn ghost" data-act="again"${act.canAgain() ? "" : " disabled"}>${icon("shop")} Open another · ${act.price} BB</button>
+                <button class="btn ghost" data-act="done">Done</button></div>`;
           const finish = () => {
             if (finished) return; finished = true;
             timers.forEach(clearTimeout);
@@ -394,7 +466,7 @@ const ShopUI = (() => {
     return { start };
   })();
 
-  return { init, page, refresh, bbMult, equipped: () => equipped(), BOOSTS };
+  return { init, page, refresh, admin, preview, bbMult, equipped: () => equipped(), BOOSTS };
 })();
 
 window.ShopUI = ShopUI;
