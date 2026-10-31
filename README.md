@@ -66,9 +66,9 @@ the owner account (`CONFIG.owner`) sees the page and the bagel avatars.
 - **Packs** (50 BB): Elemental, Legends and Enchanted. Each rolls a rarity first, then any bagel of that
   rarity in the pack: Common 50%, Uncommon 25%, Rare 15%, Epic 7%, Legendary 2.5%, Mythic 0.4%, Secret 0.1%.
   Every rarity has its own opening show, and they get bigger the rarer the pull.
-- **110 bagels**, each an animated SVG: 108 drawn in code (`js/avatars*.js`) from the reference sheets in
-  `media/avatar ref/`, plus two hand-made Secret files in `media/bagels/` (Hallow's End, with its own reveal
-  intro, and Vampire Lord), each with a lite cut for small avatars. An equipped bagel replaces your profile picture everywhere: the leaderboard, Profile,
+- **110 bagels**, each an animated SVG: 107 drawn in code (`js/avatars*.js`) from the reference sheets in
+  `media/avatar ref/`, plus three hand-made files in `media/bagels/` (Pharaoh, and the Secret Hallow's End and
+  Vampire Lord; Pharaoh and Hallow's End have their own reveal intros), each with a lite cut for small avatars. An equipped bagel replaces your profile picture everywhere: the leaderboard, Profile,
   the scout pop-ups and robot locks on Match Scouting.
 - **Duplicates** sell back for BB. **Boosts** (1.5×, 2× or 3× for an hour) multiply the BB you earn for new
   match and pit records. **Luck boosts** (2× for 3 packs, 3× or 5× for 5 packs) make Epic and rarer that many

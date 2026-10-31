@@ -320,6 +320,7 @@ const Avatars = (() => {
   const FILES = {
     hallows_end: { full: "media/bagels/hallows-end.svg", lite: "media/bagels/hallows-end-lite.svg", intro: "media/bagels/hallows-end-intro.svg" },
     vampire_lord: { full: "media/bagels/vampire-lord.svg", lite: "media/bagels/vampire-lord-lite.svg" },
+    pharaoh: { full: "media/bagels/pharaoh.svg", lite: "media/bagels/pharaoh-lite.svg", intro: "media/bagels/pharaoh-intro.svg" },
   };
   const BIG = /\b(po-av|sh-big|sh-me-av|ph-avatar|big)\b/; // classes that show a bagel large
   function svg(id, still = false) {
