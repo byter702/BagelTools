@@ -71,8 +71,9 @@ the owner account (`CONFIG.owner`) sees the page and the bagel avatars.
   intro, and Vampire Lord), each with a lite cut for small avatars. An equipped bagel replaces your profile picture everywhere: the leaderboard, Profile,
   the scout pop-ups and robot locks on Match Scouting.
 - **Duplicates** sell back for BB. **Boosts** (1.5×, 2× or 3× for an hour) multiply the BB you earn for new
-  match and pit records.
-- Everything is stored on your `scouters/{id}` doc (`avatars`, `avatar`, `boost`) and changed in transactions.
+  match and pit records. **Luck boosts** (2× for 3 packs, 3× or 5× for 5 packs) make Epic and rarer that many
+  times as likely, taking the extra chance from Common.
+- Everything is stored on your `scouters/{id}` doc (`avatars`, `avatar`, `boost`, `luck`) and changed in transactions.
 
 ---
 

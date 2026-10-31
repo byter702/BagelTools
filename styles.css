@@ -4755,6 +4755,26 @@ button.sh-item:hover { transform: translateY(-3px) scale(1.04); box-shadow: 0 10
 .sh-bico .ico { width: 28px; height: 28px; }
 .sh-mult { font: 900 1.8rem var(--font-display); color: var(--secondary); line-height: 1; }
 .sh-note { margin-top: 14px; }
+.sh-group-h { display: flex; align-items: center; gap: 8px; margin: 4px 0 12px; font-family: var(--font-display); font-size: 1rem; color: var(--secondary); }
+.sh-group-h .ico { width: 18px; height: 18px; }
+.sh-group-h small { margin-left: 4px; font-family: var(--font-ui); font-size: .82rem; font-weight: 600; color: var(--text-mut); }
+.sh-group-h.lk { margin-top: 26px; color: var(--luck); }
+:root { --luck: #2dd4bf; --luck-deep: #0f9488; }
+:root[data-theme="light"] { --luck: #0d9488; --luck-deep: #0b6f66; }
+.sh-boost.lk { background: radial-gradient(circle at 50% 0, color-mix(in srgb, var(--luck) 18%, var(--surface)) 0, var(--surface) 65%); }
+.sh-boost.lk.on { border-color: var(--luck); box-shadow: 0 0 0 2px color-mix(in srgb, var(--luck) 40%, transparent); }
+.sh-boost.lk .sh-bico { color: #06221d; background: linear-gradient(180deg, #99f6e4, #2dd4bf); box-shadow: 0 4px 0 var(--luck-deep); }
+.sh-boost.lk .sh-mult { color: var(--luck); }
+.sh-active.lk { border-color: color-mix(in srgb, var(--luck) 55%, var(--border)); }
+.sh-active.lk > .ico { color: var(--luck); animation: shDice 2.4s ease-in-out infinite; }
+.sh-boostchip.lk { background: color-mix(in srgb, var(--luck) 14%, transparent); border-color: color-mix(in srgb, var(--luck) 45%, transparent); }
+.sh-boostchip.lk .ico { color: var(--luck); animation: shDice 2.4s ease-in-out infinite; }
+.sh-odds-luck { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; }
+.sh-odds-luck .ico { width: 16px; height: 16px; color: var(--luck); }
+.sh-odds-head s { color: var(--text-mut); font-weight: 600; margin-right: 2px; }
+.po-luck { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 999px; background: rgba(45, 212, 191, .18); border: 1px solid rgba(45, 212, 191, .5); color: #99f6e4; }
+.po-luck .ico { width: 14px; height: 14px; }
+@keyframes shDice { 0%, 70%, 100% { transform: rotate(0); } 78% { transform: rotate(-18deg); } 86% { transform: rotate(14deg); } 94% { transform: rotate(-6deg); } }
 
 /* Admin → Shop */
 .sa-people { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; max-height: 420px; overflow-y: auto; }

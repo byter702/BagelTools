@@ -16,6 +16,12 @@ const ShopUI = (() => {
     { id: "double", name: "Double Dough", mult: 2, mins: 60, price: 75, ic: "coins", blurb: "2× Bagel Bucks from scouting for an hour" },
     { id: "golden", name: "Golden Oven", mult: 3, mins: 60, price: 175, ic: "crown", blurb: "3× Bagel Bucks from scouting for an hour" },
   ];
+  // Luck boosts last a number of packs: Epic and rarer are `mult`× as likely (Avatars.odds).
+  const LUCK = [
+    { id: "sesame", name: "Lucky Sesame", mult: 2, packs: 3, price: 60, ic: "dice" },
+    { id: "crumb", name: "Golden Crumb", mult: 3, packs: 5, price: 150, ic: "star" },
+    { id: "sprinkles", name: "Rainbow Sprinkles", mult: 5, packs: 5, price: 300, ic: "crown" },
+  ];
   const TABS = [["packs", "Packs", "shop"], ["collection", "Collection", "bagel"], ["boosts", "Boosts", "zap"]];
 
   /* ---- data -------------------------------------------------------------- */
@@ -32,6 +38,8 @@ const ShopUI = (() => {
   const balance = () => { const d = myDoc(); return typeof d.bb === "number" ? d.bb : ((Store.getMe() || {}).bb || 0); };
   const equipped = () => { const id = myDoc().avatar; return id && Avatars.has(id) ? id : ""; };
   const activeBoost = () => { const b = myDoc().boost; return b && b.until > Date.now() ? b : null; };
+  const activeLuck = () => { const l = myDoc().luck; return l && l.packs > 0 ? l : null; };
+  const pct = (n) => String(+n.toFixed(2));
   // the multiplier on Bagel Bucks earned from scouting right now (app.js asks)
   const bbMult = () => { const b = activeBoost(); return b ? Number(b.mult) || 1 : 1; };
 
@@ -53,8 +61,11 @@ const ShopUI = (() => {
   const openPackTx = (pack) => tx((cur) => {
     const bal = cur.bb || 0;
     if (bal < pack.price) throw new Error("FUNDS");
-    const id = Avatars.roll(pack.id), have = (cur.avatars || {})[id] || 0;
-    return { id, isNew: !have, count: have + 1, patch: { bb: bal - pack.price, avatars: { ...(cur.avatars || {}), [id]: have + 1 }, packsOpened: (cur.packsOpened || 0) + 1 } };
+    const lk = cur.luck && cur.luck.packs > 0 ? cur.luck : null, luck = lk ? Number(lk.mult) || 1 : 1;
+    const id = Avatars.roll(pack.id, luck), have = (cur.avatars || {})[id] || 0;
+    const patch = { bb: bal - pack.price, avatars: { ...(cur.avatars || {}), [id]: have + 1 }, packsOpened: (cur.packsOpened || 0) + 1 };
+    if (lk) patch.luck = lk.packs > 1 ? { ...lk, packs: lk.packs - 1 } : null; // one pack of luck used
+    return { id, isNew: !have, count: have + 1, luck, patch };
   });
   const sellTx = (id) => tx((cur) => {
     const have = (cur.avatars || {})[id] || 0, value = Avatars.rarity(Avatars.get(id).rarity).sell;
@@ -71,6 +82,12 @@ const ShopUI = (() => {
     if (act && act.id !== b.id) throw new Error("BOOSTING");
     return { patch: { bb: bal - b.price, boost: { id: b.id, mult: b.mult, until: (act ? act.until : now) + b.mins * 60000 } } };
   });
+  const luckTx = (l) => tx((cur) => {
+    const bal = cur.bb || 0, act = cur.luck && cur.luck.packs > 0 ? cur.luck : null;
+    if (bal < l.price) throw new Error("FUNDS");
+    if (act && act.id !== l.id) throw new Error("LUCKY");
+    return { patch: { bb: bal - l.price, luck: { id: l.id, mult: l.mult, packs: (act ? act.packs : 0) + l.packs } } };
+  });
   // admin: one of every bagel for a member (counts they already have are kept)
   const grantAllTx = (uid) => tx((cur) => {
     const avatars = { ...(cur.avatars || {}) };
@@ -79,7 +96,7 @@ const ShopUI = (() => {
   }, uid);
   const errMsg = (e) => ({
     FUNDS: "Not enough Bagel Bucks", OFFLINE: "The shop needs the cloud connection", NO_USER: "Sign in first",
-    LAST: "Keep at least one of each bagel", NOT_OWNED: "You don't own that bagel yet", BOOSTING: "Another boost is still running",
+    LAST: "Keep at least one of each bagel", NOT_OWNED: "You don't own that bagel yet", BOOSTING: "Another boost is still running", LUCKY: "Another luck boost is still on",
   }[e && e.message] || "Something went wrong. Try again.");
 
   /* ---- page -------------------------------------------------------------- */
@@ -105,7 +122,7 @@ const ShopUI = (() => {
 
   function draw() {
     const cloudOn = !!db(), eq = equipped(), own = owned();
-    const have = Avatars.LIST.filter((a) => own[a.id] > 0).length, total = Avatars.LIST.length, b = activeBoost();
+    const have = Avatars.LIST.filter((a) => own[a.id] > 0).length, total = Avatars.LIST.length, b = activeBoost(), lk = activeLuck();
     root.innerHTML = H.pageHero({ ic: "shop", eyebrow: "BagelTools · Beta", title: "Bagel Shop", sub: "Open packs, collect every bagel, and boost the Bagel Bucks you earn.", side: wallet() })
       + (cloudOn ? "" : `<div class="card" style="margin-bottom:14px">${H.emptyState("lock", "The shop needs the cloud", "Your Bagel Bucks live in the cloud, so packs and boosts open once you're connected.")}</div>`)
       + `<section class="card sh-top">
@@ -114,6 +131,7 @@ const ShopUI = (() => {
               <span class="hint">${eq ? "It replaces your profile picture everywhere." : "Open a pack, then equip a bagel."}</span></div></div>
           <div class="sh-prog"><div class="sh-prog-row"><span>Collection</span><b>${have}<small>/${total}</small></b></div><div class="sh-bar"><i style="width:${(have / total * 100).toFixed(1)}%"></i></div></div>
           ${b ? `<div class="sh-boostchip">${icon("zap")}<span><b>${b.mult}× boost</b> <span data-boost-left>${fmtLeft(b.until - Date.now())}</span></span></div>` : ""}
+          ${lk ? `<div class="sh-boostchip lk">${icon("dice")}<span><b>${lk.mult}× luck</b> ${lk.packs} ${lk.packs === 1 ? "pack" : "packs"}</span></div>` : ""}
         </section>
         <nav class="sh-tabs" role="tablist">${TABS.map(([id, label, ic]) => `<button role="tab" class="sh-tab${tab === id ? " on" : ""}" data-tab="${id}" aria-selected="${tab === id}">${icon(ic)}${label}</button>`).join("")}</nav>
         <div class="sh-body">${tab === "packs" ? packsHTML() : tab === "collection" ? collectionHTML() : boostsHTML()}</div>`;
@@ -123,6 +141,7 @@ const ShopUI = (() => {
     root.querySelectorAll("[data-rf]").forEach((x) => { x.onclick = () => { rarFilter = x.dataset.rf; draw(); }; });
     root.querySelectorAll("[data-av]").forEach((x) => { x.onclick = () => itemDialog(x.dataset.av); });
     root.querySelectorAll("[data-buy]").forEach((x) => { x.onclick = () => buyBoost(x.dataset.buy); });
+    root.querySelectorAll("[data-luck]").forEach((x) => { x.onclick = () => buyLuck(x.dataset.luck); });
   }
 
   // a paper bakery bag with the pack's top bagel on it
@@ -132,9 +151,10 @@ const ShopUI = (() => {
       <img class="pk-hero" src="${Avatars.url(p.feature, true)}" alt="" draggable="false" />
       <b class="pk-name">${esc(p.name.replace(/ Pack$/, ""))}</b><span class="pk-sub">Pack</span><span class="pk-shine"></span></div></div>`;
   }
+  const luckOn = (lk) => `<section class="card sh-active lk">${icon("dice")}<div><b>${esc((LUCK.find((x) => x.id === lk.id) || {}).name || "Luck")} is on</b><span class="hint">Epic and rarer are <b>${lk.mult}×</b> as likely in your next <b>${lk.packs}</b> ${lk.packs === 1 ? "pack" : "packs"}.</span></div></section>`;
   function packsHTML() {
-    const bal = balance(), on = !!db();
-    return `<div class="sh-packs">${Avatars.PACKS.map((p) => {
+    const bal = balance(), on = !!db(), lk = activeLuck();
+    return (lk ? luckOn(lk) : "") + `<div class="sh-packs">${Avatars.PACKS.map((p) => {
       const inPack = Avatars.inPack(p.id), got = inPack.filter((a) => owned()[a.id] > 0).length;
       return `<article class="sh-pack">${packArt(p)}
         <div class="sh-pack-info"><h3>${esc(p.name)}</h3><p class="hint">${esc(p.blurb)} · ${got}/${inPack.length} found</p>
@@ -155,22 +175,31 @@ const ShopUI = (() => {
     }).join("");
   }
   function boostsHTML() {
-    const b = activeBoost(), bal = balance(), on = !!db();
-    return (b ? `<section class="card sh-active">${icon("zap")}<div><b>${esc((BOOSTS.find((x) => x.id === b.id) || {}).name || "Boost")} is on</b><span class="hint">Scouting pays <b>${b.mult}×</b> Bagel Bucks for <b data-boost-left>${fmtLeft(b.until - Date.now())}</b> more.</span></div></section>` : "")
+    const b = activeBoost(), lk = activeLuck(), bal = balance(), on = !!db();
+    return `<h3 class="sh-group-h">${icon("coins")} Bagel Bucks boosts<small>more BB for scouting</small></h3>` + (b ? `<section class="card sh-active">${icon("zap")}<div><b>${esc((BOOSTS.find((x) => x.id === b.id) || {}).name || "Boost")} is on</b><span class="hint">Scouting pays <b>${b.mult}×</b> Bagel Bucks for <b data-boost-left>${fmtLeft(b.until - Date.now())}</b> more.</span></div></section>` : "")
       + `<div class="sh-boosts">${BOOSTS.map((x) => {
         const blocked = b && b.id !== x.id;
         return `<article class="sh-boost${b && b.id === x.id ? " on" : ""}" data-b="${x.id}"><span class="sh-bico">${icon(x.ic)}</span>
           <b class="sh-mult">${x.mult}×</b><h3>${esc(x.name)}</h3><p class="hint">${esc(x.blurb)}</p>
           <button class="btn ${b && b.id === x.id ? "ghost" : "primary"}" data-buy="${x.id}"${on && bal >= x.price && !blocked ? "" : " disabled"}>${icon("coins")} ${b && b.id === x.id ? "Add an hour" : "Buy"} · ${x.price} BB</button></article>`;
       }).join("")}</div>
-      <p class="hint sh-note">Boosts multiply what you earn for new match and pit records while they run. Only one boost can run at a time; buying the same one again adds another hour.</p>`;
+      <p class="hint sh-note">Boosts multiply what you earn for new match and pit records while they run. Only one boost can run at a time; buying the same one again adds another hour.</p>
+      <h3 class="sh-group-h lk">${icon("dice")} Luck boosts<small>rarer bagels from packs</small></h3>`
+      + (lk ? luckOn(lk) : "")
+      + `<div class="sh-boosts">${LUCK.map((x) => {
+        const mine = lk && lk.id === x.id, blocked = lk && !mine;
+        return `<article class="sh-boost lk${mine ? " on" : ""}" data-l="${x.id}"><span class="sh-bico">${icon(x.ic)}</span>
+          <b class="sh-mult">${x.mult}×</b><h3>${esc(x.name)}</h3><p class="hint">Epic and rarer are ${x.mult}× as likely in your next ${x.packs} packs</p>
+          <button class="btn ${mine ? "ghost" : "primary"}" data-luck="${x.id}"${on && bal >= x.price && !blocked ? "" : " disabled"}>${icon("coins")} ${mine ? `Add ${x.packs} packs` : "Buy"} · ${x.price} BB</button></article>`;
+      }).join("")}</div>
+      <p class="hint sh-note">Luck is used up one pack at a time and works on every pack. The extra chance comes out of Common, so with 5× luck half of all packs are Epic or better. One luck boost at a time; buying the same one again adds more packs. Check a pack's <b>Drop rates</b> to see your odds.</p>`;
   }
 
   function oddsDialog(packId) {
-    const p = Avatars.pack(packId), own = owned();
-    H.modal(p.name + " · drop rates", `<div class="sh-odds">${Avatars.RARITIES.map((r) => {
-      const items = Avatars.inPack(packId).filter((a) => a.rarity === r.key);
-      return `<div class="sh-odds-row" style="--rc:${r.color}"><div class="sh-odds-head"><span class="sh-rdot"></span><b>${r.label}</b><span>${r.odds}%</span></div>
+    const p = Avatars.pack(packId), own = owned(), lk = activeLuck(), o = Avatars.odds(lk ? lk.mult : 1);
+    H.modal(p.name + " · drop rates", (lk ? `<p class="hint sh-odds-luck">${icon("dice")} With your <b>${lk.mult}× luck</b> (${lk.packs} ${lk.packs === 1 ? "pack" : "packs"} left)</p>` : "") + `<div class="sh-odds">${Avatars.RARITIES.map((r) => {
+      const items = Avatars.inPack(packId).filter((a) => a.rarity === r.key), now = pct(o[r.key]);
+      return `<div class="sh-odds-row" style="--rc:${r.color}"><div class="sh-odds-head"><span class="sh-rdot"></span><b>${r.label}</b><span>${now !== pct(r.odds) ? `<s>${r.odds}%</s> ` : ""}${now}%</span></div>
         <div class="sh-odds-items">${items.map((a) => own[a.id] > 0 ? `<span title="${esc(a.name)}">${Avatars.img(a.id, "", true)}</span>` : `<span title="Not found yet">${lockedImg(a)}</span>`).join("")}</div></div>`;
     }).join("")}</div><p class="hint" style="margin-top:12px">Each pack rolls a rarity first, then any bagel of that rarity in this pack, all equally likely.</p>`);
   }
@@ -201,6 +230,11 @@ const ShopUI = (() => {
       if (H.onAvatarChange) H.onAvatarChange();
       draw();
     } catch (e) { H.toast(errMsg(e), "err"); }
+  }
+  async function buyLuck(lid) {
+    const l = LUCK.find((x) => x.id === lid); if (!l) return;
+    try { const r = await luckTx(l); H.toast(`${l.name} on · ${l.mult}× luck for your next ${r.patch.luck.packs} packs`); draw(); }
+    catch (e) { H.toast(errMsg(e), "err"); }
   }
   async function buyBoost(bid) {
     const b = BOOSTS.find((x) => x.id === bid); if (!b) return;
@@ -426,7 +460,7 @@ const ShopUI = (() => {
               <div class="po-btns"><button class="btn primary" data-act="again">${icon("play")} Replay</button>
                 <button class="btn ghost" data-act="done">Done</button></div>`
             : `<b class="po-name">${esc(a.name)}</b>
-              <span class="po-meta">${res.isNew ? `<span class="po-new">New!</span>` : `<span class="po-dup">You have ${res.count}</span>`}<span class="po-rar">${esc(r.label)} · ${r.odds}%</span></span>
+              <span class="po-meta">${res.isNew ? `<span class="po-new">New!</span>` : `<span class="po-dup">You have ${res.count}</span>`}<span class="po-rar">${esc(r.label)} · ${r.odds}%</span>${res.luck > 1 ? `<span class="po-luck">${icon("dice")} ${res.luck}× luck</span>` : ""}</span>
               <div class="po-btns"><button class="btn primary" data-act="equip">${icon("check")} Equip</button>
                 <button class="btn ghost" data-act="again"${act.canAgain() ? "" : " disabled"}>${icon("shop")} Open another · ${act.price} BB</button>
                 <button class="btn ghost" data-act="done">Done</button></div>`;
@@ -470,7 +504,7 @@ const ShopUI = (() => {
     return { start };
   })();
 
-  return { init, page, refresh, admin, preview, bbMult, equipped: () => equipped(), BOOSTS };
+  return { init, page, refresh, admin, preview, bbMult, equipped: () => equipped(), BOOSTS, LUCK };
 })();
 
 window.ShopUI = ShopUI;

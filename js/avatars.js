@@ -352,9 +352,22 @@ const Avatars = (() => {
   function rand() {
     try { const u = new Uint32Array(1); crypto.getRandomValues(u); return u[0] / 4294967296; } catch (e) { return Math.random(); }
   }
-  function roll(packId) {
+  // Pack odds (percent by rarity) under a luck boost: Epic and rarer become `luck`× as
+  // likely, and the extra chance comes out of Common (then Uncommon if Common runs out).
+  function odds(luck = 1) {
+    const o = Object.fromEntries(RARITIES.map((r) => [r.key, r.odds]));
+    if (luck > 1) {
+      let extra = 0;
+      RARITIES.forEach((r, i) => { if (i >= 3) { extra += r.odds * (luck - 1); o[r.key] = r.odds * luck; } });
+      const fromCommon = Math.min(extra, o.common);
+      o.common -= fromCommon; o.uncommon -= extra - fromCommon;
+    }
+    return o;
+  }
+  function roll(packId, luck = 1) {
+    const o = odds(luck);
     let x = rand() * 100, rar = RARITIES[0].key;
-    for (const r of RARITIES) { if (x < r.odds) { rar = r.key; break; } x -= r.odds; }
+    for (const r of RARITIES) { if (x < o[r.key]) { rar = r.key; break; } x -= o[r.key]; }
     const pool = LIST.filter((a) => a.pack === packId && a.rarity === rar);
     const pick = pool.length ? pool[Math.floor(rand() * pool.length)] : LIST.find((a) => a.rarity === rar);
     return pick.id;
@@ -369,7 +382,7 @@ const Avatars = (() => {
     inPack: (packId) => LIST.filter((a) => a.pack === packId),
     art: (map) => { Object.assign(ART, map); cache.clear(); },
     hasArt: (id) => !!(ART[id] || FILES[id]),
-    svg, url, img, introImg, roll,
+    svg, url, img, introImg, roll, odds,
     // drawing kit for avatars-art-*.js
     K: { C, R, H, f, pol, pt, circ, poly, pp, arc, sect, strap, smooth, sample, tube, star, spark, rhomb, petal, leaf, drop, bolt, heart, crescent, gearD,
       at, P, S, L, G, anim, gem, shard, cluster, sakura, bubble, puffs, twinkle },
