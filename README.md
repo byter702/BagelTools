@@ -66,8 +66,9 @@ the owner account (`CONFIG.owner`) sees the page and the bagel avatars.
 - **Packs** (50 BB): Elemental, Legends and Enchanted. Each rolls a rarity first, then any bagel of that
   rarity in the pack: Common 50%, Uncommon 25%, Rare 15%, Epic 7%, Legendary 2.5%, Mythic 0.4%, Secret 0.1%.
   Every rarity has its own opening show, and they get bigger the rarer the pull.
-- **108 bagels**, each an animated SVG (`js/avatars*.js`), drawn from the reference sheets in
-  `media/avatar ref/`. An equipped bagel replaces your profile picture everywhere: the leaderboard, Profile,
+- **110 bagels**, each an animated SVG: 108 drawn in code (`js/avatars*.js`) from the reference sheets in
+  `media/avatar ref/`, plus two hand-made Secret files in `media/bagels/` (Hallow's End, with its own reveal
+  intro, and Vampire Lord), each with a lite cut for small avatars. An equipped bagel replaces your profile picture everywhere: the leaderboard, Profile,
   the scout pop-ups and robot locks on Match Scouting.
 - **Duplicates** sell back for BB. **Boosts** (1.5×, 2× or 3× for an hour) multiply the BB you earn for new
   match and pit records.
@@ -225,7 +226,7 @@ js/bets.js            Bagel Bets + Fantasy Alliance (match pools, predictions, b
 js/parts.js           Parts data model on Firestore (ported from bagel-parts/server.py)
 js/parts-ui.js        Parts board / My Parts / Guide UI
 js/avatars.js         Bagel avatars: catalog, rarities, packs, the SVG drawing kit
-js/avatars-art-*.js   The 108 bagel drawings (bakery = common/uncommon/rare, then epic, legendary, mythic + secret)
+js/avatars-art-*.js   The 108 coded bagel drawings (bakery = common/uncommon/rare, then epic, legendary, mythic + secret)
 js/shop.js            The Bagel Shop page, its transactions and the pack-opening shows
 js/app.js             The hub, router and all the views
 assets/, media/       Logos and images

@@ -7,6 +7,7 @@
    with a data: URL, so a bagel can stand in for a profile picture anywhere.
 
    The drawings live in avatars-art-*.js and register with Avatars.art({ id: fn }).
+   A few bagels are hand-made SVG files instead (FILES below, in media/bagels).
    Each fn gets a kit `k` and fills its layers:
      k.back  behind the bagel        k.body  on the dough (clipped to the ring)
      k.over  on the ring, unshaded   k.top   above the outline
@@ -85,6 +86,7 @@ const Avatars = (() => {
     ["dreamscape", "Dreamscape", "mythic", N], ["monolith", "Monolith", "mythic", LG],
     // ---- Secret (3)
     ["chrono", "Chrono", "secret", LG], ["monochrome", "Monochrome", "secret", N], ["gargantua", "Gargantua", "secret", E],
+    ["hallows_end", "Hallow's End", "secret", N], ["vampire_lord", "Vampire Lord", "secret", N],
   ];
   const LIST = CATALOG.map(([id, short, rarity, pack], i) => ({ id, short, name: short + " Bagel", rarity, pack, n: i }));
   const BY_ID = Object.fromEntries(LIST.map((a) => [a.id, a]));
@@ -311,13 +313,23 @@ const Avatars = (() => {
   /* ---- registry + cache ---- */
   const ART = {};
   const cache = new Map();
+  // Bagels that are their own SVG files: the full art for big views, a lighter cut
+  // (no aura or flying extras) for small avatars, and an optional one-shot intro the
+  // pack reveal plays. Each file carries its own animations.
+  const FV = "?v=1";
+  const FILES = {
+    hallows_end: { full: "media/bagels/hallows-end.svg", lite: "media/bagels/hallows-end-lite.svg", intro: "media/bagels/hallows-end-intro.svg" },
+    vampire_lord: { full: "media/bagels/vampire-lord.svg", lite: "media/bagels/vampire-lord-lite.svg" },
+  };
+  const BIG = /\b(po-av|sh-big|sh-me-av|ph-avatar|big)\b/; // classes that show a bagel large
   function svg(id, still = false) {
     const meta = BY_ID[id] || null;
     const k = kit(id, meta);
     (ART[id] || ART.__plain || (() => {}))(k);
     return assemble(k, still);
   }
-  function url(id, still = false) {
+  function url(id, still = false, big = false) {
+    if (FILES[id]) return (big ? FILES[id].full : FILES[id].lite) + FV;
     const key = id + (still ? "|s" : "");
     if (!cache.has(key)) cache.set(key, "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg(id, still)));
     return cache.get(key);
@@ -326,7 +338,14 @@ const Avatars = (() => {
   function img(id, cls = "", still = false) {
     const a = BY_ID[id];
     if (!a) return "";
-    return `<img class="${cls} bagel-av" data-rar="${a.rarity}" src="${url(id, still)}" alt="${esc(a.name)}" draggable="false" />`;
+    return `<img class="${cls} bagel-av" data-rar="${a.rarity}" src="${url(id, still, BIG.test(cls))}" alt="${esc(a.name)}" draggable="false" />`;
+  }
+  // The reveal's entrance for a bagel that has one ("" if not). A fresh URL each time so
+  // the browser starts the animation over instead of sharing a running copy.
+  function introImg(id, cls = "") {
+    const a = BY_ID[id], f = FILES[id];
+    if (!a || !f || !f.intro) return "";
+    return `<img class="${cls} bagel-av" data-rar="${a.rarity}" src="${f.intro}${FV}&t=${Date.now()}" alt="${esc(a.name)}" draggable="false" />`;
   }
 
   // crypto-strength roll: rarity by the published odds, then any bagel of that rarity in the pack
@@ -349,8 +368,8 @@ const Avatars = (() => {
     pack: (id) => PACKS.find((p) => p.id === id) || null,
     inPack: (packId) => LIST.filter((a) => a.pack === packId),
     art: (map) => { Object.assign(ART, map); cache.clear(); },
-    hasArt: (id) => !!ART[id],
-    svg, url, img, roll,
+    hasArt: (id) => !!(ART[id] || FILES[id]),
+    svg, url, img, introImg, roll,
     // drawing kit for avatars-art-*.js
     K: { C, R, H, f, pol, pt, circ, poly, pp, arc, sect, strap, smooth, sample, tube, star, spark, rhomb, petal, leaf, drop, bolt, heart, crescent, gearD,
       at, P, S, L, G, anim, gem, shard, cluster, sakura, bubble, puffs, twinkle },

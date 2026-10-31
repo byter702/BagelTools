@@ -415,7 +415,10 @@ const ShopUI = (() => {
         reveal(res, act) {
           const a = Avatars.get(res.id), r = Avatars.rarity(a.rarity), rk = a.rarity;
           el.style.setProperty("--rc", r.color);
-          el.querySelector(".po-bagel").innerHTML = Avatars.img(res.id, "po-av");
+          const bagelEl = el.querySelector(".po-bagel");
+          bagelEl.innerHTML = Avatars.img(res.id, "po-av");
+          // a bagel with its own entrance (Hallow's End) plays it the moment it appears
+          const intro = () => { const h = !bagelEl.dataset.intro && Avatars.introImg(res.id, "po-av"); if (h) { bagelEl.dataset.intro = "1"; bagelEl.innerHTML = h; } };
           el.querySelector(".po-title").innerHTML = `<span data-text="${esc(r.label)}">${esc(r.label)}</span>`;
           el.querySelector(".po-card").innerHTML = act.preview
             ? `<b class="po-name">${esc(a.name)}</b>
@@ -431,6 +434,7 @@ const ShopUI = (() => {
             if (finished) return; finished = true;
             timers.forEach(clearTimeout);
             el.classList.remove("shake1", "shake2", "shake3");
+            intro();
             el.classList.add("burst", "reveal", "show-bagel", "show-title", "done");
             el.querySelector(".po-skip").hidden = true;
             const first = el.querySelector('[data-act="equip"]'); if (first) setTimeout(() => first.focus(), 60);
@@ -453,7 +457,7 @@ const ShopUI = (() => {
               cls("shake3", false); cls("burst");
               SHOWS[rk](P).filter(([at]) => at >= 0).forEach(([at, fn]) => later(at, fn));
               later(120, () => cls("reveal"));
-              later({ common: 120, uncommon: 160, rare: 260, epic: 120, legendary: 420, mythic: 900, secret: 700 }[rk], () => cls("show-bagel"));
+              later({ common: 120, uncommon: 160, rare: 260, epic: 120, legendary: 420, mythic: 900, secret: 700 }[rk], () => { intro(); cls("show-bagel"); });
               later(T[rk] - 500, () => cls("show-title"));
               later(T[rk], finish);
             });
