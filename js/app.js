@@ -16,6 +16,12 @@
     : m.comp_level === "f" ? "F" + m.match_number
     : m.comp_level.toUpperCase() + (m.set_number || "") + (m.comp_level === "sf" && m.match_number === 1 ? "" : "-" + m.match_number);
   const qTag = (id) => (id == null || id === "") ? "Q?" : /^\d+$/.test(String(id)) ? "Q" + id : String(id);
+  // "2026cagle_sf3m1" → the id match scouting saves for that match ("SF3")
+  function matchIdFromKey(key) {
+    const m = /_(qm|ef|qf|sf|f)(\d+)(?:m(\d+))?$/.exec(String(key || ""));
+    if (!m) return "";
+    return m[1] === "qm" ? m[2] : matchIdOf({ comp_level: m[1], set_number: +m[2], match_number: +(m[3] || 1) });
+  }
   const matchSortKey = (id) => { const t = String(id || ""); if (/^\d+$/.test(t)) return Number(t);
     const n = Number((t.match(/\d+/) || [0])[0]); return (/^F/.test(t) ? 3000 : /^SF/.test(t) ? 2000 : 1000) + n; };
   // The scout's name is always the logged-in user (no manual field anymore).
@@ -74,11 +80,11 @@
       <span class="bpop-eyebrow">${esc(b.label || "Match")} · match bet</span>
       <h3>${kind === "won" ? "You won!" : kind === "refund" ? "Refunded" : "Not this time"}</h3>
       <b class="bpop-amt">${kind === "lost" ? "&minus;" + amt : "+" + (b.payout || 0).toLocaleString()} BB</b>
-      <p>${kind === "won" ? `Your ${amt} BB on <b>${esc(pn(b.pool))}</b> paid ${((b.payout || 0) / (b.amount || 1)).toFixed(1)}&times;. It's in your balance.`
+      <p>${kind === "won" ? `Your ${amt} BB on <b>${esc(pn(b.pool))}</b> paid ${((b.payout || 0) / (b.amount || 1)).toFixed(1)}&times;. ${b.held && !b.claimedAt && !scoutedBetMatch(b) ? `<b>Scout ${esc(b.label || "this match")} to claim it.</b> Prizes only pay out on matches you scouted.` : "It's in your balance."}`
         : kind === "refund" ? (b.outcome === "void" ? `The market was voided, so your ${amt} BB came back.` : `Nobody picked the winning pool, so your ${amt} BB came back.`)
         : `You had ${amt} BB on <b>${esc(pn(b.pool))}</b>${b.outcome && b.outcome !== b.pool && NAMES[b.outcome] ? `, but it ended <b>${esc(pn(b.outcome))}</b>` : ""}.`}</p>
       ${sr != null ? `<span class="bpop-score"><i class="r">${sr}</i><em>&ndash;</em><i class="b">${sb}</i></span>` : ""}
-      <button class="btn primary" type="button">${kind === "won" ? "Collect" : "OK"}</button></div>`;
+      <button class="btn primary" type="button">${kind === "won" && !(b.held && !b.claimedAt && !scoutedBetMatch(b)) ? "Collect" : "OK"}</button></div>`;
     document.body.appendChild(back);
     const close = () => { back.classList.add("out"); setTimeout(() => { back.remove(); betPopQueue.shift(); showBetPop(); }, 220); };
     $("button", back).onclick = close;
@@ -658,6 +664,7 @@
     onChange() {}, isBlocked: () => false, onBlocked() {},
     getAdmins: () => [], setAdmins: () => Promise.reject(new Error("cloud off")),
     getHidden: () => [], setHidden: () => Promise.reject(new Error("cloud off")),
+    getFeatures: () => ({}), setFeature: () => Promise.reject(new Error("cloud off")),
     listDevices: () => Promise.resolve([]), removeDevice: () => Promise.reject(new Error("cloud off")),
   };
 
@@ -767,7 +774,7 @@
         ["members", "Members", "teams", "Leaderboard and roster"]] },
     { id: "scouting", name: "Scouting", icon: "binoculars", accent: "#5bbde2", blurb: "Scout every match and pit, then build the pick list",
       pages: [["match", "Match Scouting", "binoculars", "Scout a robot in a match"], ["pit", "Pit Scouting", "robot", "Robot specs and photos"],
-        ["schedule", "Schedule", "calendar", "Sign up & scouting assignments", { season: 2027 }],
+        ["schedule", "Schedule", "calendar", "Sign up & scouting assignments", { season: 2027, feature: "scoutSchedule" }],
         ["autoscout", "Auto Scout", "scan", "Let the match video scout", { ownerOnly: true }],
         ["data", "Data", "database", "Search, rankings, spreadsheet"], ["picklist", "Pick List", "picklist", "Alliances, Mashup, Bracket"]] },
     { id: "statistics", name: "Statistics", icon: "chart", accent: "#4ade80", blurb: "Teams, events and matchups by the numbers",
@@ -791,6 +798,7 @@
     const o = p[4] || {};
     if (o.ownerOnly && !isOwnerUser()) return false;   // Auto Scout, while it's in beta
     if (o.season && GAME.season !== o.season) return false;   // e.g. Schedule is 2027-only
+    if (o.feature && !(window.Cloud && Cloud.getFeatures && Cloud.getFeatures()[o.feature])) return false;   // switched off by an admin
     return true;
   });
   const appFor = (route) => APPS.find((a) => a.id === ROUTE_APP[route]) || APPS[0];
@@ -931,7 +939,7 @@
     teams: { title: "Event", render: renderEventsPage },
     events: { title: "Events", render: renderEventsSearchPage },
     match: { title: "Match Scouting", render: renderMatch },
-    schedule: { title: "Schedule", render: renderSchedule },
+    schedule: { title: "Schedule", render: renderScoutSchedule },
     pit: { title: "Pit Scouting", render: renderPit },
     autoscout: { title: "Auto Scout", render: (root) => (!isOwnerUser() ? location.replace("#/match") // owner only for now
       : window.AutoScoutUI ? AutoScoutUI.page(root) : (root.innerHTML = `<div class="card">${emptyState("scan", "Auto Scout didn't load", "Reload the page to try again.")}</div>`)) },
@@ -3413,7 +3421,11 @@
   function myScouterId() { const u = Auth.currentUser(); return u ? u.id : ""; }
   function scheduleSignedUp(sched, id) { id = id || myScouterId(); return !!(id && sched && (sched.signups || []).some((x) => x.id === id)); }
 
-  function renderSchedule(root) {
+  // The admin can switch the whole scouting schedule (sign-ups, stations, the match
+  // scouting lock) on or off for the team: Admin → Data. Off unless switched on.
+  const scoutScheduleOn = () => !!(window.Cloud && Cloud.getFeatures && Cloud.getFeatures().scoutSchedule);
+  function renderScoutSchedule(root) {
+    if (!scoutScheduleOn()) { location.replace("#/match"); return; }
     const s = Store.getSettings();
     const hero = (sub) => pageHero({ ic: "calendar", eyebrow: "Scouting · schedule", title: "Scouting schedule", sub });
     if (GAME.season !== 2027) {
@@ -3490,8 +3502,8 @@
   }
   function renderMatch(root) {
     const s = Store.getSettings();
-    // 2027: match scouting is locked until you've signed up on the Schedule page.
-    if (GAME.season === 2027 && window.Cloud && Cloud.enabled() && !scheduleSignedUp(s.eventKey ? Cloud.getSchedule(s.eventKey) : null)) {
+    // 2027 + scouting schedule on: match scouting is locked until you've signed up on the Schedule page.
+    if (GAME.season === 2027 && scoutScheduleOn() && window.Cloud && Cloud.enabled() && !scheduleSignedUp(s.eventKey ? Cloud.getSchedule(s.eventKey) : null)) {
       root.innerHTML = pageHero({ ic: "binoculars", eyebrow: "Match scouting", title: "Sign up to scout first",
         sub: "On the 2027 season, match scouting opens once you've signed up on the Schedule page." })
         + `<div class="card">${emptyState("calendar", "Not signed up yet", "Head to Schedule and sign up — then your station and teams are set and this unlocks.")}
@@ -3719,6 +3731,7 @@
       }
       matchEditId = null;
       renderMatch(root);
+      claimScoutedPrizes(); // a bet on this match? its prize unlocks now
     };
 
     function drawMatchList() {
@@ -6701,6 +6714,11 @@
     const dataHTML = (() => {
       const cloudOn = Cloud.enabled();
       return `<div class="card" style="margin-bottom:18px">
+        <div class="row" style="gap:10px;margin-bottom:6px;align-items:center">${icon("calendar")}<h2 style="margin:0;flex:1">Scouting schedule</h2>
+          <label class="switch"><input type="checkbox" id="featSchedule" ${scoutScheduleOn() ? "checked" : ""} ${cloudOn ? "" : "disabled"}><span class="slider"></span></label></div>
+        <p class="hint" style="margin:0">Sign-ups and station assignments on the <b>Schedule</b> page (2027 season). While it's on, match scouting stays locked until a scout signs up. Off hides the page and unlocks match scouting for everyone.</p>
+      </div>
+      <div class="card" style="margin-bottom:18px">
         <div class="row" style="gap:10px;margin-bottom:6px">${icon("bell")}<h2 style="margin:0">Parts Discord pings</h2></div>
         <p class="hint">Teammates get @‑pinged in your Discord channel the moment a part they're assigned to is <b>ready to make</b> — no bot or server to run. People are matched by the Discord <b>user ID</b> on their profile. Paste the channel's <b>webhook URL</b> below (Discord: channel → Edit Channel → Integrations → Webhooks → New Webhook → Copy URL).</p>
         ${cloudOn ? `
@@ -6800,6 +6818,13 @@
         .then((r) => toast(r.people ? `Pinged ${r.people} ${r.people === 1 ? "person" : "people"} (${r.parts} parts)` : "Nobody has a ready part right now"))
         .catch(() => toast("Couldn't post to the webhook — check the URL", "err"))
         .finally(() => { setTimeout(() => { if (pingReadyBtn.isConnected) pingReadyBtn.disabled = false; }, 4000); });
+    };
+    const featSchedule = $("#featSchedule", root);
+    if (featSchedule) featSchedule.onchange = () => {
+      const on = featSchedule.checked;
+      Cloud.setFeature("scoutSchedule", on)
+        .then(() => { toast(on ? "Scouting schedule on for the team" : "Scouting schedule off: match scouting is open to everyone"); $("#nav").dataset.app = ""; refreshChrome(); })
+        .catch(() => { featSchedule.checked = !on; toast("Couldn't change it. Is the cloud connected?", "err"); });
     };
     const clearCloudBtn = $("#clearCloudBtn", root);
     if (clearCloudBtn) clearCloudBtn.onclick = () => confirmDialog(
@@ -7201,8 +7226,10 @@
     const mine = Object.values(Bets.cache.mine);
     const inPlay = mine.filter((b) => !b.settled).reduce((s, b) => s + (b.amount || 0), 0);
     const done = mine.filter((b) => b.settled && !b.refund);
-    const net = done.reduce((s, b) => s + (b.payout || 0) - (b.amount || 0), 0);
-    return { bal, inPlay, net, w: done.filter((b) => (b.payout || 0) > 0).length, l: done.filter((b) => !(b.payout > 0)).length };
+    const held = done.filter((b) => b.held && !b.claimedAt);
+    const net = done.reduce((s, b) => s + (b.held && !b.claimedAt ? 0 : b.payout || 0) - (b.amount || 0), 0);
+    return { bal, inPlay, net, held: held.length, heldBB: held.reduce((s, b) => s + (b.payout || 0), 0),
+      w: done.filter((b) => (b.payout || 0) > 0).length, l: done.filter((b) => !(b.payout > 0)).length };
   }
   function walletHTML() {
     const w = betWallet();
@@ -7212,9 +7239,30 @@
         <div><b>${w.inPlay.toLocaleString()}</b><span>bets in play</span></div>
         <div class="${w.net > 0 ? "up" : w.net < 0 ? "down" : ""}"><b>${w.net > 0 ? "+" : ""}${w.net.toLocaleString()}</b><span>bets net</span></div>
         <div><b>${w.w}–${w.l}</b><span>bet record</span></div>
-      </div></div>`;
+      </div>${w.held ? `<div class="bt-w-held">${icon("lock")}<span><b>${w.heldBB.toLocaleString()} BB</b> waiting in ${w.held} ${w.held === 1 ? "prize" : "prizes"}: scout ${w.held === 1 ? "that match" : "those matches"} to claim</span></div>` : ""}</div>`;
   }
   function refreshWallet() { const el = $("#btWallet"); if (el) el.outerHTML = walletHTML(); }
+  // Betting prizes only pay out on matches you scouted: did I save a scout of this bet's match?
+  function scoutedBetMatch(b) {
+    const id = matchIdFromKey(b.match).toUpperCase(), me = Store.getMe(), myName = scoutDisplayName().toLowerCase();
+    if (!id) return false;
+    const norm = (x) => String(x == null ? "" : x).trim().toUpperCase().replace(/^Q(?=\d+$)/, "");
+    return allMatches().some((r) => r && String(r.event) === String(b.event) && norm(r.matchNumber) === id
+      && ((r.scouterId && r.scouterId === me.id) || (!!myName && String(r.scout || "").trim().toLowerCase() === myName)));
+  }
+  let claiming = false;
+  async function claimScoutedPrizes() {
+    if (claiming || !window.Bets || !Cloud.enabled() || !Bets.isReady("mine")) return;
+    const due = Object.values(Bets.cache.mine).filter((b) => b.settled && b.held && !b.claimedAt && scoutedBetMatch(b));
+    if (!due.length) return;
+    claiming = true;
+    try {
+      for (const b of due) {
+        const got = await Bets.claimPrize(b.id).catch(() => 0);
+        if (got > 0) { b.held = false; b.claimedAt = Date.now(); toast(`+${got.toLocaleString()} BB claimed · you scouted ${b.label || "that match"}`); }
+      }
+    } finally { claiming = false; refreshWallet(); }
+  }
   // Keep live data (schedule, results, alliances, fantasy points) fresh while `host` is on screen.
   function startBetsTick(host, ms = 45000) {
     betsHost = host;
@@ -7333,7 +7381,7 @@
       }
       const mineRow = mine ? `<div class="bt-mine ${mine.settled ? (mine.refund ? "refund" : mine.payout > 0 ? "won" : "lost") : ""}">
           ${icon(open ? "coins" : "lock")}<span>You ${open ? "have" : "locked in"} <b>${mine.amount.toLocaleString()}</b> on <b>${labels[mine.pool].name}</b></span>
-          <b class="bt-mine-res">${mine.settled ? (mine.refund ? "Refunded" : mine.payout > 0 ? "+" + mine.payout.toLocaleString() + " BB" : "−" + mine.amount.toLocaleString() + " BB")
+          <b class="bt-mine-res">${mine.settled ? (mine.refund ? "Refunded" : mine.payout > 0 ? "+" + mine.payout.toLocaleString() + " BB" + (mine.held && !mine.claimedAt ? " · scout this match to claim" : "") : "−" + mine.amount.toLocaleString() + " BB")
             : "pays ~" + Math.floor(mine.amount * (Bets.estMultiplier(line, bets, mine.pool, 0, playoffNow) || 0)).toLocaleString() + " BB"}</b>
           ${open ? `<button type="button" class="bt-cancel" data-cancel>Cancel</button>` : ""}</div>` : "";
       const hostBar = host && open ? `<div class="msb-host">${icon("shield")}<span><b>${bets.length}</b> ${bets.length === 1 ? "bet" : "bets"} · ${Math.round(P.pot).toLocaleString()} BB pot</span>
@@ -8447,7 +8495,7 @@
       refreshWallet();
       if (Store.getSettings().eventKey === TEST_EVENT_KEY) settleBetsNow(); // test qual moved: pay out now
       const formNow = (id, fields) => { const f = $("#" + id); return f && !f.dataset.dirty && f.dataset.sig !== formSig(fields); };
-      if (current() === "schedule") { router(); return; }   // live sign-ups / station assignments
+      if (current() === "schedule") { router(); return; }   // live sign-ups / station assignments (or the feature was switched off)
       if (current() === "shop" && window.ShopUI) { ShopUI.refresh(); return; }   // balance, packs, boosts
       if (current() === "match") { if (formNow("matchForm", matchFields())) router(); else refreshRobotClaims(); return; }
       if (current() === "pit") {
@@ -8494,6 +8542,7 @@
         }
       }
       refreshWallet(); if (betsRedraw) betsRedraw();
+      claimScoutedPrizes();
     });
     // Settle finished match bets live, wherever you are in the app: real events are
     // checked against TBA about every 30s; the test event (its scores are made on the

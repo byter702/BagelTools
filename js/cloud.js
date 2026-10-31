@@ -600,6 +600,15 @@
       cache.config.admins = doc;
       return db.collection("config").doc("admins").set(doc);
     },
+    // Team-wide feature switches an admin flips (config/features), e.g. { scoutSchedule: false }.
+    getFeatures: function () { return cache.config.features || {}; },
+    setFeature: function (name, on) {
+      if (!this.enabled()) return Promise.reject(new Error("cloud off"));
+      var doc = Object.assign({}, cache.config.features || {}, { updatedAt: Date.now() });
+      doc[name] = !!on;
+      cache.config.features = doc;
+      return db.collection("config").doc("features").set(doc);
+    },
     // Members hidden from the member list and leaderboard (config/visibility).
     getHidden: function () { var d = cache.config.visibility; return (d && Array.isArray(d.hidden)) ? d.hidden : []; },
     setHidden: function (ids) {

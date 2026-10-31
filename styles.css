@@ -2445,6 +2445,10 @@ button.mu-trow.has-tc { box-shadow: inset 4px 0 0 var(--tc); padding-left: 10px;
 .bt-w-main b { display: block; font-family: var(--font-display); font-weight: 900; font-size: 1.8rem; line-height: 1; color: var(--secondary); }
 .bt-w-main span { font-size: .78rem; color: var(--text-mut); font-weight: 700; }
 .bt-w-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.bt-w-held { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 10px; border-radius: 10px; font-size: .84rem; color: var(--text-dim);
+  background: color-mix(in srgb, var(--secondary) 12%, var(--surface)); border: 1px dashed color-mix(in srgb, var(--secondary) 50%, transparent); }
+.bt-w-held .ico { width: 16px; height: 16px; color: var(--secondary); flex: none; }
+.bt-w-held b { color: var(--text); }
 .bt-w-row > div { display: flex; flex-direction: column; align-items: center; padding: 6px 4px; border-radius: 10px; background: var(--surface); }
 .bt-w-row b { font-family: var(--font-display); font-weight: 800; font-size: .95rem; }
 .bt-w-row span { font-size: .68rem; color: var(--text-mut); font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }

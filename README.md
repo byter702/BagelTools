@@ -50,6 +50,8 @@ reads the balance first and is applied at most once, so two phones can't double-
 ### Bagel Bets
 Wager BB on the event as it happens:
 - **Match pools** — bet whether a match goes **higher / accurate / lower / upset** vs. a frozen prediction line (run from the Match Scouting page). Matches settle **live, app-wide**, with a win/loss popup — whoever's device sees the result first settles it for everyone.
+  **Winnings only pay out on a match you scouted:** a winning bet's prize is held until you save a scouting record
+  for that match, then your device claims it automatically (once). Refunds are never held.
 - **Alliance-selection predictions** — predict the 8 alliances; scored by exact/role/on.
 - **Playoff brackets** — a 100 BB entry to fill an 8-alliance double-elimination bracket.
 
@@ -107,6 +109,8 @@ their browser (localStorage); with cloud sync on, everyone's data aggregates aut
   climb, defense, driver skill, notes). Edit or delete past records.
 - **Pit Scouting** — robot capabilities (drivetrain, scoring/intake, climb, auto, role). Questions are
   editable in Admin. Shows a live **Nexus pit map** (green = scouted) when a Nexus key and map are available.
+- **Schedule** (2027, admin switch: Admin → Data → Scouting schedule, off by default): sign-ups and station
+  assignments; while it's on, match scouting stays locked until a scout signs up.
 - **Auto Scout** (beta) — scouts a match from its TBA video. Pick an event and match, connect the YouTube video
   (Chrome/Edge tab capture, "Share this tab") or load a video file, tag the start of auto, the field view, both hubs
   and the six robots, and it follows every robot and every fuel launch (live ETA, field map, pauses to ask when it

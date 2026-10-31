@@ -7,6 +7,8 @@
    or a payout reads the doc first and is applied at most once, so two devices
    can't double-spend or double-pay. Any device that sees a finished match can
    settle it (whoever gets there first; the rest see "already settled").
+   Winnings on a match bet are HELD until the bettor saves a scout of that match;
+   their own device then claims them (claimPrize). Refunds are never held.
    Collections (all keyed by event/year, so no season suffix):
      betlines/{matchKey}         the frozen prediction line + house seeds
      bets/{matchKey}__{uid}      one person's stake on one match (one pool)
@@ -270,16 +272,31 @@ const Bets = (() => {
       return b.amount || 0;
     });
   }
-  // Pay one bet exactly once.
+  // Settle one bet exactly once. Refunds go straight back; winnings are HELD until the
+  // bettor scouts that match (claimPrize, run from their own device by app.js).
   function payBet(d, betId, pay, extra) {
     const ref = d.collection("bets").doc(betId);
     return d.runTransaction(async (tx) => {
       const s = await tx.get(ref);
       if (!s.exists || s.data().settled) return 0;
-      const b = s.data();
-      tx.update(ref, Object.assign({ settled: true, payout: pay.payout, refund: !!pay.refund, settledAt: Date.now() }, extra || {}));
-      if (pay.payout > 0) tx.set(scRef(d, b.uid), { id: b.uid, bb: inc(pay.payout) }, { merge: true });
+      const b = s.data(), held = pay.payout > 0 && !pay.refund;
+      tx.update(ref, Object.assign({ settled: true, payout: pay.payout, refund: !!pay.refund, held, settledAt: Date.now() }, extra || {}));
+      if (pay.payout > 0 && !held) tx.set(scRef(d, b.uid), { id: b.uid, bb: inc(pay.payout) }, { merge: true });
       return pay.payout;
+    });
+  }
+  // Collect a held prize (exactly once): my winnings on a match I've now scouted.
+  async function claimPrize(betId) {
+    const d = db(); if (!d) throw new Error("OFFLINE");
+    const uid = me().id, ref = d.collection("bets").doc(betId);
+    return d.runTransaction(async (tx) => {
+      const s = await tx.get(ref);
+      if (!s.exists) return 0;
+      const b = s.data();
+      if (b.uid !== uid || !b.held || b.claimedAt || !(b.payout > 0)) return 0;
+      tx.update(ref, { held: false, claimedAt: Date.now() });
+      tx.set(scRef(d, uid), { id: uid, bb: inc(b.payout) }, { merge: true });
+      return b.payout;
     });
   }
   // Pay every unsettled bet on one finished market exactly once, then mark the market
@@ -838,7 +855,7 @@ const Bets = (() => {
     POOLS, SEED, PLAYOFF_MULT, AP_PAY, ROUND_BB, BRACKET_FEE, DE8, FP_START, ROSTER, MIN_PRICE, WEEK_WIN, GRAND_PRIZE, AUTO_PICK_MS, LEAGUES,
     cache, watch, isReady, onChange: (cb) => { cbs.push(cb); return () => { cbs = cbs.filter((x) => x !== cb); }; }, _inject,
     played, teamsOf, isPlayoff, matchOrder, matchState, matchLabel,
-    makeLine, outcome, poolLabels, pools, betsOn, estMultiplier, payouts, openMarket, lockMarket, placeBet, cancelBet, settleEvent, settleMyOtherEvents, voidMarket, markSeen,
+    makeLine, outcome, poolLabels, pools, betsOn, estMultiplier, payouts, openMarket, lockMarket, placeBet, cancelBet, settleEvent, settleMyOtherEvents, voidMarket, markSeen, claimPrize,
     scoreAlliances, gridOf, saveAlliancePred, settleAlliancePreds,
     bracketParticipants, cleanPicks, bracketActual, scoreBracket, bracketDone, saveBracket, settleBrackets,
     addMashupVote, undoMashupVote, mashupVotes, mashupRatings, nextMashupPair,
