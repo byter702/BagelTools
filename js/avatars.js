@@ -321,6 +321,10 @@ const Avatars = (() => {
     hallows_end: { full: "media/bagels/hallows-end.svg", lite: "media/bagels/hallows-end-lite.svg", intro: "media/bagels/hallows-end-intro.svg" },
     vampire_lord: { full: "media/bagels/vampire-lord.svg", lite: "media/bagels/vampire-lord-lite.svg" },
     pharaoh: { full: "media/bagels/pharaoh.svg", lite: "media/bagels/pharaoh-lite.svg", intro: "media/bagels/pharaoh-intro.svg" },
+    plain: { full: "media/bagels/plain.svg", lite: "media/bagels/plain-lite.svg", intro: "media/bagels/plain-intro.svg" },
+    ocean: { full: "media/bagels/ocean.svg", lite: "media/bagels/ocean-lite.svg", intro: "media/bagels/ocean-intro.svg" },
+    samurai: { full: "media/bagels/samurai.svg", lite: "media/bagels/samurai-lite.svg", intro: "media/bagels/samurai-intro.svg" },
+    leviathan: { full: "media/bagels/leviathan.svg", lite: "media/bagels/leviathan-lite.svg", intro: "media/bagels/leviathan-intro.svg" },
   };
   const BIG = /\b(po-av|sh-big|sh-me-av|ph-avatar|big)\b/; // classes that show a bagel large
   function svg(id, still = false) {
