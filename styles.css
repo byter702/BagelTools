@@ -4685,7 +4685,7 @@ img.bagel-av[data-rar="secret"] { --rc: #e8e6ff; }
 .sh-tab.on { background: color-mix(in srgb, #c084fc 20%, var(--surface-2)); color: var(--text); box-shadow: inset 0 0 0 1px color-mix(in srgb, #c084fc 50%, transparent); }
 
 /* packs: paper bakery bags */
-.sh-packs { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+.sh-packs { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 16px; }
 .sh-pack { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 18px 16px 16px; border-radius: var(--radius);
   background: var(--surface); border: 1px solid var(--border); text-align: center; }
 .sh-pack h3 { margin: 0 0 2px; font-family: var(--font-display); font-size: 1.05rem; }
@@ -4710,6 +4710,14 @@ img.bagel-av[data-rar="secret"] { --rc: #e8e6ff; }
 .pk-sub { position: relative; font: 800 .64rem var(--font-display); letter-spacing: .4em; color: rgba(255, 255, 255, .85); margin-top: 1px; }
 .pk-shine { position: absolute; inset: -20%; background: linear-gradient(105deg, transparent 40%, rgba(255, 255, 255, .45) 50%, transparent 60%); transform: translateX(-70%); pointer-events: none; }
 .sh-pack:hover .pk-shine, .po-pk .pk-shine { animation: shShine 1.4s ease-in-out infinite; }
+/* the Christmas bag: a red crimp, and snow falling behind the hero */
+.pk-xmas .pk-fold { background: #c8202f; }
+.pk-xmas .pk-bag::before { content: ""; position: absolute; inset: 0; pointer-events: none; animation: pkSnow 7s linear infinite; background-size: 120px 120px;
+  background-image: radial-gradient(circle at 12px 18px, #fff 0 2px, transparent 2.6px), radial-gradient(circle at 58px 6px, rgba(255, 255, 255, .8) 0 1.3px, transparent 1.9px),
+    radial-gradient(circle at 96px 40px, #fff 0 1.6px, transparent 2.2px), radial-gradient(circle at 34px 62px, rgba(255, 255, 255, .7) 0 1.1px, transparent 1.7px),
+    radial-gradient(circle at 78px 84px, #fff 0 2.2px, transparent 2.8px), radial-gradient(circle at 20px 104px, rgba(255, 255, 255, .85) 0 1.4px, transparent 2px),
+    radial-gradient(circle at 108px 112px, rgba(255, 255, 255, .7) 0 1.1px, transparent 1.7px); }
+@keyframes pkSnow { to { background-position: 0 120px; } }
 
 /* collection */
 .sh-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
@@ -4942,7 +4950,7 @@ body.po-open { overflow: hidden; }
 @keyframes poGlitchB { 0%, 100% { transform: translate(0); clip-path: inset(0 0 0 0); } 10% { transform: translate(3px, -1px); clip-path: inset(40% 0 30% 0); } 18% { transform: translate(-2px, 1px); clip-path: inset(5% 0 75% 0); } 26% { transform: translate(0); clip-path: inset(0 0 0 0); } }
 @keyframes poBounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
 @media (prefers-reduced-motion: reduce) {
-  .po, .po *, .sh-me-av, .pk-hero, .pk-shine { animation: none !important; transition: none !important; }
+  .po, .po *, .sh-me-av, .pk-hero, .pk-shine, .pk-xmas .pk-bag::before { animation: none !important; transition: none !important; }
   .po.show-bagel .po-bagel, .po.done .po-bagel { opacity: 1; transform: none; }
 }
 @media (max-width: 520px) {

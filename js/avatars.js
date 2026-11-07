@@ -1,7 +1,7 @@
 /* =============================================================================
    avatars.js  —  Bagel avatars (the Shop's collectibles)
    -----------------------------------------------------------------------------
-   108 bagels in 7 rarities, opened from packs in the Shop. Each one is drawn as
+   118 bagels in 7 rarities, opened from packs in the Shop. Each one is drawn as
    a 128×128 SVG (a top-down bagel ring, like the reference sheets in
    media/avatar ref) with its own idle animation, and handed out as an <img>
    with a data: URL, so a bagel can stand in for a profile picture anywhere.
@@ -31,15 +31,16 @@ const Avatars = (() => {
   ];
   const RAR = Object.fromEntries(RARITIES.map((r, i) => [r.key, { ...r, tier: i }]));
 
-  /* ---- packs: each holds every rarity, themed by its top bagels ---- */
+  /* ---- packs, themed by their top bagels (a rarity a pack lacks rolls as the next one down) ---- */
   const PACKS = [
     { id: "elemental", name: "Elemental Pack", price: 50, feature: "tidal", c1: "#22c3ee", c2: "#0b4f86", blurb: "Storms, tides, stars and ice" },
     { id: "legends", name: "Legends Pack", price: 50, feature: "excalibur", c1: "#f05252", c2: "#7a1020", blurb: "Warriors, kingdoms and time itself" },
     { id: "enchanted", name: "Enchanted Pack", price: 50, feature: "phoenix", c1: "#f472b6", c2: "#6b2fc9", blurb: "Magic, monsters and sweet dreams" },
+    { id: "christmas", name: "Christmas Pack", price: 50, feature: "santa_claus", c1: "#22a559", c2: "#0b4a2c", cls: "pk-xmas", blurb: "Sweets, snow, Santa and Krampus" },
   ];
 
   // [id, name, rarity, pack]   (every name gets " Bagel" when shown)
-  const E = "elemental", LG = "legends", N = "enchanted";
+  const E = "elemental", LG = "legends", N = "enchanted", XM = "christmas";
   const CATALOG = [
     // ---- Common (30)
     ["plain", "Plain", "common", LG], ["sesame", "Sesame", "common", LG], ["poppy", "Poppy Seed", "common", LG],
@@ -87,6 +88,10 @@ const Avatars = (() => {
     // ---- Secret (3)
     ["chrono", "Chrono", "secret", LG], ["monochrome", "Monochrome", "secret", N], ["gargantua", "Gargantua", "secret", E],
     ["hallows_end", "Hallow's End", "secret", N], ["vampire_lord", "Vampire Lord", "secret", N],
+    // ---- The Christmas Pack (8, no Mythic)
+    ["candy_cane", "Candy Cane", "common", XM], ["gingerbread", "Gingerbread", "uncommon", XM], ["christmas_wreath", "Christmas Wreath", "rare", XM],
+    ["snow_globe", "Snow Globe", "rare", XM], ["nutcracker", "Nutcracker", "epic", XM], ["santa_claus", "Santa Claus", "legendary", XM],
+    ["krampus", "Krampus", "legendary", XM], ["last_ornament", "The Last Ornament", "secret", XM],
   ];
   const LIST = CATALOG.map(([id, short, rarity, pack], i) => ({ id, short, name: short + " Bagel", rarity, pack, n: i }));
   const BY_ID = Object.fromEntries(LIST.map((a) => [a.id, a]));
@@ -325,6 +330,14 @@ const Avatars = (() => {
     ocean: { full: "media/bagels/ocean.svg", lite: "media/bagels/ocean-lite.svg", intro: "media/bagels/ocean-intro.svg" },
     samurai: { full: "media/bagels/samurai.svg", lite: "media/bagels/samurai-lite.svg", intro: "media/bagels/samurai-intro.svg" },
     leviathan: { full: "media/bagels/leviathan.svg", lite: "media/bagels/leviathan-lite.svg", intro: "media/bagels/leviathan-intro.svg" },
+    candy_cane: { full: "media/bagels/candy-cane.svg", lite: "media/bagels/candy-cane-lite.svg", intro: "media/bagels/candy-cane-intro.svg" },
+    gingerbread: { full: "media/bagels/gingerbread.svg", lite: "media/bagels/gingerbread-lite.svg", intro: "media/bagels/gingerbread-intro.svg" },
+    christmas_wreath: { full: "media/bagels/christmas-wreath.svg", lite: "media/bagels/christmas-wreath-lite.svg", intro: "media/bagels/christmas-wreath-intro.svg" },
+    snow_globe: { full: "media/bagels/snow-globe.svg", lite: "media/bagels/snow-globe-lite.svg", intro: "media/bagels/snow-globe-intro.svg" },
+    nutcracker: { full: "media/bagels/nutcracker.svg", lite: "media/bagels/nutcracker-lite.svg", intro: "media/bagels/nutcracker-intro.svg" },
+    santa_claus: { full: "media/bagels/santa-claus.svg", lite: "media/bagels/santa-claus-lite.svg", intro: "media/bagels/santa-claus-intro.svg" },
+    krampus: { full: "media/bagels/krampus.svg", lite: "media/bagels/krampus-lite.svg", intro: "media/bagels/krampus-intro.svg" },
+    last_ornament: { full: "media/bagels/last-ornament.svg", lite: "media/bagels/last-ornament-lite.svg", intro: "media/bagels/last-ornament-intro.svg" },
   };
   const BIG = /\b(po-av|sh-big|sh-me-av|ph-avatar|big)\b/; // classes that show a bagel large
   function svg(id, still = false) {
@@ -333,11 +346,14 @@ const Avatars = (() => {
     (ART[id] || ART.__plain || (() => {}))(k);
     return assemble(k, still);
   }
-  function url(id, still = false, big = false) {
-    if (FILES[id]) return (big ? FILES[id].full : FILES[id].lite) + FV;
+  function drawn(id, still) {
     const key = id + (still ? "|s" : "");
     if (!cache.has(key)) cache.set(key, "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg(id, still)));
     return cache.get(key);
+  }
+  function url(id, still = false, big = false) {
+    if (FILES[id]) return (big ? FILES[id].full : FILES[id].lite) + FV;
+    return drawn(id, still);
   }
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
   function img(id, cls = "", still = false) {
@@ -359,7 +375,7 @@ const Avatars = (() => {
   }
   // Pack odds (percent by rarity) under a luck boost: Epic and rarer become `luck`× as
   // likely, and the extra chance comes out of Common (then Uncommon if Common runs out).
-  function odds(luck = 1) {
+  function odds(luck = 1, packId) {
     const o = Object.fromEntries(RARITIES.map((r) => [r.key, r.odds]));
     if (luck > 1) {
       let extra = 0;
@@ -367,15 +383,19 @@ const Avatars = (() => {
       const fromCommon = Math.min(extra, o.common);
       o.common -= fromCommon; o.uncommon -= extra - fromCommon;
     }
+    // a rarity this pack doesn't have rolls as the next one down that it does
+    if (packId) for (let i = RARITIES.length - 1; i > 0; i--) {
+      const k = RARITIES[i].key;
+      if (!LIST.some((a) => a.pack === packId && a.rarity === k)) { o[RARITIES[i - 1].key] += o[k]; o[k] = 0; }
+    }
     return o;
   }
   function roll(packId, luck = 1) {
-    const o = odds(luck);
+    const o = odds(luck, packId);
     let x = rand() * 100, rar = RARITIES[0].key;
     for (const r of RARITIES) { if (x < o[r.key]) { rar = r.key; break; } x -= o[r.key]; }
     const pool = LIST.filter((a) => a.pack === packId && a.rarity === rar);
-    const pick = pool.length ? pool[Math.floor(rand() * pool.length)] : LIST.find((a) => a.rarity === rar);
-    return pick.id;
+    return pool[Math.floor(rand() * pool.length)].id;
   }
 
   return {
@@ -388,6 +408,8 @@ const Avatars = (() => {
     art: (map) => { Object.assign(ART, map); cache.clear(); },
     hasArt: (id) => !!(ART[id] || FILES[id]),
     svg, url, img, introImg, roll, odds,
+    // a locked bagel is only ever a dark shape, so it never downloads a hand-made file
+    shape: (id) => drawn(id, true),
     // drawing kit for avatars-art-*.js
     K: { C, R, H, f, pol, pt, circ, poly, pp, arc, sect, strap, smooth, sample, tube, star, spark, rhomb, petal, leaf, drop, bolt, heart, crescent, gearD,
       at, P, S, L, G, anim, gem, shard, cluster, sakura, bubble, puffs, twinkle },

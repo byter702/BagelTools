@@ -146,7 +146,7 @@ const ShopUI = (() => {
 
   // a paper bakery bag with the pack's top bagel on it
   function packArt(p, cls = "") {
-    return `<div class="pk ${cls}" style="--c1:${p.c1};--c2:${p.c2}"><div class="pk-bag">
+    return `<div class="pk ${p.cls || ""} ${cls}" style="--c1:${p.c1};--c2:${p.c2}"><div class="pk-bag">
       <span class="pk-fold"></span><span class="pk-tag">702 Bakery</span>
       <img class="pk-hero" src="${Avatars.url(p.feature, true)}" alt="" draggable="false" />
       <b class="pk-name">${esc(p.name.replace(/ Pack$/, ""))}</b><span class="pk-sub">Pack</span><span class="pk-shine"></span></div></div>`;
@@ -162,7 +162,7 @@ const ShopUI = (() => {
             <button class="btn ghost sm" data-odds="${p.id}">Drop rates</button></div></div></article>`;
     }).join("")}</div>`;
   }
-  const lockedImg = (a) => `<span class="sh-lock" data-rar="${a.rarity}">${a.rarity === "secret" ? "?" : `<img src="${Avatars.url(a.id, true)}" alt="" draggable="false" />`}</span>`;
+  const lockedImg = (a) => `<span class="sh-lock" data-rar="${a.rarity}">${a.rarity === "secret" ? "?" : `<img src="${Avatars.shape(a.id)}" alt="" draggable="false" />`}</span>`;
   function collectionHTML() {
     const own = owned(), eq = equipped();
     const chips = [["all", "All"], ...Avatars.RARITIES.map((r) => [r.key, r.label])].map(([k, l]) => `<button class="sh-chip${rarFilter === k ? " on" : ""}" data-rf="${k}"${k !== "all" ? ` style="--rc:${Avatars.rarity(k).color}"` : ""}>${l}</button>`).join("");
@@ -196,10 +196,10 @@ const ShopUI = (() => {
   }
 
   function oddsDialog(packId) {
-    const p = Avatars.pack(packId), own = owned(), lk = activeLuck(), o = Avatars.odds(lk ? lk.mult : 1);
-    H.modal(p.name + " · drop rates", (lk ? `<p class="hint sh-odds-luck">${icon("dice")} With your <b>${lk.mult}× luck</b> (${lk.packs} ${lk.packs === 1 ? "pack" : "packs"} left)</p>` : "") + `<div class="sh-odds">${Avatars.RARITIES.map((r) => {
+    const p = Avatars.pack(packId), own = owned(), lk = activeLuck(), o = Avatars.odds(lk ? lk.mult : 1, packId), base = Avatars.odds(1, packId);
+    H.modal(p.name + " · drop rates", (lk ? `<p class="hint sh-odds-luck">${icon("dice")} With your <b>${lk.mult}× luck</b> (${lk.packs} ${lk.packs === 1 ? "pack" : "packs"} left)</p>` : "") + `<div class="sh-odds">${Avatars.RARITIES.filter((r) => base[r.key] > 0).map((r) => {
       const items = Avatars.inPack(packId).filter((a) => a.rarity === r.key), now = pct(o[r.key]);
-      return `<div class="sh-odds-row" style="--rc:${r.color}"><div class="sh-odds-head"><span class="sh-rdot"></span><b>${r.label}</b><span>${now !== pct(r.odds) ? `<s>${r.odds}%</s> ` : ""}${now}%</span></div>
+      return `<div class="sh-odds-row" style="--rc:${r.color}"><div class="sh-odds-head"><span class="sh-rdot"></span><b>${r.label}</b><span>${now !== pct(base[r.key]) ? `<s>${pct(base[r.key])}%</s> ` : ""}${now}%</span></div>
         <div class="sh-odds-items">${items.map((a) => own[a.id] > 0 ? `<span title="${esc(a.name)}">${Avatars.img(a.id, "", true)}</span>` : `<span title="Not found yet">${lockedImg(a)}</span>`).join("")}</div></div>`;
     }).join("")}</div><p class="hint" style="margin-top:12px">Each pack rolls a rarity first, then any bagel of that rarity in this pack, all equally likely.</p>`);
   }
@@ -456,11 +456,11 @@ const ShopUI = (() => {
           el.querySelector(".po-title").innerHTML = `<span data-text="${esc(r.label)}">${esc(r.label)}</span>`;
           el.querySelector(".po-card").innerHTML = act.preview
             ? `<b class="po-name">${esc(a.name)}</b>
-              <span class="po-meta"><span class="po-dup">Preview · nothing spent or given</span><span class="po-rar">${esc(r.label)} · ${r.odds}%</span></span>
+              <span class="po-meta"><span class="po-dup">Preview · nothing spent or given</span><span class="po-rar">${esc(r.label)} · ${pct(Avatars.odds(1, pack.id)[r.key])}%</span></span>
               <div class="po-btns"><button class="btn primary" data-act="again">${icon("play")} Replay</button>
                 <button class="btn ghost" data-act="done">Done</button></div>`
             : `<b class="po-name">${esc(a.name)}</b>
-              <span class="po-meta">${res.isNew ? `<span class="po-new">New!</span>` : `<span class="po-dup">You have ${res.count}</span>`}<span class="po-rar">${esc(r.label)} · ${r.odds}%</span>${res.luck > 1 ? `<span class="po-luck">${icon("dice")} ${res.luck}× luck</span>` : ""}</span>
+              <span class="po-meta">${res.isNew ? `<span class="po-new">New!</span>` : `<span class="po-dup">You have ${res.count}</span>`}<span class="po-rar">${esc(r.label)} · ${pct(Avatars.odds(1, pack.id)[r.key])}%</span>${res.luck > 1 ? `<span class="po-luck">${icon("dice")} ${res.luck}× luck</span>` : ""}</span>
               <div class="po-btns"><button class="btn primary" data-act="equip">${icon("check")} Equip</button>
                 <button class="btn ghost" data-act="again"${act.canAgain() ? "" : " disabled"}>${icon("shop")} Open another · ${act.price} BB</button>
                 <button class="btn ghost" data-act="done">Done</button></div>`;
