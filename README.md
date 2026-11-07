@@ -65,7 +65,8 @@ A sidebar page (**Shop**) where BB buys collectible **bagel avatars** and **boos
 the owner account (`CONFIG.owner`) sees the page and the bagel avatars.
 - **Packs** (50 BB): Elemental, Legends, Enchanted and Christmas. Each rolls a rarity first, then any bagel of that
   rarity in the pack: Common 50%, Uncommon 25%, Rare 15%, Epic 7%, Legendary 2.5%, Mythic 0.4%, Secret 0.1%.
-  The Christmas Pack has no Mythic, so those rolls become Legendary (2.9%). Every rarity has its own opening show, and they get bigger the rarer the pull.
+  The Christmas Pack has no Mythic, so those rolls become Legendary (2.9%). Every rarity has its own opening show, and they get bigger the rarer the pull. **Roll 3** and **Roll 10** open
+  several at once for the same price per pack: an Epic or better gets its show, then every pull lands in a grid.
 - **118 bagels**, each an animated SVG: 103 drawn in code (`js/avatars*.js`) from the reference sheets in
   `media/avatar ref/`, plus fifteen hand-made files in `media/bagels/` (Plain, Ocean, Samurai, Leviathan, Pharaoh,
   the Secret Hallow's End and Vampire Lord, and all eight in the Christmas Pack; all but Vampire Lord have their own

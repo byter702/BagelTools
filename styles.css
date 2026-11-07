@@ -4690,7 +4690,11 @@ img.bagel-av[data-rar="secret"] { --rc: #e8e6ff; }
   background: var(--surface); border: 1px solid var(--border); text-align: center; }
 .sh-pack h3 { margin: 0 0 2px; font-family: var(--font-display); font-size: 1.05rem; }
 .sh-pack .hint { margin: 0 0 10px; }
-.sh-pack-row { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.sh-pack-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.sh-pack-row .btn.primary { grid-column: 1 / -1; }
+.sh-pack-row [data-odds] { grid-column: 1 / -1; justify-self: center; }
+.sh-roll { flex-direction: column; gap: 0; min-height: 44px; padding: 6px; line-height: 1.2; }
+.sh-roll small { font-size: .68rem; font-weight: 600; opacity: .8; }
 .pk { width: 100%; max-width: 190px; aspect-ratio: 3 / 4; }
 .pk-bag { position: relative; height: 100%; border-radius: 12px 12px 20px 20px; overflow: hidden; display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
   padding: 0 10px 14px; border: 3px solid color-mix(in srgb, var(--c2) 70%, #000);
@@ -4855,6 +4859,25 @@ body.po-open { overflow: hidden; }
 .po-new { padding: 2px 11px; border-radius: 999px; background: var(--rc); color: #10141a; font: 800 .82rem var(--font-display); letter-spacing: .06em; animation: poBounce 1.1s ease-in-out infinite; }
 .po-dup { padding: 2px 10px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .35); }
 .po-btns { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 6px; }
+/* several packs at once: the count on the bag, then every pull in a grid */
+.po-x { position: absolute; top: -6%; right: -14%; z-index: 3; padding: 4px 11px; border-radius: 999px; background: #fff; color: #10141a; rotate: 8deg;
+  font: 900 1.05rem var(--font-display); box-shadow: 0 6px 16px rgba(0, 0, 0, .45); }
+.po.grid { justify-content: safe center; overflow-y: auto; }
+.po.grid .po-stage { display: none; }
+.po-grid { display: none; position: relative; z-index: 5; width: min(560px, 100%); margin: 10px 0 14px; flex-wrap: wrap; justify-content: center; gap: 8px; flex: none; }
+.po.grid .po-grid { display: flex; }
+.po-tile { position: relative; flex: 0 0 calc((100% - 32px) / 5); aspect-ratio: 1; padding: 6px; border-radius: 16px; cursor: pointer; appearance: none; color: inherit;
+  background: color-mix(in srgb, var(--rc) 14%, rgba(255, 255, 255, .04)); border: 2px solid color-mix(in srgb, var(--rc) 55%, transparent); transition: transform .15s, background .15s; }
+.po-grid.n3 .po-tile { flex-basis: min(31%, 160px); }
+.po.grid .po-tile { animation: poTile .45s cubic-bezier(.2, 1.4, .4, 1) both; }
+.po.now .po-tile { animation: none; }
+.po-tile.hi { box-shadow: 0 0 20px color-mix(in srgb, var(--rc) 60%, transparent); }
+.po-tile.on { border-color: var(--rc); background: color-mix(in srgb, var(--rc) 30%, rgba(255, 255, 255, .06)); transform: translateY(-3px); }
+.po.done .po-tile:hover { background: color-mix(in srgb, var(--rc) 26%, rgba(255, 255, 255, .06)); }
+.po-tile:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.po-tile-av { display: block; width: 100%; height: 100%; object-fit: contain; background: none !important; }
+.po-tile-new { position: absolute; top: -6px; right: -4px; padding: 1px 7px; border-radius: 999px; background: var(--rc); color: #10141a; font: 800 .62rem var(--font-display); letter-spacing: .04em; text-transform: uppercase; }
+@keyframes poTile { 0% { opacity: 0; transform: translateY(14px) scale(.3); } 60% { opacity: 1; transform: scale(1.12); } 100% { transform: none; } }
 .po .btn.ghost { color: #fff; border-color: rgba(255, 255, 255, .35); background: rgba(255, 255, 255, .06); }
 .po .btn.ghost:hover { background: rgba(255, 255, 255, .14); border-color: #fff; }
 .po-skip { position: absolute; top: max(14px, env(safe-area-inset-top)); right: 14px; z-index: 6; min-height: 40px; padding: 8px 16px; border-radius: 999px;

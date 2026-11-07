@@ -22,6 +22,7 @@ const ShopUI = (() => {
     { id: "crumb", name: "Golden Crumb", mult: 3, packs: 5, price: 150, ic: "star" },
     { id: "sprinkles", name: "Rainbow Sprinkles", mult: 5, packs: 5, price: 300, ic: "crown" },
   ];
+  const ROLLS = [3, 10]; // bulk opens offered on each pack, at the same price per pack
   const TABS = [["packs", "Packs", "shop"], ["collection", "Collection", "bagel"], ["boosts", "Boosts", "zap"]];
 
   /* ---- data -------------------------------------------------------------- */
@@ -58,14 +59,21 @@ const ShopUI = (() => {
     if (id === meId()) shadow = { ...(shadow && shadow.id === id ? shadow : {}), ...out.patch };
     return out;
   }
-  const openPackTx = (pack) => tx((cur) => {
-    const bal = cur.bb || 0;
-    if (bal < pack.price) throw new Error("FUNDS");
-    const lk = cur.luck && cur.luck.packs > 0 ? cur.luck : null, luck = lk ? Number(lk.mult) || 1 : 1;
-    const id = Avatars.roll(pack.id, luck), have = (cur.avatars || {})[id] || 0;
-    const patch = { bb: bal - pack.price, avatars: { ...(cur.avatars || {}), [id]: have + 1 }, packsOpened: (cur.packsOpened || 0) + 1 };
-    if (lk) patch.luck = lk.packs > 1 ? { ...lk, packs: lk.packs - 1 } : null; // one pack of luck used
-    return { id, isNew: !have, count: have + 1, luck, patch };
+  const openPackTx = (pack, n = 1) => tx((cur) => {
+    const bal = cur.bb || 0, cost = pack.price * n, hadLuck = cur.luck && cur.luck.packs > 0;
+    if (bal < cost) throw new Error("FUNDS");
+    const avatars = { ...(cur.avatars || {}) }, pulls = [];
+    let lk = hadLuck ? cur.luck : null;
+    for (let i = 0; i < n; i++) {
+      const luck = lk ? Number(lk.mult) || 1 : 1;
+      const id = Avatars.roll(pack.id, luck), have = avatars[id] || 0;
+      avatars[id] = have + 1;
+      pulls.push({ id, isNew: !have, count: have + 1, luck });
+      if (lk) lk = lk.packs > 1 ? { ...lk, packs: lk.packs - 1 } : null; // one pack of luck used
+    }
+    const patch = { bb: bal - cost, avatars, packsOpened: (cur.packsOpened || 0) + n };
+    if (hadLuck) patch.luck = lk;
+    return { pulls, patch };
   });
   const sellTx = (id) => tx((cur) => {
     const have = (cur.avatars || {})[id] || 0, value = Avatars.rarity(Avatars.get(id).rarity).sell;
@@ -136,7 +144,7 @@ const ShopUI = (() => {
         <nav class="sh-tabs" role="tablist">${TABS.map(([id, label, ic]) => `<button role="tab" class="sh-tab${tab === id ? " on" : ""}" data-tab="${id}" aria-selected="${tab === id}">${icon(ic)}${label}</button>`).join("")}</nav>
         <div class="sh-body">${tab === "packs" ? packsHTML() : tab === "collection" ? collectionHTML() : boostsHTML()}</div>`;
     root.querySelectorAll("[data-tab]").forEach((x) => { x.onclick = () => { tab = x.dataset.tab; draw(); }; });
-    root.querySelectorAll("[data-open]").forEach((x) => { x.onclick = () => openPack(x.dataset.open); });
+    root.querySelectorAll("[data-open]").forEach((x) => { x.onclick = () => openPack(x.dataset.open, Number(x.dataset.n) || 1); });
     root.querySelectorAll("[data-odds]").forEach((x) => { x.onclick = () => oddsDialog(x.dataset.odds); });
     root.querySelectorAll("[data-rf]").forEach((x) => { x.onclick = () => { rarFilter = x.dataset.rf; draw(); }; });
     root.querySelectorAll("[data-av]").forEach((x) => { x.onclick = () => itemDialog(x.dataset.av); });
@@ -159,6 +167,7 @@ const ShopUI = (() => {
       return `<article class="sh-pack">${packArt(p)}
         <div class="sh-pack-info"><h3>${esc(p.name)}</h3><p class="hint">${esc(p.blurb)} · ${got}/${inPack.length} found</p>
           <div class="sh-pack-row"><button class="btn primary" data-open="${p.id}"${on && bal >= p.price ? "" : " disabled"}>${icon("coins")} Open · ${p.price} BB</button>
+            ${ROLLS.map((n) => `<button class="btn ghost sm sh-roll" data-open="${p.id}" data-n="${n}" aria-label="Roll ${n} packs for ${p.price * n} Bagel Bucks"${on && bal >= p.price * n ? "" : " disabled"}>Roll ${n}<small>${p.price * n} BB</small></button>`).join("")}
             <button class="btn ghost sm" data-odds="${p.id}">Drop rates</button></div></div></article>`;
     }).join("")}</div>`;
   }
@@ -244,23 +253,26 @@ const ShopUI = (() => {
 
   /* ---- opening a pack ------------------------------------------------------ */
   let opening = false;
-  async function openPack(packId) {
+  async function openPack(packId, n = 1) {
     const p = Avatars.pack(packId);
     if (!p || opening) return;
+    const cost = p.price * n;
     if (!db()) return H.toast(errMsg(new Error("OFFLINE")), "err");
-    if (balance() < p.price) return H.toast(errMsg(new Error("FUNDS")), "err");
+    if (balance() < cost) return H.toast(errMsg(new Error("FUNDS")), "err");
     opening = true;
-    const show = Reveal.start(p, H.reduceMotion());
+    const show = Reveal.start(p, H.reduceMotion(), n);
     let res;
-    try { res = await openPackTx(p); }
+    try { res = await openPackTx(p, n); }
     catch (e) { show.cancel(); opening = false; H.toast(errMsg(e), "err"); return; }
-    show.reveal(res, {
-      again: () => { opening = false; draw(); openPack(packId); },
-      equip: () => { equip(res.id); },
+    const act = {
+      again: () => { opening = false; draw(); openPack(packId, n); },
+      equip,
       done: () => { opening = false; draw(); },
-      canAgain: () => balance() >= p.price,
-      price: p.price,
-    });
+      canAgain: () => balance() >= cost,
+      price: cost,
+      againLabel: n > 1 ? `Roll ${n} again` : "Open another",
+    };
+    if (n > 1) show.revealMany(res.pulls, act); else show.reveal(res.pulls[0], act);
   }
   // Play a pack-opening show without spending or giving anything (Admin → Shop).
   // `pick` is a rarity key (any bagel of it) or a bagel id.
@@ -413,7 +425,7 @@ const ShopUI = (() => {
         [1600, () => P.burst(70, { colors: COLORS.secret, shape: "spark", min: 2, max: 8, s0: 2, s1: 5 })]],
     };
 
-    function start(pack, still) {
+    function start(pack, still, n = 1) {
       const el = document.createElement("div");
       el.className = "po";
       el.setAttribute("role", "dialog"); el.setAttribute("aria-modal", "true"); el.setAttribute("aria-label", "Opening " + pack.name);
@@ -421,10 +433,11 @@ const ShopUI = (() => {
         <div class="po-stage">
           <div class="po-glow"></div><div class="po-rays"></div><div class="po-beam"></div><div class="po-vortex"></div><div class="po-rift"></div>
           <div class="po-rings"><i></i><i></i><i></i></div>
-          <div class="po-packwrap">${packArt(pack, "po-pk")}</div>
+          <div class="po-packwrap">${packArt(pack, "po-pk")}${n > 1 ? `<span class="po-x">×${n}</span>` : ""}</div>
           <div class="po-bagel"></div>
         </div>
         <div class="po-title" aria-live="polite"></div>
+        <div class="po-grid n${n}"></div>
         <div class="po-card"></div>
         <button class="po-skip" type="button">Skip</button>`;
       document.body.appendChild(el);
@@ -444,6 +457,35 @@ const ShopUI = (() => {
         document.body.classList.remove("po-open");
         setTimeout(() => el.remove(), 260);
       }
+      const setTitle = (s) => { el.querySelector(".po-title").innerHTML = `<span data-text="${esc(s)}">${esc(s)}</span>`; };
+      const onAct = (k, id, act) => { close(); if (k === "again") act.again(); else { if (k === "equip") act.equip(id); act.done(); } };
+      const pullCard = (res, act) => {
+        const a = Avatars.get(res.id), r = Avatars.rarity(a.rarity);
+        return `<b class="po-name">${esc(a.name)}</b>
+              <span class="po-meta">${res.isNew ? `<span class="po-new">New!</span>` : `<span class="po-dup">You have ${res.count}</span>`}<span class="po-rar">${esc(r.label)} · ${pct(Avatars.odds(1, pack.id)[r.key])}%</span>${res.luck > 1 ? `<span class="po-luck">${icon("dice")} ${res.luck}× luck</span>` : ""}</span>
+              <div class="po-btns"><button class="btn primary" data-act="equip">${icon("check")} Equip</button>
+                <button class="btn ghost" data-act="again"${act.canAgain() ? "" : " disabled"}>${icon("shop")} ${act.againLabel} · ${act.price} BB</button>
+                <button class="btn ghost" data-act="done">Done</button></div>`;
+      };
+      // Shake, then the rarity's charge-up and burst: `land` brings the bagel in, `end` closes the show.
+      function play(rk, land, end, dur = T[rk]) {
+        // the burst waits for the shaking to finish (and at least one beat after the roll)
+        const shake = Math.max(0, 1650 - (Date.now() - t0));
+        const pre = { epic: 900, mythic: 200, secret: 1400 }[rk] || 0;
+        later(shake, () => {
+          cls("r-" + rk); cls("tease", Avatars.rarity(rk).tier >= 3);
+          later(pre, () => {
+            cls("shake3", false); cls("burst");
+            SHOWS[rk](P).filter(([at]) => at >= 0).forEach(([at, fn]) => later(at, fn));
+            later(120, () => cls("reveal"));
+            later({ common: 120, uncommon: 160, rare: 260, epic: 120, legendary: 420, mythic: 900, secret: 700 }[rk], land);
+            later(dur - 500, () => cls("show-title"));
+            later(dur, end);
+          });
+        });
+        // effects that start before the burst (charge-ups) are scheduled relative to it
+        later(shake, () => SHOWS[rk](P).filter(([at]) => at < 0).forEach(([at, fn]) => later(pre + at, fn)));
+      }
       return {
         cancel: close,
         reveal(res, act) {
@@ -453,17 +495,13 @@ const ShopUI = (() => {
           bagelEl.innerHTML = Avatars.img(res.id, "po-av");
           // a bagel with its own entrance (Hallow's End) plays it the moment it appears
           const intro = () => { const h = !bagelEl.dataset.intro && Avatars.introImg(res.id, "po-av"); if (h) { bagelEl.dataset.intro = "1"; bagelEl.innerHTML = h; } };
-          el.querySelector(".po-title").innerHTML = `<span data-text="${esc(r.label)}">${esc(r.label)}</span>`;
+          setTitle(r.label);
           el.querySelector(".po-card").innerHTML = act.preview
             ? `<b class="po-name">${esc(a.name)}</b>
               <span class="po-meta"><span class="po-dup">Preview · nothing spent or given</span><span class="po-rar">${esc(r.label)} · ${pct(Avatars.odds(1, pack.id)[r.key])}%</span></span>
               <div class="po-btns"><button class="btn primary" data-act="again">${icon("play")} Replay</button>
                 <button class="btn ghost" data-act="done">Done</button></div>`
-            : `<b class="po-name">${esc(a.name)}</b>
-              <span class="po-meta">${res.isNew ? `<span class="po-new">New!</span>` : `<span class="po-dup">You have ${res.count}</span>`}<span class="po-rar">${esc(r.label)} · ${pct(Avatars.odds(1, pack.id)[r.key])}%</span>${res.luck > 1 ? `<span class="po-luck">${icon("dice")} ${res.luck}× luck</span>` : ""}</span>
-              <div class="po-btns"><button class="btn primary" data-act="equip">${icon("check")} Equip</button>
-                <button class="btn ghost" data-act="again"${act.canAgain() ? "" : " disabled"}>${icon("shop")} Open another · ${act.price} BB</button>
-                <button class="btn ghost" data-act="done">Done</button></div>`;
+            : pullCard(res, act);
           const finish = () => {
             if (finished) return; finished = true;
             timers.forEach(clearTimeout);
@@ -473,31 +511,62 @@ const ShopUI = (() => {
             el.querySelector(".po-skip").hidden = true;
             const first = el.querySelector('[data-act="equip"]'); if (first) setTimeout(() => first.focus(), 60);
           };
-          el.querySelectorAll("[data-act]").forEach((b) => { b.onclick = () => {
-            const k = b.dataset.act; close();
-            if (k === "again") act.again(); else { if (k === "equip") act.equip(); act.done(); }
-          }; });
+          el.querySelectorAll("[data-act]").forEach((b) => { b.onclick = () => onAct(b.dataset.act, res.id, act); });
           el.querySelector(".po-skip").onclick = finish;
           el.addEventListener("click", (e) => { if (!finished && !e.target.closest(".po-card")) finish(); });
           onKey = (e) => { if (e.key === "Escape") { if (!finished) finish(); else { close(); act.done(); } } };
           document.addEventListener("keydown", onKey);
           if (still) { el.classList.add("r-" + rk); finish(); return; }
-          // the burst waits for the shaking to finish (and at least one beat after the roll)
-          const shake = Math.max(0, 1650 - (Date.now() - t0));
-          const pre = { epic: 900, mythic: 200, secret: 1400 }[rk] || 0;
-          later(shake, () => {
-            cls("r-" + rk); cls("tease", Avatars.rarity(rk).tier >= 3);
-            later(pre, () => {
-              cls("shake3", false); cls("burst");
-              SHOWS[rk](P).filter(([at]) => at >= 0).forEach(([at, fn]) => later(at, fn));
-              later(120, () => cls("reveal"));
-              later({ common: 120, uncommon: 160, rare: 260, epic: 120, legendary: 420, mythic: 900, secret: 700 }[rk], () => { intro(); cls("show-bagel"); });
-              later(T[rk] - 500, () => cls("show-title"));
-              later(T[rk], finish);
+          play(rk, () => { intro(); cls("show-bagel"); }, finish);
+        },
+        // Several pulls at once: the rarest gets its full show if it's Epic or better, then
+        // they all land in a grid, rarest last. Tapping a tile shows it in the card below.
+        revealMany(pulls, act) {
+          const list = pulls.map((p) => { const a = Avatars.get(p.id); return { ...p, a, r: Avatars.rarity(a.rarity) }; }).sort((x, y) => x.r.tier - y.r.tier);
+          const best = list[n - 1], rk = best.a.rarity, hero = best.r.tier >= 3, count = `${n} Bagels`;
+          const grid = el.querySelector(".po-grid"), card = el.querySelector(".po-card"), bagelEl = el.querySelector(".po-bagel");
+          const gap = n > 3 ? 130 : 260, delays = list.map((_, i) => i * gap + (i === n - 1 ? 350 : 0));
+          grid.innerHTML = list.map((p, i) => `<button type="button" class="po-tile${p.r.tier >= 3 ? " hi" : ""}" data-i="${i}" style="--rc:${p.r.color};animation-delay:${delays[i]}ms" aria-label="${esc(p.a.name)}, ${esc(p.r.label)}${p.isNew ? ", new" : ""}">${Avatars.img(p.id, "po-tile-av")}${p.isNew ? `<span class="po-tile-new">New</span>` : ""}</button>`).join("");
+          let sel = best;
+          const select = (i) => {
+            sel = list[i];
+            grid.querySelectorAll(".po-tile").forEach((t, j) => t.classList.toggle("on", j === i));
+            card.style.setProperty("--rc", sel.r.color);
+            card.innerHTML = pullCard(sel, act);
+          };
+          select(n - 1);
+          el.style.setProperty("--rc", best.r.color);
+          setTitle(hero ? best.r.label : count);
+          if (hero) bagelEl.innerHTML = Avatars.img(best.id, "po-av");
+          const finish = () => {
+            if (finished) return; finished = true;
+            timers.forEach(clearTimeout);
+            el.classList.remove("shake1", "shake2", "shake3");
+            setTitle(count);
+            el.classList.add("r-" + rk, "burst", "reveal", "show-title", "grid", "now", "done");
+            el.querySelector(".po-skip").hidden = true;
+            const first = card.querySelector('[data-act="equip"]'); if (first) setTimeout(() => first.focus(), 60);
+          };
+          const showGrid = () => {
+            setTitle(count); cls("grid"); cls("show-title");
+            grid.querySelectorAll(".po-tile").forEach((t, i) => {
+              const tier = list[i].r.tier;
+              if (tier >= 2) later(delays[i] + 200, () => {
+                const b = t.getBoundingClientRect();
+                P.burst([16, 30, 46, 60, 80][tier - 2], { x: b.left + b.width / 2, y: b.top + b.height / 2, colors: COLORS[list[i].a.rarity], shape: "spark", min: 2, max: 5 + tier * 2, s0: 2, s1: 5, drag: 0.93 });
+              });
             });
-          });
-          // effects that start before the burst (charge-ups) are scheduled relative to it
-          later(shake, () => SHOWS[rk](P).filter(([at]) => at < 0).forEach(([at, fn]) => later(pre + at, fn)));
+            later(delays[n - 1] + 550, finish);
+          };
+          card.onclick = (e) => { const b = e.target.closest("[data-act]"); if (b) onAct(b.dataset.act, sel.id, act); };
+          grid.onclick = (e) => { const t = e.target.closest(".po-tile"); if (t && finished) select(Number(t.dataset.i)); };
+          el.querySelector(".po-skip").onclick = finish;
+          el.addEventListener("click", (e) => { if (!finished && !e.target.closest(".po-card")) finish(); });
+          onKey = (e) => { if (e.key === "Escape") { if (!finished) finish(); else { close(); act.done(); } } };
+          document.addEventListener("keydown", onKey);
+          if (still) { finish(); return; }
+          if (hero) play(rk, () => { const h = Avatars.introImg(best.id, "po-av"); if (h) bagelEl.innerHTML = h; cls("show-bagel"); }, () => later(1000, showGrid));
+          else play(rk, () => {}, showGrid, 300);
         },
       };
     }
