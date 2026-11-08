@@ -8,7 +8,8 @@
    ========================================================================== */
 const PartsUI = (() => {
   "use strict";
-  let H = null; // helpers from app.js: $, $$, esc, icon, toast, modal, confirmDialog, notifyBanner, pageHero, emptyState, scouterAvatar, allScouters, scouterName
+  let H = null; // helpers from app.js: $, $$, esc, icon, toast, modal, confirmDialog, notifyBanner, pageHero, emptyState, scouterAvatar, allScouters, scouterName, isAdmin
+  const isAdmin = () => !!(H && H.isAdmin && H.isAdmin());   // archiving / deleting / save codes for a project are admin-only
   const LS = "bb702.parts.";
   const ls = {
     get(k, d) { try { const v = localStorage.getItem(LS + k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -17,7 +18,10 @@ const PartsUI = (() => {
   let activeProject = ls.get("project", null), activeMech = "__all__", activePerson = null, activeAlert = null, expandedKey = null;
   const collapsed = new Set(ls.get("collapsed", []));
   const secShut = new Set(ls.get("secShut", []));   // collapsed Manufactured / Resolved sections
-  let catOrder = ls.get("catOrder", null), catColors = ls.get("catColors", {});
+  // Category order + colors come from the shared board (V), so they're the same
+  // on every device instead of resetting per-browser.
+  const catOrder = () => (V && Array.isArray(V.catOrder)) ? V.catOrder : null;
+  const catColors = () => (V && V.catColors) || {};
   let V = null, mounted = null, isDragging = false, pending = false;
   // Render scope controls the pop-in animation: "full" = header + lists animate
   // (project switch / first open), "mech" = only the lists animate (mechanism switch),
@@ -46,13 +50,13 @@ const PartsUI = (() => {
   const customTypes = () => V.customTypes || [];
   const typeInfo = (t) => {
     const base = Parts.typeInfo(t, customTypes());
-    return { ...base, color: catColors[t] || base.color };
+    return { ...base, color: catColors()[t] || base.color };
   };
   const allTypeIds = () => [...Parts.TYPE_ORDER, ...customTypes().map((c) => c.id)];
   function orderedTypes() {
-    const all = allTypeIds();
-    if (!Array.isArray(catOrder)) return all;
-    const inOrder = catOrder.filter((t) => all.includes(t));
+    const all = allTypeIds(), co = catOrder();
+    if (!Array.isArray(co)) return all;
+    const inOrder = co.filter((t) => all.includes(t));
     return [...inOrder, ...all.filter((t) => !inOrder.includes(t))];
   }
   const frac = (p) => (!p.stages || p.stages.length <= 1) ? (p.stage > 0 ? 1 : 0) : p.stage / (p.stages.length - 1);
@@ -213,9 +217,9 @@ const PartsUI = (() => {
         </div>
       </div>
       <div class="pg-hero-side">
-        <button class="btn ghost sm" data-act="code-all" title="Save code for every project">${icon("download")} Save code</button>
+        ${isAdmin() ? `<button class="btn ghost sm" data-act="code-all" title="Save code for every project">${icon("download")} Save code</button>
         ${proj ? `<button class="btn ghost sm" data-act="archive-proj">${icon("lock")} Archive</button>
-          <button class="btn ghost sm bp-danger" data-act="del-proj">${icon("trash")} Delete</button>` : ""}
+          <button class="btn ghost sm bp-danger" data-act="del-proj">${icon("trash")} Delete</button>` : ""}` : ""}
       </div>
     </header>`;
   }
@@ -240,9 +244,9 @@ const PartsUI = (() => {
         <span class="bp-pm-ic">${p.icon ? `<img src="${esc(p.icon)}" alt="" />` : icon("wrench")}</span>
         <span class="bp-pm-name">${esc(p.name)}</span>${p.id === activeProject ? icon("check") : ""}</button>`).join("")
       + `<button type="button" class="bp-pm-item add" data-new>${icon("plus")} New project</button>`
-      + (arch.length ? `<div class="bp-pm-sep">Archived</div>` + arch.map((p) => `<div class="bp-pm-arow"><span>${esc(p.name)}</span><span class="bp-rowbtns">
+      + (arch.length ? `<div class="bp-pm-sep">Archived</div>` + arch.map((p) => `<div class="bp-pm-arow"><span>${esc(p.name)}</span>${isAdmin() ? `<span class="bp-rowbtns">
           <button type="button" class="btn ghost sm" data-un="${esc(p.id)}">Bring back</button>
-          <button type="button" class="btn ghost sm bp-danger" data-del="${esc(p.id)}">Delete</button></span></div>`).join("") : "");
+          <button type="button" class="btn ghost sm bp-danger" data-del="${esc(p.id)}">Delete</button></span>` : `<span class="hint">archived</span>`}</div>`).join("") : "");
     document.body.appendChild(m);
     const r = anchor.getBoundingClientRect();
     m.style.top = Math.min(r.bottom + 8, innerHeight - m.offsetHeight - 8) + "px";
@@ -252,6 +256,7 @@ const PartsUI = (() => {
       m.remove();
       if (b.dataset.sw != null) return switchProject(b.dataset.sw);
       if (b.hasAttribute("data-new")) return newProject();
+      if (!isAdmin()) return H.toast("Only an admin can manage archived projects", "err");
       if (b.dataset.un != null) return run(Parts.setProjectArchived(b.dataset.un, false).then(() => switchProject(b.dataset.un)), "Project is back");
       if (b.dataset.del != null) return deleteProject(b.dataset.del);
     };
@@ -299,12 +304,12 @@ const PartsUI = (() => {
         <p class="hint">One project per robot or season, for example "Socal Showdown Redesign".</p>
         <button class="btn primary sm" data-act="new-proj">${icon("plus")} New project</button>
       </div>
-      <div class="card bp-start-card">
+      ${isAdmin() ? `<div class="card bp-start-card">
         <span class="bp-start-ic">${icon("upload")}</span>
         <h3>Bring over the old BagelParts</h3>
         <p class="hint">On the old site, click <b>Export data</b>, copy the save code, then paste it here. Every project, part, stage and assignment comes along. PDF drawings and DXFs need re-uploading.</p>
         <button class="btn primary sm" data-act="code-all">${icon("upload")} Paste a save code</button>
-      </div>
+      </div>` : ""}
     </section>`;
   }
 
@@ -512,9 +517,9 @@ const PartsUI = (() => {
         case "proj-menu": return projectMenu(t);
         case "proj-icon": return pickProjectIcon();
         case "add-person": return addPersonModal();
-        case "code-all": return codeModal(null);
-        case "archive-proj": return archiveProject();
-        case "del-proj": return deleteProject(activeProject);
+        case "code-all": if (!isAdmin()) return H.toast("Only an admin can open a project's save code", "err"); return codeModal(null);
+        case "archive-proj": if (!isAdmin()) return H.toast("Only an admin can archive a project", "err"); return archiveProject();
+        case "del-proj": if (!isAdmin()) return H.toast("Only an admin can delete a project", "err"); return deleteProject(activeProject);
         case "add-mech": return mechModal(null);
         case "edit-mech": return mechModal(projectMechs().find((m) => m.id === activeMech));
         case "del-mech": { const m = projectMechs().find((x) => x.id === activeMech); if (!m) return;
@@ -574,7 +579,7 @@ const PartsUI = (() => {
     if (dragged === target) return;
     const order = orderedTypes().filter((t) => t !== dragged), i = order.indexOf(target);
     if (i < 0) return;
-    order.splice(i, 0, dragged); catOrder = order; ls.set("catOrder", order); redraw();
+    order.splice(i, 0, dragged); run(Parts.setCatOrder(order));
   }
   async function upload(kind, key, file) {
     H.toast(`Uploading ${file.name}…`, "info");
@@ -595,7 +600,7 @@ const PartsUI = (() => {
     const old = document.querySelector(".bp-colors"); if (old) { old.remove(); if (old.dataset.type === type) return; }
     const m = document.createElement("div");
     m.className = "bp-colors"; m.dataset.type = type;
-    m.innerHTML = SWATCHES.map((c) => `<button type="button" style="--c:${c}" data-c="${c}" class="${catColors[type] === c ? "on" : ""}" aria-label="${c}"></button>`).join("") +
+    m.innerHTML = SWATCHES.map((c) => `<button type="button" style="--c:${c}" data-c="${c}" class="${catColors()[type] === c ? "on" : ""}" aria-label="${c}"></button>`).join("") +
       `<button type="button" class="bp-colors-reset" data-c="">Default color</button>`;
     document.body.appendChild(m);
     const r = anchor.getBoundingClientRect();
@@ -603,8 +608,9 @@ const PartsUI = (() => {
     m.style.left = Math.max(8, Math.min(r.left - 100, innerWidth - m.offsetWidth - 8)) + "px";
     m.onclick = (e) => {
       const b = e.target.closest("[data-c]"); if (!b) return;
-      if (b.dataset.c) catColors[type] = b.dataset.c; else delete catColors[type];
-      ls.set("catColors", catColors); m.remove(); redraw();
+      const next = Object.assign({}, catColors());
+      if (b.dataset.c) next[type] = b.dataset.c; else delete next[type];
+      m.remove(); run(Parts.setCatColors(next));
     };
     setTimeout(() => document.addEventListener("pointerdown", function off(e) { if (!m.contains(e.target)) { m.remove(); document.removeEventListener("pointerdown", off); } }), 0);
   }
@@ -934,7 +940,7 @@ const PartsUI = (() => {
           <ul><li>Tap a part to open it, then tap a stage. Its last stage moves it to <b>Manufactured</b>.</li>
           <li>In-house parts take a <b>PDF drawing</b> and laser-cut parts a <b>DXF</b>: drop the file on the open part. Uploading moves it to "Drawing made" / "DXF Uploaded".</li>
           <li>Sorted wrong? Drag the part to another list (<b>Auto-sort</b> on the open part puts it back). <b>Ctrl+Z</b> undoes the last move or assignment.</li>
-          <li><b>New list</b> (end of the board) makes your own list, shared by every project. The dot on a list's header picks its color on your device; drag headers to reorder.</li>
+          <li><b>New list</b> (end of the board) makes your own list, shared by every project. The dot on a list's header picks its color; drag headers to reorder. Order and colors are shared with your whole team.</li>
           <li><b>Archive</b> sets a part (or a whole project) aside without deleting it.</li></ul></section>
         <section class="card"><h3>${icon("download")} 7 · Save codes</h3>
           <p>A save code (<code>BP1:…</code>) holds whole projects. Use one to back up, or to bring data over from the old BagelParts: there, click <b>Export data</b> and copy the code; here, <b>Save code → Import</b>. Drawings and DXFs aren't in codes, so re-upload those.</p></section>

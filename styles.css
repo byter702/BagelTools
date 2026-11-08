@@ -3548,6 +3548,9 @@ input, textarea, select, [contenteditable="true"] { caret-color: auto; }
 .bp-danger { color: var(--danger) !important; }
 .bp-danger:hover { border-color: var(--danger) !important; }
 .bp-rowbtns { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.bp-mrow .bp-rowbtns { flex-wrap: nowrap; min-width: 0; }
+.bp-mrow .bp-rowbtns .btn { white-space: nowrap; }
+.bp-mrow .bp-rowbtns .btn.primary { min-width: 0; overflow: hidden; }
 .bp-inline { display: flex; gap: 8px; align-items: center; min-width: 0; }
 .bp-inline input { flex: 1; min-width: 0; height: 38px; }
 .bp-form { display: flex; flex-direction: column; gap: 12px; }
@@ -3833,7 +3836,10 @@ input, textarea, select, [contenteditable="true"] { caret-color: auto; }
 .bp-mh .ico { width: 16px; height: 16px; }
 .bp-mh span { color: var(--text); }
 .bp-mh.hot { color: var(--danger); }
-.bp-mrow { --cat: #9fb0d4; display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(120px, 200px) auto; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+/* Fixed widths on the bar + button columns so every row's progress bar starts at
+   the same x (each row is its own grid; an `auto` button column otherwise sized to
+   its own label — "Printing" vs "In progress" — and shifted the bar). */
+.bp-mrow { --cat: #9fb0d4; display: grid; grid-template-columns: auto minmax(0, 1fr) 150px 196px; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); }
 .bp-mname { color: var(--text); font-weight: 800; text-decoration: none; min-width: 0; overflow-wrap: anywhere; }
 .bp-mname:hover { color: var(--app); }
 .bp-mstage { display: flex; flex-direction: column; gap: 4px; font-size: .78rem; font-weight: 700; color: var(--text-dim); }

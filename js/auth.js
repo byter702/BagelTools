@@ -53,8 +53,9 @@ const Auth = (() => {
   // Accepted = the owner, the config allow-list, or an admin-approved member.
   function isAccepted(first, last) {
     const full = (first + " " + last).trim().toLowerCase();
-    const owner = ((window.CONFIG && window.CONFIG.owner) || "").trim().toLowerCase();
-    if (owner && full === owner) return true;
+    const owners = ((window.CONFIG && (window.CONFIG.owners || (window.CONFIG.owner ? [window.CONFIG.owner] : []))) || [])
+      .map((o) => String(o).trim().toLowerCase()).filter(Boolean);
+    if (owners.includes(full)) return true;
     const approved = (window.CONFIG && window.CONFIG.approvedMembers) || [];
     if (approved.some((n) => String(n).trim().toLowerCase() === full)) return true;
     try { if (Store.getMembers()[Store.nameKey(first, last)]) return true; } catch (e) {}

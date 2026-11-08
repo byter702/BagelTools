@@ -231,16 +231,20 @@
     // NOTE: bb is deliberately NOT written here — Bagel Bucks is account-based and
     // lives authoritatively in the cloud doc, changed only via atomic addBB/setBB
     // (so two devices on one account can't clobber each other's total).
-    syncMe: function () {
+    // `force` writes profilePic/discord verbatim (used when the user actually sets
+    // or clears them). Without it, EMPTY photo/Discord are omitted, so a fresh
+    // browser — whose local profile starts blank — can't clobber the cloud copy.
+    syncMe: function (force) {
       if (!this.enabled()) return;
       var m = me(); if (!m || !m.id) return;
       var doc = clean({
         id: m.id, first: m.first || "", last: m.last || "",
         matchCount: m.matchCount || 0, pitCount: m.pitCount || 0,
-        profilePic: m.profilePic || "", discord: m.discord || "",
         lastMatchTeams: m.lastMatchTeams || [], lastPitTeams: m.lastPitTeams || [],
         lastSeen: Date.now(), updatedAt: Date.now(),
       });
+      if (force || m.profilePic) doc.profilePic = m.profilePic || "";
+      if (force || m.discord) doc.discord = m.discord || "";
       db.collection("scouters").doc(m.id).set(doc, { merge: true })
         .catch(function (e) { log("syncMe failed", e); });
     },

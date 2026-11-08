@@ -634,6 +634,20 @@
     if (cm && typeof cm.bb === "number" && cm.bb !== (me.bb || 0)) { Store.setMe({ bb: cm.bb }); return true; }
     return false;
   }
+  // Restore my profile photo + Discord id from the cloud on a fresh browser (where
+  // local storage starts empty), and pick up changes made on another device. Both
+  // are synced up by Cloud.syncMe; this copies them back down. Returns true if changed.
+  function reconcileProfile() {
+    if (!(window.Cloud && Cloud.enabled && Cloud.enabled())) return false;
+    const me = Store.getMe();
+    const cm = (Cloud.getScouters() || []).find((s) => s.id === me.id);
+    if (!cm) return false;
+    const patch = {};
+    if (cm.profilePic && cm.profilePic !== me.profilePic) patch.profilePic = cm.profilePic;
+    if (cm.discord && cm.discord !== me.discord) patch.discord = cm.discord;
+    if (!Object.keys(patch).length) return false;
+    Store.setMe(patch); return true;
+  }
   let pitPageRefresh = null; // set by renderPit; lets cloud updates refresh the pit list+map live
   const BB = "BB";
   const BB_MATCH = 25, BB_PIT = 15; // earned per new match record / per newly pit-scouted team
@@ -1660,7 +1674,7 @@
       const saveDisc = () => {
         const v = disc.value.trim();
         if (v && !/^\d{15,25}$/.test(v)) { toast("That should be your numeric Discord user ID (a long number), not your username", "err"); return; }
-        Store.setMe({ discord: v }); Cloud.syncMe(); toast(v ? "Discord ID saved — you'll get pinged when a part's ready" : "Discord ID cleared");
+        Store.setMe({ discord: v }); Cloud.syncMe(true); toast(v ? "Discord ID saved — you'll get pinged when a part's ready" : "Discord ID cleared");
       };
       if (discBtn) discBtn.onclick = saveDisc;
       if (disc) disc.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); saveDisc(); } };
@@ -1671,7 +1685,7 @@
         pic.value = ""; // allow re-picking the same file later
         cropImageDialog(file, (dataUrl) => {
           Store.setMe({ profilePic: dataUrl });
-          Cloud.syncMe();
+          Cloud.syncMe(true);
           toast("Profile photo updated");
           router();
         });
@@ -1930,15 +1944,22 @@
     const rsel = $("#esRegion", body);
     rsel.innerHTML = `<option value="">Everywhere</option>` + regions.map((r) => `<option ${r === esRegion ? "selected" : ""}>${esc(r)}</option>`).join("");
     const listEl = $("#esList", body), mine = Store.getSettings().eventKey;
+    // Official competition week (0-based) lives on the FULL event model, not /simple,
+    // so merge it in from the full-year list; offline it just falls back to "other".
+    const weekByKey = {};
+    events.forEach((e) => { if (e.week != null) weekByKey[e.key] = e.week; });
+    try { (await API.eventsFullYear(year)).forEach((e) => { if (e.week != null) weekByKey[e.key] = e.week; }); } catch (_) {}
     const draw = () => {
       const q = esQuery.trim().toLowerCase();
       const list = events.filter((e) => (esStatus === "all" || evStatus(e) === esStatus) && (!esRegion || region(e) === esRegion) &&
         (!q || [e.name, e.city, e.state_prov, e.country, e.key, e.event_code, e.district && e.district.display_name].some((x) => String(x || "").toLowerCase().includes(q))));
       if (!list.length) { listEl.innerHTML = `<div class="card">${emptyState("search", "No events found", "Try a different search, status or region.")}</div>`; return; }
       const groups = {};
-      list.forEach((e) => { const k = e.start_date ? e.start_date.slice(0, 7) : "TBD"; (groups[k] = groups[k] || []).push(e); });
-      listEl.innerHTML = Object.keys(groups).sort().map((k) => {
-        const label = k === "TBD" ? "Date TBD" : new Date(k + "-15T12:00:00").toLocaleDateString([], { month: "long", year: "numeric" });
+      list.forEach((e) => { const wk = (weekByKey[e.key] != null) ? weekByKey[e.key] : e.week; const k = (wk != null) ? String(wk) : "other"; (groups[k] = groups[k] || []).push(e); });
+      const gkeys = Object.keys(groups).sort((a, b) => (a === "other" ? 1 : 0) - (b === "other" ? 1 : 0) || Number(a) - Number(b));
+      gkeys.forEach((k) => groups[k].sort((x, y) => (x.start_date || "").localeCompare(y.start_date || "")));
+      listEl.innerHTML = gkeys.map((k) => {
+        const label = k === "other" ? "Championship & offseason" : `Week ${Number(k) + 1}`;
         return `<section class="es-group"><h3 class="es-month">${icon("calendar")} ${esc(label)} <span class="muted">${groups[k].length}</span></h3>
           <div class="es-grid">${groups[k].map((e, i) => {
             const st = evStatus(e);
@@ -2193,14 +2214,32 @@
   }
 
   /* ---- Rankings subpage ---------------------------------------------------- */
+  let evRankMode = "auto";   // "auto" = qual when it exists, else the 5-season projection
   function renderEventRankings(root, ctx) {
     root.innerHTML = `<div class="card tp-loading"><span class="tp-spin"></span>Loading rankings…</div>`;
     ctx.rankings().then(({ rankings, fromCache }) => {
       if (!root.isConnected) return;
-      if (!rankings || !rankings.length) { root.innerHTML = `<div class="card">${emptyState("trophy", "No rankings yet", "Rankings appear once qualification matches are played.")}</div>`; return; }
+      const hasQual = !!(rankings && rankings.length);
+      const teams = [...new Set((ctx.teams || []).map((t) => String(t.team_number)).filter(Boolean))];
+      const canProj = teams.length > 0;
+      if (!hasQual && !canProj) { root.innerHTML = `<div class="card">${emptyState("trophy", "No rankings yet", "Rankings appear once qualification matches are played.")}</div>`; return; }
+      let mode = evRankMode === "auto" ? (hasQual ? "qual" : "proj") : evRankMode;
+      if (mode === "qual" && !hasQual) mode = "proj";
+      if (mode === "proj" && !canProj) mode = "qual";
+
+      // Future events (no quals yet) only get the projection; otherwise offer both.
+      const seg = (hasQual && canProj) ? `<div class="seg er-mode" style="margin-bottom:12px">
+        <button data-m="qual" class="${mode === "qual" ? "on" : ""}">${icon("trophy")} Qual rankings</button>
+        <button data-m="proj" class="${mode === "proj" ? "on" : ""}">${icon("chart")} 5-season EPA</button></div>` : "";
+      root.innerHTML = seg + `<div id="erBody"></div>`;
+      const bodyEl = $("#erBody", root);
+      $$(".er-mode button", root).forEach((b) => b.onclick = () => { evRankMode = b.dataset.m; renderEventRankings(root, ctx); });
+
+      if (mode === "proj") { renderProjRanking(bodyEl, ctx, teams); return; }
+
       const rps = rankings.map((r) => (r.sort_orders && r.sort_orders[0]) || 0);
       const maxRp = Math.max(0.01, ...rps);
-      root.innerHTML = `<section class="card ev-ranks">
+      bodyEl.innerHTML = `<section class="card ev-ranks">
         <div class="sr-head"><h3>${icon("trophy")} Qualification rankings</h3><span class="hint">${fromCache ? "cached · " : ""}top 8 are usually alliance captains</span></div>
         <div class="er-list">${rankings.map((r, i) => {
           const t = String(r.team_key).replace("frc", ""), rec = r.record || {}, rp = (r.sort_orders && r.sort_orders[0]) || 0;
@@ -2215,9 +2254,59 @@
           </button>`;
         }).join("")}</div></section>`;
       const ts = rankings.map((r) => String(r.team_key).replace("frc", ""));
-      paintAvatars(root, ts); paintTeamFills(root, ts);
-      $$("[data-team]", root).forEach((b) => b.onclick = () => ctx.openTeam(b.dataset.team));
+      paintAvatars(bodyEl, ts); paintTeamFills(bodyEl, ts);
+      $$("[data-team]", bodyEl).forEach((b) => b.onclick = () => ctx.openTeam(b.dataset.team));
     }).catch(() => { if (root.isConnected) root.innerHTML = `<div class="card">${emptyState("globe", "Rankings need wifi", "Connect once to load this event's rankings.")}</div>`; });
+  }
+
+  // Rank an event's teams by their Statbotics NORMALIZED EPA (comparable across
+  // games) averaged over the seasons they played in the five before this event.
+  // Years a team didn't compete are skipped; teams with no such history (rookies)
+  // aren't ranked. Great for sizing up an upcoming regional before it's played.
+  function renderProjRanking(root, ctx, teams) {
+    const lo = ctx.year - 5, hi = ctx.year - 1;
+    root.innerHTML = `<div class="card tp-loading"><span class="tp-spin"></span>Averaging ${lo}–${hi} EPA for ${teams.length} teams…</div>`;
+    // Fetch in small batches so we don't hit Statbotics with ~45 requests at once
+    // (a rate-limited failure would wrongly drop a team to "no EPA"). Cached after.
+    const fetchAll = async () => {
+      const out = [];
+      for (let i = 0; i < teams.length; i += 8) {
+        out.push(...await Promise.all(teams.slice(i, i + 8).map((t) =>
+          API.sbTeamHistory(t).then((ys) => ({ t, ys })).catch(() => ({ t, ys: [] })))));
+      }
+      return out;
+    };
+    fetchAll()
+      .then((rows) => {
+        if (!root.isConnected) return;
+        const ranked = [], unranked = [];
+        rows.forEach(({ t, ys }) => {
+          const seasons = (ys || []).filter((y) => y.year >= lo && y.year <= hi && y.norm != null).sort((a, b) => b.year - a.year);
+          if (!seasons.length) { unranked.push(t); return; }
+          const avg = seasons.reduce((s, y) => s + y.norm, 0) / seasons.length;
+          ranked.push({ t, avg, n: seasons.length, latest: seasons[0] });
+        });
+        ranked.sort((a, b) => b.avg - a.avg);
+        if (!ranked.length) { root.innerHTML = `<div class="card">${emptyState("chart", "No EPA history", `None of these teams have Statbotics EPA for ${lo}–${hi} yet.`)}</div>`; return; }
+        const maxA = Math.max(0.01, ...ranked.map((r) => r.avg));
+        root.innerHTML = `<section class="card ev-ranks">
+          <div class="sr-head"><h3>${icon("chart")} Projected strength</h3><span class="hint">avg normalized EPA · ${lo}–${hi}</span></div>
+          <p class="hint" style="margin:-4px 0 12px">Ranked by Statbotics <b>normalized EPA</b> (comparable across games) averaged over the seasons each team actually played in the last five. Rookies and teams with no recent EPA aren't ranked.</p>
+          <div class="er-list">${ranked.map((r, i) => `
+            <button class="er-row${i < 8 ? " cap" : ""}${r.t === OUR_TEAM ? " ours" : ""}" data-team="${esc(r.t)}" data-tfill="${esc(r.t)}" style="animation-delay:${Math.min(i, 24) * 18}ms">
+              <span class="er-rank">${i + 1}</span>
+              <img class="team-avatar" data-avatar="${esc(r.t)}" alt="" />
+              <span class="er-id"><b>${esc(r.t)}</b><span>${esc(ctx.nameOf(r.t))}</span></span>
+              <span class="er-rp"><span class="er-track"><i style="width:${Math.round(r.avg / maxA * 100)}%"></i></span><b>${Math.round(r.avg)}</b><small>nEPA</small></span>
+              <span class="er-rec">${r.n}/5 yr</span>
+              <span class="er-epa">${Math.round(r.latest.norm)}<small>'${String(r.latest.year).slice(-2)}</small></span>
+            </button>`).join("")}</div>
+          ${unranked.length ? `<p class="hint" style="margin-top:12px">${icon("info")} Not ranked — rookie or no EPA in ${lo}–${hi}: ${unranked.sort((a, b) => Number(a) - Number(b)).map(esc).join(", ")}</p>` : ""}
+        </section>`;
+        const ts = ranked.map((r) => r.t);
+        paintAvatars(root, ts); paintTeamFills(root, ts);
+        $$("[data-team]", root).forEach((b) => b.onclick = () => ctx.openTeam(b.dataset.team));
+      }).catch(() => { if (root.isConnected) root.innerHTML = `<div class="card">${emptyState("globe", "Couldn't load EPA", "The 5-season ranking needs Statbotics (wifi).")}</div>`; });
   }
 
   /* ---- Awards subpage ------------------------------------------------------ */
@@ -6390,9 +6479,14 @@
   let adminUnlocked = false;
   // Admin access: the owner (CONFIG.owner) always, members an admin gave it to
   // (Admin → Members → shield), or the admin PIN typed on this device.
+  // Every name with full owner powers, lower-cased "first last".
+  function ownerNames() {
+    return ((window.CONFIG && (CONFIG.owners || (CONFIG.owner ? [CONFIG.owner] : []))) || [])
+      .map((o) => String(o).trim().toLowerCase()).filter(Boolean);
+  }
   function isOwnerUser() {
-    const u = Auth.currentUser(), owner = ((window.CONFIG && CONFIG.owner) || "").trim().toLowerCase();
-    return !!(u && owner) && `${u.first || ""} ${u.last || ""}`.trim().toLowerCase() === owner;
+    const u = Auth.currentUser(); if (!u) return false;
+    return ownerNames().includes(`${u.first || ""} ${u.last || ""}`.trim().toLowerCase());
   }
   function isAdmin() {
     if (adminUnlocked || isOwnerUser()) return true;
@@ -6461,8 +6555,7 @@
     const dt = (ts) => ts ? new Date(ts).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }) : "–";
     // the Members table joins each roster member with their scouter profile
     const meId = Store.getMe().id, admins = Cloud.getAdmins(), hidden = new Set(Cloud.getHidden());
-    const ownerFull = String((window.CONFIG && CONFIG.owner) || "").trim(), sp = ownerFull.indexOf(" ");
-    const ownerKey = ownerFull ? Store.nameKey(sp > 0 ? ownerFull.slice(0, sp) : ownerFull, sp > 0 ? ownerFull.slice(sp + 1) : "") : "";
+    const ownerKeySet = new Set(ownerNames().map((n) => { const sp = n.indexOf(" "); return Store.nameKey(sp > 0 ? n.slice(0, sp) : n, sp > 0 ? n.slice(sp + 1) : ""); }));
     const scById = new Map(allScouters().map((x) => [x.id, x]));
     const strays = allScoutersRaw().filter((x) => x.id !== meId && (!members[Store.nameKey(x.first, x.last)] || x.id !== Store.scouterIdFor(x.first, x.last)))
       .sort((p, q) => scouterName(p).localeCompare(scouterName(q)));
@@ -6518,7 +6611,7 @@
             const sc = scById.get(sid) || { id: sid, first: m.first, last: m.last };
             const name = properName(m.first + " " + m.last);
             const hasPw = adminCredIds ? adminCredIds.has(sid) : null;
-            const owner = !!ownerKey && Store.nameKey(m.first, m.last) === ownerKey, adm = admins.includes(sid), hid = hidden.has(sid);
+            const owner = ownerKeySet.has(Store.nameKey(m.first, m.last)), adm = admins.includes(sid), hid = hidden.has(sid);
             const seen = Math.max(m.lastSeen || 0, sc.lastSeen || 0);
             return `<tr class="${hid ? "ad-hid" : ""}">
             <td><div class="row" style="gap:8px;align-items:center;flex-wrap:nowrap">${scouterAvatar(sc, "sc-avatar sm")}
@@ -7215,8 +7308,7 @@
   function isBetHost() {
     const m = Store.getMe(); if (!m || !m.id) return false;
     if (isAdmin()) return true;
-    const owner = ((window.CONFIG && CONFIG.owner) || "").trim().toLowerCase();
-    if (owner && `${m.first || ""} ${m.last || ""}`.trim().toLowerCase() === owner) return true;
+    if (ownerNames().includes(`${m.first || ""} ${m.last || ""}`.trim().toLowerCase())) return true;
     return Cloud.getBetHosts().includes(m.id);
   }
 
@@ -8058,7 +8150,7 @@
   function renderAdminBetting(el) {
     const s = Store.getSettings();
     if (Cloud.enabled()) Bets.watch(s.eventKey || "", Bets.fantasyYear());
-    const owner = ((window.CONFIG && CONFIG.owner) || "").trim().toLowerCase();
+    const owners = ownerNames();
     let q = "";
     const draw = () => {
       if (!el.isConnected) return;
@@ -8072,7 +8164,7 @@
           <p class="hint" style="margin-top:0">These members get <b>Open betting</b> and <b>Start match · lock bets</b> on Match Scouting. The owner, and anyone with this admin panel unlocked, always can.</p>
           <label class="ds-search ab-hostq">${icon("search")}<input type="search" id="hostQ" placeholder="Find a member…" value="${esc(q)}" autocomplete="off" /></label>
           <div class="ab-hosts">${people.filter((p) => !q || p.name.toLowerCase().includes(q.toLowerCase())).map((p) => {
-            const isOwner = owner && p.name.toLowerCase() === owner;
+            const isOwner = owners.includes(p.name.toLowerCase());
             return `<label class="ab-host${hosts.has(p.id) || isOwner ? " on" : ""}">${personAv(p.id)}<span>${esc(p.name)}${isOwner ? ` <span class="badge yellow">owner</span>` : ""}</span>
               <span class="switch sm"><input type="checkbox" data-host="${esc(p.id)}" ${hosts.has(p.id) || isOwner ? "checked" : ""} ${isOwner || !Cloud.enabled() ? "disabled" : ""}><span class="slider"></span></span></label>`;
           }).join("") || `<p class="hint">No members match.</p>`}</div></div>
@@ -8443,7 +8535,7 @@
     if (logoutBtn) logoutBtn.onclick = () => confirmDialog("Log out of BagelTools?", () => Auth.logout());
     initGlobalSearch();
     // BagelParts (the Parts app) draws with the same helpers as every other page
-    PartsUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, notifyBanner, pageHero, emptyState, scouterAvatar, allScouters, scouterName });
+    PartsUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, notifyBanner, pageHero, emptyState, scouterAvatar, allScouters, scouterName, isAdmin });
     if (window.ShopUI) ShopUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, pageHero, emptyState, reduceMotion, scouterAvatar,
       myPhoto: () => Store.getMe().profilePic || DEFAULT_PFP, onAvatarChange: () => refreshChrome() });
     if (window.AutoScoutUI) AutoScoutUI.init({ $, $$, esc, icon, toast, modal, confirmDialog, pageHero, emptyState, nameFor, shortEventName, paintTeamFills, scoutDisplayName });
@@ -8491,6 +8583,7 @@
     Cloud.onChange(() => {
       applyCloudTestEvent();
       reconcileBB(); // keep my local BB mirror = the cloud total
+      reconcileProfile(); // restore my photo + Discord id on a new browser
       refreshChrome();
       refreshWallet();
       if (Store.getSettings().eventKey === TEST_EVENT_KEY) settleBetsNow(); // test qual moved: pay out now
@@ -8570,6 +8663,8 @@
     setInterval(settleBetsNow, 10000);
     Cloud.onFirstSync(() => { if (Cloud.enabled()) Bets.watch(Store.getSettings().eventKey || "", Bets.fantasyYear()); });
     Cloud.onFirstSync(() => {
+      const changed = reconcileProfile(); // bring my photo + Discord id down on a fresh browser
+      if (changed) refreshChrome();
       const f = $("#matchForm") || $("#pitForm");
       const a = document.activeElement;
       if ((f && f.dataset.dirty) || (a && a.matches && a.matches("#view input, #view textarea") && a.value)) return;

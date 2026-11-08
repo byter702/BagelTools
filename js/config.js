@@ -58,8 +58,12 @@ window.CONFIG = {
      the fly (Admin panel), stored per-device and carried in backups. Names match
      case-insensitively as "First Last".
   */
+  // `owner` is the primary owner (used where a single name is needed). `owners`
+  // is everyone with full owner powers — always able to log in, see the Shop and
+  // owner-only pages, and act as admin. Names match case-insensitively "First Last".
   owner: "Samuel Wright",
-  approvedMembers: ["Samuel Wright"],
+  owners: ["Samuel Wright", "Suhaan Patel"],
+  approvedMembers: ["Samuel Wright", "Suhaan Patel"],
   // Who sees the Bagel Shop (and bagel avatars) while it's in beta, besides the owner.
   shopBeta: ["Byter Tester"],
 

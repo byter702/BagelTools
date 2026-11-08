@@ -134,6 +134,9 @@ const Parts = (() => {
     // Discord ready-pings already sent, keyed part -> { uid: ts }; drop any whose part is gone.
     s.pinged = (s.pinged && typeof s.pinged === "object") ? s.pinged : {};
     Object.keys(s.pinged).forEach((k) => { if (!valid.has(k)) delete s.pinged[k]; });
+    // Category list order + colors are shared by the whole board (not per-device).
+    s.catOrder = Array.isArray(s.catOrder) ? s.catOrder : null;
+    s.catColors = (s.catColors && typeof s.catColors === "object") ? s.catColors : {};
     const orphans = s.mechanisms.filter((m) => !m.project);
     if (orphans.length) {
       let proj = s.projects[0];
@@ -236,7 +239,7 @@ const Parts = (() => {
       return { id: m.id, name: m.name, project: m.project, link: m.link || "", parts };
     });
     return { projects: s.projects, mechanisms, customTypes: s.customTypes, composites: s.composites.map((c) => ({ id: c.id, name: c.name, parts: compPairs(c) })),
-      people: s.people, rev: s.rev, by: lastBy };
+      people: s.people, catOrder: s.catOrder, catColors: s.catColors, rev: s.rev, by: lastBy };
   }
   function typeInfo(t, customTypes) {
     if (TYPE_INFO[t]) return TYPE_INFO[t];
@@ -422,6 +425,10 @@ const Parts = (() => {
     const st = stagesFor(effectiveType(r, s), s);
     r.stage = Math.max(0, Math.min(r.stage || 0, Math.max(st.length - 1, 0)));
   });
+  // Category list order + colors, shared by the whole board so they're the same
+  // on every device (not stored per-browser).
+  const setCatOrder = (order) => mutate((s) => { s.catOrder = Array.isArray(order) ? order.slice() : null; });
+  const setCatColors = (colors) => mutate((s) => { s.catColors = (colors && typeof colors === "object") ? Object.assign({}, colors) : {}; });
   const addCustomType = (name) => mutate((s) => {
     name = String(name || "").trim(); need(name, "Give the list a name.");
     need(!BUILTIN_LIST_NAMES.has(name.toLowerCase()) && !s.customTypes.some((t) => t.name.toLowerCase() === name.toLowerCase()), `A list called “${name}” already exists.`);
@@ -590,7 +597,7 @@ const Parts = (() => {
     addMechanism, removeMechanism, updateMechanism,
     addPerson, removePerson, updatePerson, assign,
     addComposite, removeComposite, previewImport, applyImport,
-    setStage, setResolved, setArchived, removePart, setPartType, addCustomType, removeCustomType,
+    setStage, setResolved, setArchived, removePart, setPartType, addCustomType, removeCustomType, setCatOrder, setCatColors,
     uploadFile, removeFile, fetchFile, exportCode, importCode,
   };
 })();
