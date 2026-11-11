@@ -4325,6 +4325,8 @@ button.pb-row:hover { background: color-mix(in srgb, var(--ally) 12%, var(--surf
 .ad-eye.off { color: var(--text-mut); border-style: dashed; }
 .ad-shield { color: var(--text-mut); }
 .ad-shield.on { color: var(--on-primary); background: var(--primary); border-color: transparent; }
+.ad-disc { color: var(--text-mut); }
+.ad-disc.on { color: #fff; background: #5865F2; border-color: transparent; }
 .ad-shield.owner { color: var(--on-secondary); background: var(--secondary); cursor: default; }
 .ad-legend { margin: 10px 2px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
 .ad-legend .ico { width: 15px; height: 15px; }

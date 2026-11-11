@@ -282,6 +282,16 @@
       db.collection("scouters").doc(scouterId).set({ id: scouterId, bb: Number(value) || 0 }, { merge: true })
         .catch(function (e) { log("setBBValue failed", e); });
     },
+    // Admin: set (or clear) any member's Discord id so the Parts bot can @ them,
+    // creating a minimal scouter doc if they've never logged in.
+    setScouterDiscord: function (scouterId, discord) {
+      if (!this.enabled() || !scouterId) return Promise.resolve();
+      var val = String(discord || "").trim();
+      var sc = (cache.scouters || []).find(function (s) { return s && s.id === scouterId; });
+      if (sc) sc.discord = val;   // optimistic so the admin table updates at once
+      return db.collection("scouters").doc(scouterId).set({ id: scouterId, discord: val, updatedAt: Date.now() }, { merge: true })
+        .catch(function (e) { log("setScouterDiscord failed", e); throw e; });
+    },
 
     // Admin: give every member the same Bagel Bucks at once. An increment, so a bet or
     // a scouting reward landing at the same moment isn't lost. Logged in config/bbBoosts.

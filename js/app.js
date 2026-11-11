@@ -6624,6 +6624,7 @@
             <td class="num">${pitCountOf(sc)}</td>
             <td class="muted">${seen ? esc(timeAgo(seen)) : "–"}</td>
             <td><div class="row" style="gap:6px;flex-wrap:nowrap">
+              <button class="icon-btn ad-disc${sc.discord ? " on" : ""}" data-discord="${esc(sid)}" data-name="${esc(name)}" data-cur="${esc(sc.discord || "")}" title="${sc.discord ? "Discord ID set — tap to edit" : "Set Discord ID (for Parts pings)"}" aria-label="${sc.discord ? "Edit" : "Set"} Discord ID for ${esc(name)}">${icon("bell")}</button>
               <button class="icon-btn ad-eye${hid ? " off" : ""}" data-eye="${esc(sid)}" data-name="${esc(name)}" title="${hid ? "Hidden from the member list and leaderboard" : "Shown on the member list and leaderboard"}" aria-label="${hid ? "Show" : "Hide"} ${esc(name)}">${icon(hid ? "eye-off" : "eye")}</button>
               ${owner ? `<span class="icon-btn ad-shield on owner" title="Owner: always an admin">${icon("crown")}</span>`
                 : `<button class="icon-btn ad-shield${adm ? " on" : ""}" data-admin="${esc(sid)}" data-name="${esc(name)}" title="${adm ? "Admin (tap to take it away)" : "Make admin"}" aria-label="${adm ? "Remove admin" : "Make admin"}: ${esc(name)}">${icon("shield")}</button>`}
@@ -6991,6 +6992,29 @@
       });
     });
     const retry = $("#credRetry", root); if (retry) retry.onclick = () => { adminCredErr = false; renderAdmin(root); };
+    // Discord: set/clear a member's Discord user id so the Parts bot can @ them
+    $$("[data-discord]", root).forEach((b) => b.onclick = () => {
+      const sid = b.dataset.discord, nm = b.dataset.name, cur = b.dataset.cur || "";
+      modal(`${nm}'s Discord ID`, `<p class="hint" style="margin-top:0">The numeric Discord <b>user ID</b> (not a username) lets the Bagel Parts bot @ ${esc(nm)} when a part's ready. In Discord: Settings → Advanced → Developer Mode on, right‑click their name → <b>Copy User ID</b>.</p>
+        <label class="auth-field" for="adDisc"><span class="auth-label">Discord user ID</span>
+          <span class="auth-input">${icon("bell")}<input type="text" id="adDisc" inputmode="numeric" autocomplete="off" placeholder="e.g. 348291043827113984" value="${esc(cur)}" /></span></label>
+        <div class="login-error" id="adDiscErr" hidden></div>
+        <div class="btn-row" style="justify-content:flex-end;margin-top:16px">
+          <button class="btn ghost" id="adDiscNo">Cancel</button><button class="btn primary" id="adDiscYes">${icon("check")} Save</button></div>`,
+      (body, close) => {
+        const input = $("#adDisc", body), errEl = $("#adDiscErr", body);
+        const save = () => {
+          const v = input.value.trim();
+          if (v && !/^\d{15,25}$/.test(v)) { errEl.textContent = "That should be the numeric user ID (a long number), not a username."; errEl.hidden = false; input.select(); return; }
+          Promise.resolve(Cloud.setScouterDiscord(sid, v))
+            .then(() => { close(); toast(v ? `Discord ID saved for ${nm}` : `Discord ID cleared for ${nm}`); if (current() === "admin") renderAdmin(root); })
+            .catch(() => { errEl.textContent = "Couldn't save — check your connection."; errEl.hidden = false; });
+        };
+        $("#adDiscNo", body).onclick = close; $("#adDiscYes", body).onclick = save;
+        input.onkeydown = (e) => { if (e.key === "Enter") save(); };
+        input.focus();
+      });
+    });
     // eye: shown on / hidden from the member list + leaderboard (team-wide)
     $$("[data-eye]", root).forEach((b) => b.onclick = () => {
       const sid = b.dataset.eye, hid = Cloud.getHidden(), was = hid.includes(sid);

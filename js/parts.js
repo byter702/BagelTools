@@ -228,7 +228,7 @@ const Parts = (() => {
       const parts = [];
       for (const [key, rec] of byMech[m.id] || []) {
         const raw = rec.rawName || rec.name || "";
-        if (isIgnoredName(raw)) continue;
+        if (!rec.typeOverride && isIgnoredName(raw)) continue;   // a hand-placed part (override) always shows
         const disp = classify(raw)[1], type = effectiveType(rec, s), stages = stagesFor(type, s);
         const stage = Math.min(rec.stage || 0, Math.max(stages.length - 1, 0));
         parts.push({ key, name: disp, rawName: raw, qty: parseInt(rec.qty, 10) || 1, type, stage, stages,
@@ -389,6 +389,21 @@ const Parts = (() => {
     let removed = 0;
     if (removeMissing) p.missing.forEach(([k]) => { delete s.parts[k]; removed++; });
     return { added: p.toAdd.length, removed, existing: p.names.length - p.toAdd.length };
+  });
+
+  // Add one part by hand (no BOM): create it in the mechanism and drop it straight
+  // onto the chosen category list. Returns its key so the UI can open it.
+  const addPart = (mechId, name, type) => mutate((s) => {
+    need(mechOf(s, mechId), "Unknown mechanism. Refresh the page and try again.");
+    name = String(name || "").trim(); need(name, "Give the part a name.");
+    const key = `${mechId}|${name.toLowerCase()}`;
+    need(!s.parts[key], `“${name}” is already in this mechanism.`);
+    const [cType, disp] = classify(name);
+    const seq = Math.max(0, ...Object.values(s.parts).map((r) => r.seq || 0)) + 1;
+    const rec = { mech: mechId, name: disp, rawName: name, type: cType, qty: 1, stage: 0, resolved: false, firstSeen: new Date().toISOString(), seq };
+    if (type && type !== cType) { need(STAGES[type] || customIds(s).has(type), "Unknown list. Refresh the page."); rec.typeOverride = type; }
+    s.parts[key] = rec;
+    return key;
   });
 
   /* ---- Part changes ------------------------------------------------------------ */
@@ -597,7 +612,7 @@ const Parts = (() => {
     addMechanism, removeMechanism, updateMechanism,
     addPerson, removePerson, updatePerson, assign,
     addComposite, removeComposite, previewImport, applyImport,
-    setStage, setResolved, setArchived, removePart, setPartType, addCustomType, removeCustomType, setCatOrder, setCatColors,
+    addPart, setStage, setResolved, setArchived, removePart, setPartType, addCustomType, removeCustomType, setCatOrder, setCatColors,
     uploadFile, removeFile, fetchFile, exportCode, importCode,
   };
 })();

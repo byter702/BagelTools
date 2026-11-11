@@ -336,6 +336,7 @@ const PartsUI = (() => {
         <div class="bp-mechact-id"><span class="pg-eyebrow">Mechanism</span><b>${esc(mech.name)}</b></div>
         <div class="btn-row">
           <button class="btn primary sm" data-act="import">${icon("upload")} Import latest version</button>
+          <button class="btn primary sm" data-act="add-part">${icon("plus")} Add a part</button>
           ${mech.link ? `<a class="btn ghost sm" href="${esc(mech.link)}" target="_blank" rel="noopener">${icon("external")} Open in Onshape</a>` : ""}
           <button class="btn ghost sm" data-act="edit-mech">${icon("edit")} Edit</button>
           <button class="btn ghost sm bp-danger" data-act="del-mech">${icon("trash")} Remove</button>
@@ -525,6 +526,7 @@ const PartsUI = (() => {
         case "del-mech": { const m = projectMechs().find((x) => x.id === activeMech); if (!m) return;
           return H.confirmDialog(`Remove ${m.name} and all ${plural(m.parts.length, "part")}? This can't be undone.`, () => run(Parts.removeMechanism(m.id).then(() => { activeMech = "__all__"; }), `Removed ${m.name}`)); }
         case "import": return importModal(projectMechs().find((m) => m.id === activeMech));
+        case "add-part": return addPartModal(projectMechs().find((m) => m.id === activeMech));
         case "add-list": return askText("New list", "List name (shared by every project)", "", (name) => run(Parts.addCustomType(name), `Created ${name}`));
         case "clear-person": activePerson = activeAlert = null; return redraw();
       }
@@ -720,6 +722,31 @@ const PartsUI = (() => {
           return ids.length;
         }), (n) => `Imported ${plural(n, "project")}`);
       };
+    });
+  }
+
+  /* ---- Add a single part by hand (name + category, no BOM) ---- */
+  function addPartModal(mech) {
+    if (!mech) return;
+    const types = orderedTypes();
+    H.modal(`Add a part · ${esc(mech.name)}`, `<div class="bp-form">
+      <p class="hint">Add one part without importing a BOM. It drops straight onto its list, and opens so you can set its progress, add a blueprint and assign someone.</p>
+      <label class="field"><span>Part name</span><input id="apName" type="text" placeholder="e.g. Drive Rail Tube 2x1" autocomplete="off" spellcheck="false" /></label>
+      <label class="field"><span>Category</span><select id="apType">${types.map((t) => `<option value="${esc(t)}">${esc(typeInfo(t).label)}</option>`).join("")}</select></label>
+      <div class="btn-row" style="justify-content:flex-end;margin-top:4px"><button class="btn primary" type="button" id="apGo">${icon("plus")} Add part</button></div>
+    </div>`, (body, close) => {
+      const nameEl = body.querySelector("#apName"), typeEl = body.querySelector("#apType"), go = body.querySelector("#apGo");
+      const submit = () => {
+        const n = nameEl.value.trim(); if (!n) { nameEl.focus(); return; }
+        run(Parts.addPart(mech.id, n, typeEl.value).then((key) => {
+          close();
+          activeMech = mech.id; activePerson = activeAlert = null; expandedKey = key;   // open it on its list
+          redraw();
+        }), `Added ${n}`);
+      };
+      go.onclick = submit;
+      nameEl.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } };
+      setTimeout(() => nameEl.focus(), 0);
     });
   }
 
