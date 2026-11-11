@@ -370,7 +370,9 @@ const Parts = (() => {
     const current = Object.entries(s.parts).filter(([, r]) => r.mech === mechId);
     const pasted = new Set(names.map((n) => `${mechId}|${n.toLowerCase()}`));
     const toAdd = names.filter((n) => !s.parts[`${mechId}|${n.toLowerCase()}`]);
-    const missing = current.filter(([k, r]) => !pasted.has(k) && !isDone(r) && !r.archived);
+    // Hand-added parts (r.manual) aren't in the CAD BOM by design, so a re-import
+    // must never flag them as "missing" or delete them.
+    const missing = current.filter(([k, r]) => !pasted.has(k) && !isDone(r) && !r.archived && !r.manual);
     return { raw, names, qtyOf, toAdd, missing, composites, undefinedComposites: [...undef.values()] };
   }
   function previewImport(mechId, text) {
@@ -400,7 +402,7 @@ const Parts = (() => {
     need(!s.parts[key], `“${name}” is already in this mechanism.`);
     const [cType, disp] = classify(name);
     const seq = Math.max(0, ...Object.values(s.parts).map((r) => r.seq || 0)) + 1;
-    const rec = { mech: mechId, name: disp, rawName: name, type: cType, qty: 1, stage: 0, resolved: false, firstSeen: new Date().toISOString(), seq };
+    const rec = { mech: mechId, name: disp, rawName: name, type: cType, qty: 1, stage: 0, resolved: false, firstSeen: new Date().toISOString(), seq, manual: true };
     if (type && type !== cType) { need(STAGES[type] || customIds(s).has(type), "Unknown list. Refresh the page."); rec.typeOverride = type; }
     s.parts[key] = rec;
     return key;
